@@ -198,7 +198,14 @@ fixes:
     strategy: setParam
     value: "D-{element.id}"
 """);
-        var invalidBaseline = Path.Combine(Path.GetTempPath(), $"revitcli_fix_bad_<>{Guid.NewGuid():N}.json");
+        // Use a path whose parent is an existing FILE (not a directory). FixCommand calls
+        // Directory.CreateDirectory(parent) before WriteAllTextAsync, and that throws
+        // IOException on both Windows and Linux when the parent path is occupied by a
+        // file. The previous "<>" filename trick was Windows-only (Linux allows those
+        // characters in filenames).
+        var blockerFile = Path.Combine(Path.GetTempPath(), $"revitcli_fix_blocker_{Guid.NewGuid():N}");
+        File.WriteAllText(blockerFile, "blocker");
+        var invalidBaseline = Path.Combine(blockerFile, $"baseline_{Guid.NewGuid():N}.json");
         try
         {
             var handler = new QueueHttpHandler();
@@ -237,6 +244,7 @@ fixes:
         finally
         {
             File.Delete(profilePath);
+            if (File.Exists(blockerFile)) File.Delete(blockerFile);
         }
     }
 
