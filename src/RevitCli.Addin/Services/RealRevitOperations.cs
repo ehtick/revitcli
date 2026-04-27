@@ -2284,4 +2284,77 @@ public sealed class RealRevitOperations : IRevitOperations
         }
         return SnapshotHasher.HashSheetContent(metaHash, perView);
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  families
+    // ═══════════════════════════════════════════════════════════════
+
+    public Task<FamilyInfo[]> ListFamiliesAsync(FamilyListRequest request)
+    {
+        var req = request ?? new FamilyListRequest();
+
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+
+            // All non-type FamilyInstances in the document.
+            var allInstances = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilyInstance))
+                .WhereElementIsNotElementType()
+                .Cast<FamilyInstance>()
+                .ToList();
+
+            var families = new FilteredElementCollector(doc)
+                .OfClass(typeof(Family))
+                .Cast<Family>()
+                .Select(family =>
+                {
+                    var categoryName = family.FamilyCategory?.Name ?? "";
+                    var familyId = family.Id;
+
+                    // Determine placement: check each FamilyInstance whose symbol
+                    // belongs to this family. Spec: use ElementId.Compare(), not ==.
+                    // GetFamilySymbolIds() is the canonical entry point on Family;
+                    // we use it as the join key by matching FamilyInstance.Symbol.Id.
+                    var symbolIds = family.GetFamilySymbolIds();
+                    var hasPlaced = false;
+                    foreach (var fi in allInstances)
+                    {
+                        var symId = fi.Symbol?.Id;
+                        if (symId == null) continue;
+                        var match = false;
+                        foreach (var sId in symbolIds)
+                        {
+                            if (symId.Compare(sId) == 0) { match = true; break; }
+                        }
+                        if (match) { hasPlaced = true; break; }
+                    }
+
+                    return new FamilyInfo
+                    {
+                        Id = ToCliElementId(familyId),
+                        Name = family.Name ?? "",
+                        Category = categoryName,
+                        IsInPlace = family.IsInPlace,
+                        IsLoadable = !family.IsInPlace,
+                        FilePath = null,
+                        IsPlaced = hasPlaced
+                    };
+                })
+                .Where(fi =>
+                {
+                    if (!string.IsNullOrWhiteSpace(req.Category)
+                        && !string.Equals(fi.Category, req.Category, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                    if (req.IncludeUnplaced && fi.IsPlaced)
+                        return false;
+                    return true;
+                })
+                .OrderBy(fi => fi.Category, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(fi => fi.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            return families;
+        });
+    }
 }

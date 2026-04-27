@@ -296,6 +296,42 @@ public class RevitClient : IDisposable
         }
     }
 
+    public async Task<ApiResponse<FamilyInfo[]>> ListFamiliesAsync(FamilyListRequest request)
+    {
+        try
+        {
+            var parts = new List<string>();
+            if (request.IncludeUnplaced)
+                parts.Add("unused=true");
+            if (!string.IsNullOrWhiteSpace(request.Category))
+                parts.Add($"category={System.Uri.EscapeDataString(request.Category!)}");
+            var url = parts.Count == 0
+                ? "/api/families"
+                : $"/api/families?{string.Join("&", parts)}";
+
+            var response = await _http.GetAsync(url);
+            var json = await SendAndRead(response, "GET", url);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return ApiResponse<FamilyInfo[]>.Fail(
+                    "/api/families endpoint not found — this command requires the v1.8 add-in. " +
+                    "Update the Revit add-in to use `family ls`.");
+            }
+
+            return JsonSerializer.Deserialize<ApiResponse<FamilyInfo[]>>(json, JsonOptions)!;
+        }
+        catch (HttpRequestException ex)
+        {
+            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
+            return ApiResponse<FamilyInfo[]>.Fail("Revit is not running or plugin is not loaded.");
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
+        {
+            return ApiResponse<FamilyInfo[]>.Fail($"Communication error: {ex.Message}");
+        }
+    }
+
     public async Task<ApiResponse<ModelSnapshot>> CaptureSnapshotAsync(SnapshotRequest request)
     {
         try
