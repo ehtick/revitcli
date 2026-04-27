@@ -1,0 +1,25 @@
+<Project>
+  <!--
+    Central Package Management for the RevitCli executable project.
+    Scoped to this directory so peer projects (RevitCli.Shared / RevitCli.Addin
+    / *.Tests) keep their per-project version pins unchanged. New top-level
+    package references in src/RevitCli/RevitCli.csproj must list their version
+    here, not inline.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageVersion Include="Spectre.Console" Version="0.49.1" />
+    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+    <PackageVersion Include="System.Text.Encoding.CodePages" Version="9.0.0" />
+    <!--
+      v1.9 Profile Governance: shallow-clones remote profile bundles into
+      .revitcli/profiles/<name>@<ref>/. Pinned to the current LTS so the
+      native binaries (libgit2.so / libgit2.dll) stay reproducible.
+    -->
+    <PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
+  </ItemGroup>
+</Project>

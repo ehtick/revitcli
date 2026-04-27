@@ -487,6 +487,113 @@ public static class ProfileCommand
     }
 
     // ------------------------------------------------------------------
+    // install
+    // ------------------------------------------------------------------
+
+    private static Command CreateInstallCommand()
+    {
+        var urlArg = new Argument<string>("git-url", "Git URL of the profile bundle (https://, ssh://, file://)");
+        var refOpt = new Option<string?>("--ref", "Branch, tag, or commit SHA to check out (default: remote HEAD)");
+        var subPathOpt = new Option<string?>("--subpath", "Path inside the repository to copy out (default: full tree)");
+        var targetOpt = new Option<string?>("--target",
+            "Override the install directory (default: .revitcli/profiles/<derived-name>)");
+        var forceOpt = new Option<bool>("--force", () => false,
+            "Overwrite the target directory if it already exists");
+
+        var cmd = new Command("install", "Shallow-clone a remote profile bundle into .revitcli/profiles/")
+        {
+            urlArg,
+            refOpt,
+            subPathOpt,
+            targetOpt,
+            forceOpt,
+        };
+
+        cmd.SetHandler(async (string url, string? refSpec, string? subPath, string? target, bool force) =>
+        {
+            Environment.ExitCode = await ExecuteInstallAsync(url, refSpec, subPath, target, force, Console.Out);
+        }, urlArg, refOpt, subPathOpt, targetOpt, forceOpt);
+
+        return cmd;
+    }
+
+    public static async Task<int> ExecuteInstallAsync(
+        string gitUrl,
+        string? refSpec,
+        string? subPath,
+        string? target,
+        bool force,
+        TextWriter output)
+    {
+        if (string.IsNullOrWhiteSpace(gitUrl))
+        {
+            await output.WriteLineAsync("Error: git-url argument is required.");
+            return 1;
+        }
+
+        // Default target: .revitcli/profiles/<derived>/. We compute it lazily
+        // here (not in the installer) so the chosen path is visible in the
+        // error message when --force is missing — the installer never sees the
+        // null branch.
+        string finalTarget;
+        if (!string.IsNullOrWhiteSpace(target))
+        {
+            finalTarget = Path.GetFullPath(target);
+        }
+        else
+        {
+            var name = ProfileInstaller.DeriveProfileName(gitUrl);
+            // Suffix the ref so multiple revs of the same repo can coexist on
+            // disk under .revitcli/profiles/, matching the roadmap's
+            // "<name>@<ref>/" layout convention.
+            if (!string.IsNullOrWhiteSpace(refSpec))
+                name = $"{name}@{SanitizeRefForPath(refSpec!)}";
+            finalTarget = Path.GetFullPath(Path.Combine(".revitcli", "profiles", name));
+        }
+
+        try
+        {
+            var result = await ProfileInstaller.InstallAsync(gitUrl, refSpec, subPath, finalTarget, force);
+            await output.WriteLineAsync($"Installed profile from {result.SourceUrl}");
+            if (!string.IsNullOrEmpty(result.CheckedOutRef))
+                await output.WriteLineAsync($"  ref: {result.CheckedOutRef}");
+            await output.WriteLineAsync($"  path: {result.TargetDir}");
+
+            // Surface the suggested extends: line so the user can paste it
+            // straight into their profile. Use a relative path when possible
+            // so the snippet stays portable across machines.
+            var cwd = Directory.GetCurrentDirectory();
+            string extendsHint = result.TargetDir;
+            try
+            {
+                extendsHint = Path.GetRelativePath(cwd, result.TargetDir).Replace('\\', '/');
+            }
+            catch { /* fall back to absolute path */ }
+
+            await output.WriteLineAsync($"  add to your .revitcli.yml: extends: {extendsHint}/.revitcli.yml");
+            return 0;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException
+                                       or LibGit2Sharp.LibGit2SharpException
+                                       or ArgumentException)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// Strip characters that would either break Windows path resolution or
+    /// confuse downstream tooling that consumes <c>.revitcli/profiles/</c>.
+    /// </summary>
+    private static string SanitizeRefForPath(string refSpec)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = refSpec.Select(c => invalid.Contains(c) || c == '/' || c == '\\' ? '_' : c).ToArray();
+        return new string(chars);
+    }
+
+    // ------------------------------------------------------------------
     // shared helpers
     // ------------------------------------------------------------------
 
