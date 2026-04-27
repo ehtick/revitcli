@@ -4,6 +4,21 @@ All notable changes to RevitCli will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `revitcli export --dry-run` now actually parses: validates inputs and resolves
+  sheet/view selectors but writes zero files; previously the README documented
+  the flag while the parser rejected it.
+
+### Fixed
+
+- `revitcli doctor` now honors the `Revit<year>InstallDir` env var (Autodesk
+  convention used by the addin csproj) when looking for `RevitAPI.dll`, so
+  installs at non-default locations no longer trigger a false `FAIL`. The
+  diagnostic message reports the path actually checked.
+
 ## [1.5.0] - 2026-04-26
 
 ### Added
