@@ -30,8 +30,10 @@ internal static class CliCommandCatalog
         ("snapshot", "Capture model's semantic state as JSON"),
         ("interactive", "Enter interactive REPL mode"),
         ("import", "Batch-write Revit element parameters from a CSV file"),
-        ("history", "Manage local snapshot history (init/capture/list/prune)"),
-        ("mcp", "Run RevitCli as a Model Context Protocol server")
+        ("history", "Manage local snapshot history (init/capture/list/prune/diff/trend)"),
+        ("mcp", "Run RevitCli as a Model Context Protocol server"),
+        ("ci", "CI integration helpers (detect provider, emit workflow templates)"),
+        ("profile", "Validate, resolve, and diff .revitcli.yml profiles")
     };
 
     internal static readonly (string Command, string Description)[] InteractiveHelpEntries =
@@ -54,7 +56,14 @@ internal static class CliCommandCatalog
         ("history capture", "Append a snapshot to .revitcli/history/ (--source, --exclude-fixes)"),
         ("history list", "List recent snapshots (--include-fixes, --limit)"),
         ("history prune --keep <duration|count>", "Drop old snapshots (--dry-run, --apply)"),
+        ("history diff <fromRef> <toRef>", "Diff two history snapshots (--output table|json|markdown)"),
+        ("history trend [--metric <name>]", "ASCII sparkline of a metric over time (--window, --width)"),
+        ("score --history <duration>", "Per-day score time series across the history window"),
         ("mcp serve", "Start MCP stdio server (for Claude Desktop / Cursor)"),
+        ("ci doctor", "Detect CI provider and print a workflow template"),
+        ("profile validate", "Schema/reference checker for .revitcli.yml"),
+        ("profile show --resolve", "Print merged effective profile (yaml|json)"),
+        ("profile diff <a> <b>", "Structural diff between two profiles (table|json|markdown)"),
         ("init <template>", "Create .revitcli.yml from starter template"),
         ("doctor", "Check setup, server discovery, and connectivity"),
         ("batch <file>", "Execute commands from a JSON batch file"),
@@ -99,6 +108,8 @@ internal static class CliCommandCatalog
         root.AddCommand(ImportCommand.Create(client));
         root.AddCommand(HistoryCommand.Create(client));
         root.AddCommand(McpCommand.Create(client));
+        root.AddCommand(CiCommand.Create());
+        root.AddCommand(ProfileCommand.Create());
 
         if (includeBatchCommand)
             root.AddCommand(BatchCommand.Create(client, config));
