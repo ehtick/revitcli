@@ -12,6 +12,48 @@ public static class WebhookNotifier
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
+    /// <summary>
+    /// Convenience overload that builds the canonical "check" event payload and
+    /// delegates to <see cref="NotifyAsync(string, object)"/>. Field shape:
+    /// <code>
+    /// {
+    ///   event: "check",
+    ///   name: <checkName>,
+    ///   passed: <displayPassed>,
+    ///   failed: <displayFailed>,
+    ///   suppressed: <suppressedCount>,
+    ///   severityFailed: <bool>,   // true when CheckCommand would exit non-zero
+    ///   timestamp: <ISO8601 UTC>,
+    ///   profilePath: <path?>      // null when no profile was discovered/specified
+    /// }
+    /// </code>
+    /// All HTTPS / private-host enforcement and best-effort error handling come
+    /// from <see cref="NotifyAsync(string, object)"/> — failures here NEVER
+    /// throw and never change the caller's exit code.
+    /// </summary>
+    public static Task NotifyCheckAsync(
+        string url,
+        string checkName,
+        int passed,
+        int failed,
+        int suppressed,
+        bool severityFailed,
+        string? profilePath)
+    {
+        var payload = new
+        {
+            @event = "check",
+            name = checkName,
+            passed,
+            failed,
+            suppressed,
+            severityFailed,
+            timestamp = DateTime.UtcNow.ToString("o"),
+            profilePath,
+        };
+        return NotifyAsync(url, payload);
+    }
+
     public static async Task NotifyAsync(string url, object payload)
     {
         try
