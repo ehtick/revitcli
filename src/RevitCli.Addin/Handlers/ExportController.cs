@@ -48,19 +48,36 @@ public class ExportController : WebApiController
 
         if (!string.IsNullOrWhiteSpace(request.OutputDir))
         {
-            var raw = request.OutputDir;
-            if (raw.Contains(".."))
+            string normalized;
+            try
+            {
+                // GetFullPath is the only canonical way to collapse "..", symlinks-as-text,
+                // mixed separators, and trailing dots; the literal ".." check by itself was
+                // bypassable with encoded variants and absolute paths.
+                normalized = Path.GetFullPath(request.OutputDir);
+            }
+            catch (Exception ex) when (ex is ArgumentException or PathTooLongException
+                                        or NotSupportedException or System.Security.SecurityException)
             {
                 HttpContext.Response.StatusCode = 400;
                 await writer.WriteAsync(JsonSerializer.Serialize(
-                    ApiResponse<ExportProgress>.Fail("OutputDir must not contain '..' path traversal.")));
+                    ApiResponse<ExportProgress>.Fail($"OutputDir is not a valid path: {ex.Message}")));
                 return;
             }
-            var normalized = Path.GetFullPath(raw);
-            var userDocs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            var userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+
             var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (!normalized.StartsWith(userProfile + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrEmpty(userProfile))
+            {
+                HttpContext.Response.StatusCode = 500;
+                await writer.WriteAsync(JsonSerializer.Serialize(
+                    ApiResponse<ExportProgress>.Fail("Could not determine user home directory.")));
+                return;
+            }
+
+            var userProfileNormalized = Path.GetFullPath(userProfile)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (!normalized.StartsWith(userProfileNormalized, StringComparison.OrdinalIgnoreCase))
             {
                 HttpContext.Response.StatusCode = 400;
                 await writer.WriteAsync(JsonSerializer.Serialize(

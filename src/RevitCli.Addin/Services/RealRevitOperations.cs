@@ -324,7 +324,9 @@ public sealed class RealRevitOperations : IRevitOperations
             case StorageType.Double:
                 if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var dblVal))
                     throw new ArgumentException($"Cannot convert '{value}' to number for parameter '{param.Definition.Name}'.");
-                // Convert from display units to internal units
+                // Convert from display units to internal units. Failure here means we can't
+                // map the display unit deterministically — surface it instead of silently
+                // writing raw values that look right in the API but wrong in the model.
                 try
                 {
                     var specTypeId = param.Definition.GetDataType();
@@ -332,9 +334,13 @@ public sealed class RealRevitOperations : IRevitOperations
                     var unitTypeId = formatOptions.GetUnitTypeId();
                     dblVal = UnitUtils.ConvertToInternalUnits(dblVal, unitTypeId);
                 }
-                catch
+                catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException
+                                            or InvalidOperationException
+                                            or ArgumentException)
                 {
-                    // If unit conversion fails, use raw value
+                    throw new ArgumentException(
+                        $"Cannot determine display unit for parameter '{param.Definition.Name}': {ex.Message}. " +
+                        "Pass the value in Revit internal units or fix the project's unit settings.", ex);
                 }
                 param.Set(dblVal);
                 break;
@@ -399,8 +405,15 @@ public sealed class RealRevitOperations : IRevitOperations
             var unitTypeId = formatOptions.GetUnitTypeId();
             return UnitUtils.ConvertToInternalUnits(filterValue, unitTypeId);
         }
-        catch
+        catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException
+                                    or InvalidOperationException
+                                    or ArgumentException)
         {
+            // Filter compare against unconvertible parameter — fall back to raw value with a warning
+            // so users notice when their filter on a unit-bearing field may not match.
+            Console.Error.WriteLine(
+                $"[RevitCli] Filter on '{param.Definition.Name}' could not be unit-converted ({ex.Message}); " +
+                "comparing against raw internal value.");
             return filterValue;
         }
     }
@@ -846,9 +859,9 @@ public sealed class RealRevitOperations : IRevitOperations
 
         BuiltInCategory builtInCat;
         try { builtInCat = ResolveCategory(doc, spec.Category); }
-        catch { return new List<AuditIssue> { new() {
+        catch (ArgumentException ex) { return new List<AuditIssue> { new() {
             Rule = "required-parameter", Severity = "error",
-            Message = $"Unknown category: '{spec.Category}'"
+            Message = $"Unknown category '{spec.Category}': {ex.Message}"
         }}; }
 
         var collector = new FilteredElementCollector(doc)
