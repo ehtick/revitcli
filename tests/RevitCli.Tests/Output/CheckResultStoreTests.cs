@@ -82,8 +82,8 @@ public class CheckResultStoreTests
 
         var diff = CheckResultStore.ComputeDiffAgainstLatest("default", currentIssues, dir);
         Assert.NotNull(diff);
-        Assert.Equal(1, diff!.New.Count);
-        Assert.Equal(1, diff.Resolved.Count);
+        Assert.Single(diff!.New);
+        Assert.Single(diff.Resolved);
         Assert.Equal(1, diff.Unchanged);
 
         Assert.Contains(diff.New, i => i.Rule == "imported-dwg");
