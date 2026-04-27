@@ -4,6 +4,43 @@ All notable changes to RevitCli will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added — v1.6 history (foundation; trend / score-history land in a follow-up)
+
+- `revitcli history` command cluster — local snapshot timeline under
+  `.revitcli/history/`, gzip-compressed:
+  - `history init` — create the store + empty index.
+  - `history capture [--source manual|cron|fix-baseline] [--exclude-fixes]` —
+    take a snapshot via the addin and append to the timeline.
+  - `history list [--include-fixes] [--limit N]` — table view of recent
+    snapshots (id, capturedAt, source, elementCount, size).
+  - `history prune --keep <duration|count> [--dry-run] [--apply]` — drop old
+    entries; fix-baseline snapshots are protected by default.
+  - Time references parse `@-N` (Nth most recent), ISO 8601 timestamps, and
+    durations like `7d` / `24h` / `30m`.
+
+### Added — v1.7 CI (foundation; GitHub Action + ci doctor land in a follow-up)
+
+- `revitcli check --output sarif` — SARIF 2.1.0 output suitable for
+  `github/codeql-action/upload-sarif`. Element identity sits in
+  `logicalLocations` and a `properties` bag (`revitElementId`,
+  `revitCategory`, `revitParameter`, `revitCurrentValue`, `documentPath`),
+  not in `physicalLocation` (Revit elements aren't files).
+- `revitcli check --output pr-comment` — Markdown table sized for a PR
+  comment, severity-grouped, truncated at 50 rows.
+- `--report` extension inference now also recognizes `.sarif` and routes to
+  the new writer.
+
+### Added — MCP adapter (side track)
+
+- `revitcli mcp serve` — Model Context Protocol stdio server (spec
+  `2024-11-05`). Exposes 3 read-only tools: `status`, `query`, `audit`.
+  Use in `claude_desktop_config.json` as
+  `"revitcli": { "command": "revitcli", "args": ["mcp", "serve"] }`. Write
+  tools (`set` / `import` / `fix` / `rollback`) deferred pending a safety
+  review of LLM-driven model writes.
+
 ## [1.5.0] - 2026-04-26
 
 ### Added
