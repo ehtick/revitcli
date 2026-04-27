@@ -102,6 +102,15 @@ internal sealed class McpServerCapabilities
 {
     [JsonPropertyName("tools")]
     public McpToolsCapability Tools { get; set; } = new();
+
+    /// <summary>
+    /// Resources capability. Null when the server does not expose any
+    /// resources. Serialised when present so clients see the right
+    /// surface from the very first `initialize` round-trip.
+    /// </summary>
+    [JsonPropertyName("resources")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public McpResourcesCapability? Resources { get; set; }
 }
 
 internal sealed class McpToolsCapability
@@ -109,6 +118,23 @@ internal sealed class McpToolsCapability
     /// <summary>
     /// Whether the server emits `notifications/tools/list_changed`.
     /// We don't, so this is always false.
+    /// </summary>
+    [JsonPropertyName("listChanged")]
+    public bool ListChanged { get; set; }
+}
+
+internal sealed class McpResourcesCapability
+{
+    /// <summary>
+    /// Whether the server supports `resources/subscribe`. We do not — every
+    /// resource is read on demand.
+    /// </summary>
+    [JsonPropertyName("subscribe")]
+    public bool Subscribe { get; set; }
+
+    /// <summary>
+    /// Whether the server emits `notifications/resources/list_changed`. We
+    /// don't (the URI set is fixed for the lifetime of one process).
     /// </summary>
     [JsonPropertyName("listChanged")]
     public bool ListChanged { get; set; }
@@ -173,4 +199,58 @@ internal sealed class McpContentBlock
     public string Text { get; set; } = "";
 
     public static McpContentBlock TextBlock(string text) => new() { Type = "text", Text = text };
+}
+
+/// <summary>
+/// One entry in the `resources/list` response. Mirrors the spec shape:
+/// `uri` is the canonical identifier the LLM uses with `resources/read`,
+/// `mimeType` lets clients pick a renderer.
+/// </summary>
+internal sealed class McpResourceDescriptor
+{
+    [JsonPropertyName("uri")]
+    public string Uri { get; set; } = "";
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = "";
+
+    [JsonPropertyName("mimeType")]
+    public string MimeType { get; set; } = "text/plain";
+}
+
+/// <summary>
+/// `resources/read` response wrapper. The spec allows multiple content
+/// chunks per URI; we emit exactly one today (text or blob, never both).
+/// </summary>
+internal sealed class McpResourceReadResult
+{
+    [JsonPropertyName("contents")]
+    public List<McpResourceContents> Contents { get; set; } = new();
+}
+
+internal sealed class McpResourceContents
+{
+    [JsonPropertyName("uri")]
+    public string Uri { get; set; } = "";
+
+    [JsonPropertyName("mimeType")]
+    public string MimeType { get; set; } = "text/plain";
+
+    /// <summary>
+    /// Inline text payload. Mutually exclusive with <see cref="Blob"/> per spec.
+    /// </summary>
+    [JsonPropertyName("text")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Text { get; set; }
+
+    /// <summary>
+    /// Base64-encoded binary payload. Reserved for future use; resources
+    /// in this round only emit text.
+    /// </summary>
+    [JsonPropertyName("blob")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Blob { get; set; }
 }

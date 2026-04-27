@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using RevitCli.Client;
+using RevitCli.Mcp.Resources;
 using RevitCli.Mcp.Tools;
 
 namespace RevitCli.Mcp;
@@ -17,9 +18,16 @@ namespace RevitCli.Mcp;
 /// Wire format: newline-delimited JSON, one message per line. This is the
 /// transport baseline used by Claude Desktop / Cursor / Continue.
 ///
-/// Scope of this skeleton: `initialize`, `initialized`, `tools/list`,
-/// `tools/call`, `ping`. Resources, prompts, sampling and write tools are
-/// deliberately out of scope (see roadmap §8 and §9.6).
+/// Scope:
+/// <list type="bullet">
+///   <item>Phase 1: <c>initialize</c>, <c>initialized</c>, <c>tools/list</c>,
+///         <c>tools/call</c>, <c>ping</c>.</item>
+///   <item>Phase 2: <c>resources/list</c>, <c>resources/read</c>, plus a
+///         write-capable <c>set</c> tool gated by an <c>--allow-writes</c>
+///         server flag combined with a per-call <c>confirm: true</c>
+///         argument.</item>
+/// </list>
+/// Prompts and sampling remain out of scope (see roadmap §8 / §9.6).
 /// </summary>
 internal sealed class McpServer
 {
@@ -29,16 +37,31 @@ internal sealed class McpServer
     };
 
     private readonly Dictionary<string, IMcpTool> _tools;
+    private readonly Dictionary<string, IMcpResource> _resources;
     private readonly TextReader _input;
     private readonly TextWriter _output;
     private readonly TextWriter _logger;
     private readonly string _serverVersion;
 
     public McpServer(IEnumerable<IMcpTool> tools, TextReader input, TextWriter output, TextWriter? logger = null, string? serverVersion = null)
+        : this(tools, Array.Empty<IMcpResource>(), input, output, logger, serverVersion)
+    {
+    }
+
+    public McpServer(
+        IEnumerable<IMcpTool> tools,
+        IEnumerable<IMcpResource> resources,
+        TextReader input,
+        TextWriter output,
+        TextWriter? logger = null,
+        string? serverVersion = null)
     {
         _tools = new Dictionary<string, IMcpTool>(StringComparer.Ordinal);
         foreach (var tool in tools)
             _tools[tool.Name] = tool;
+        _resources = new Dictionary<string, IMcpResource>(StringComparer.Ordinal);
+        foreach (var resource in resources)
+            _resources[resource.Uri] = resource;
         _input = input;
         _output = output;
         _logger = logger ?? TextWriter.Null;
@@ -50,14 +73,32 @@ internal sealed class McpServer
     /// CLI uses and binds the three read-only tools.
     /// </summary>
     public static McpServer CreateDefault(RevitClient client, TextReader input, TextWriter output, TextWriter? logger = null)
+        => CreateDefault(client, input, output, logger, allowWrites: false);
+
+    /// <summary>
+    /// Same as <see cref="CreateDefault(RevitClient, TextReader, TextWriter, TextWriter?)"/>
+    /// but lets the caller opt into write tools (gated server-side by
+    /// <see cref="SetTool"/>'s confirm flag — see PR #N for the safety model).
+    /// </summary>
+    public static McpServer CreateDefault(RevitClient client, TextReader input, TextWriter output, TextWriter? logger, bool allowWrites)
     {
-        var tools = new IMcpTool[]
+        var tools = new List<IMcpTool>
         {
             new StatusTool(client),
             new QueryTool(client),
             new AuditTool(client),
+            new SnapshotTool(client),
+            new SetTool(client, allowWrites),
         };
-        return new McpServer(tools, input, output, logger);
+
+        var resources = new List<IMcpResource>
+        {
+            new SnapshotLatestResource(client),
+            HistoryListResource.ForCurrentDirectory(),
+            new ProfileResource(),
+        };
+
+        return new McpServer(tools, resources, input, output, logger);
     }
 
     /// <summary>
@@ -160,6 +201,12 @@ internal sealed class McpServer
             case "tools/call":
                 return await HandleToolCallAsync(request, cancellationToken).ConfigureAwait(false);
 
+            case "resources/list":
+                return JsonRpcResponse.Success(request.Id, BuildResourcesList());
+
+            case "resources/read":
+                return await HandleResourceReadAsync(request, cancellationToken).ConfigureAwait(false);
+
             default:
                 return JsonRpcResponse.Failure(request.Id, McpProtocol.ErrorMethodNotFound, $"Method not found: {request.Method}");
         }
@@ -167,10 +214,19 @@ internal sealed class McpServer
 
     private JsonNode BuildInitializeResult()
     {
+        var capabilities = new McpServerCapabilities
+        {
+            Tools = new McpToolsCapability { ListChanged = false },
+        };
+        if (_resources.Count > 0)
+        {
+            capabilities.Resources = new McpResourcesCapability { Subscribe = false, ListChanged = false };
+        }
+
         var payload = new McpInitializeResult
         {
             ProtocolVersion = McpProtocol.ProtocolVersion,
-            Capabilities = new McpServerCapabilities { Tools = new McpToolsCapability { ListChanged = false } },
+            Capabilities = capabilities,
             ServerInfo = new McpServerInfo { Name = "revitcli", Version = _serverVersion },
         };
         return JsonSerializer.SerializeToNode(payload, WriteOptions)!;
@@ -224,6 +280,67 @@ internal sealed class McpServer
         {
             Content = new List<McpContentBlock> { McpContentBlock.TextBlock(text) },
             IsError = isError,
+        };
+        return JsonRpcResponse.Success(request.Id, JsonSerializer.SerializeToNode(result, WriteOptions)!);
+    }
+
+    private JsonNode BuildResourcesList()
+    {
+        var arr = new JsonArray();
+        foreach (var resource in _resources.Values)
+        {
+            arr.Add(new JsonObject
+            {
+                ["uri"] = resource.Uri,
+                ["name"] = resource.Name,
+                ["description"] = resource.Description,
+                ["mimeType"] = resource.MimeType,
+            });
+        }
+        return new JsonObject { ["resources"] = arr };
+    }
+
+    private async Task<JsonRpcResponse> HandleResourceReadAsync(JsonRpcRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Params is not JsonObject paramsObj)
+            return JsonRpcResponse.Failure(request.Id, McpProtocol.ErrorInvalidParams, "resources/read: missing params object");
+
+        var uri = paramsObj["uri"]?.GetValue<string>();
+        if (string.IsNullOrEmpty(uri))
+            return JsonRpcResponse.Failure(request.Id, McpProtocol.ErrorInvalidParams, "resources/read: missing 'uri'");
+
+        if (!_resources.TryGetValue(uri, out var resource))
+            return JsonRpcResponse.Failure(request.Id, McpProtocol.ErrorInvalidParams, $"resources/read: unknown URI '{uri}'");
+
+        string text;
+        try
+        {
+            text = await resource.ReadAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Resource backends touch I/O (Revit HTTP, filesystem, profile loader).
+            // Surface failures as JSON-RPC internal-error so the client can show
+            // a real reason rather than an empty payload.
+            _logger.WriteLine($"[mcp] resource '{uri}' threw: {ex}");
+            return JsonRpcResponse.Failure(request.Id, McpProtocol.ErrorInternalError, ex.Message);
+        }
+
+        var result = new McpResourceReadResult
+        {
+            Contents = new List<McpResourceContents>
+            {
+                new()
+                {
+                    Uri = resource.Uri,
+                    MimeType = resource.MimeType,
+                    Text = text,
+                },
+            },
         };
         return JsonRpcResponse.Success(request.Id, JsonSerializer.SerializeToNode(result, WriteOptions)!);
     }
