@@ -4,6 +4,39 @@ All notable changes to RevitCli will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Internal — repo hygiene and security hardening (no user-facing API changes)
+
+- **Build**: centralized version (`Directory.Build.props` → `RevitCliVersion`) and
+  central NuGet management (`Directory.Packages.props`). `TreatWarningsAsErrors`
+  now enabled across all projects.
+- **Add-in security**: API token now derives from `RandomNumberGenerator` (32 random
+  bytes, hex) instead of `Guid.NewGuid()`. `~/.revitcli/server.json` is ACL-locked
+  to the current Windows user (FullControl only, inheritance disabled) on write.
+- **Add-in robustness**: `RemoveServerInfo` no longer leaks foreign server entries
+  (`&&` → `||` ownership check). Port-bind retry, atomic write, and run-task
+  observation now log narrowly-typed exceptions to stderr instead of swallowing
+  them silently. `Thread.Sleep` retain-loop kept (already async-safe outside the
+  Revit UI thread).
+- **Add-in `/api/export`**: path traversal check now uses `Path.GetFullPath`
+  canonicalization + `StartsWith(userProfile)` instead of a literal `..`
+  substring search. Validated against 8 attack/legit cases.
+- **Add-in `set`**: display→internal unit conversion failures now surface as
+  `400` with a clear message instead of silently writing the raw value.
+- **CLI HTTP**: default `HttpClient.Timeout` is 30s (override via
+  `REVITCLI_HTTP_TIMEOUT_SECONDS`, clamped 1-3600). Previously implicit 100s.
+- **CLI**: bare catches in `RevitClient.DiscoverServerUrl`, `CliConfig.Load`,
+  and `JournalLogger.Log` narrowed and surfaced to stderr.
+- **CLI**: shared `ServerInfo.DefaultPort` constant removes 3-way port
+  hardcoding between addin, client, and config.
+- **CI**: actions pinned to commit SHA. CLI `ci.yml` now matrices on
+  ubuntu-latest × windows-latest. `ci-addin.yml` triggers on PR (paths
+  filter) plus a daily 02:00 cron, no longer dispatch-only. `release.yml`
+  drops `continue-on-error: true` from per-Revit-year add-in builds.
+- **Tests**: `Fix_Apply_FailsWhenBaselineCannotBeSavedAndSkipsSet` reworked
+  to use a cross-platform invalid baseline path (was Windows-only via `<>`).
+
 ## [1.5.0] - 2026-04-26
 
 ### Added
