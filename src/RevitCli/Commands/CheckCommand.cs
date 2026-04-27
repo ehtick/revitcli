@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using RevitCli.Checks;
 using RevitCli.Client;
 using RevitCli.Output;
+using RevitCli.Reports;
 using Spectre.Console;
 
 namespace RevitCli.Commands;
@@ -17,7 +18,7 @@ public static class CheckCommand
     {
         var nameArg = new Argument<string?>("name", () => null, "Check set name (default: 'default')");
         var profileOpt = new Option<string?>("--profile", "Path to .revitcli.yml profile");
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, html");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, html, sarif, pr-comment");
         var reportOpt = new Option<string?>("--report", "Save report to file (format inferred from extension, or uses --output)");
         var noSaveOpt = new Option<bool>("--no-save", "Don't save results for diff comparison");
 
@@ -69,14 +70,29 @@ public static class CheckCommand
                 format = "html";
             else if (ext == ".json")
                 format = "json";
+            else
+            {
+                // Let the v1.7 report formats (sarif/pr-comment) infer from .sarif / .md
+                var inferred = AuditReportFormats.InferFormatFromExtension(ext);
+                if (inferred != null)
+                    format = inferred;
+            }
         }
 
-        var rendered = format switch
+        string rendered;
+        if (AuditReportFormats.TryRender(format, allIssues, out var ciContent))
         {
-            "json" => CheckReportRenderer.RenderJson(checkName, displayPassed, displayFailed, allIssues, suppressedCount),
-            "html" => CheckReportRenderer.RenderHtml(checkName, displayPassed, displayFailed, allIssues, suppressedCount),
-            _ => CheckReportRenderer.RenderTable(checkName, displayPassed, displayFailed, allIssues, suppressedCount)
-        };
+            rendered = ciContent;
+        }
+        else
+        {
+            rendered = format switch
+            {
+                "json" => CheckReportRenderer.RenderJson(checkName, displayPassed, displayFailed, allIssues, suppressedCount),
+                "html" => CheckReportRenderer.RenderHtml(checkName, displayPassed, displayFailed, allIssues, suppressedCount),
+                _ => CheckReportRenderer.RenderTable(checkName, displayPassed, displayFailed, allIssues, suppressedCount)
+            };
+        }
 
         // Write to file if --report specified
         if (reportPath != null)

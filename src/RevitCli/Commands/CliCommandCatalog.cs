@@ -29,7 +29,9 @@ internal static class CliCommandCatalog
         ("diff", "Diff two snapshot JSON files"),
         ("snapshot", "Capture model's semantic state as JSON"),
         ("interactive", "Enter interactive REPL mode"),
-        ("import", "Batch-write Revit element parameters from a CSV file")
+        ("import", "Batch-write Revit element parameters from a CSV file"),
+        ("history", "Manage local snapshot history (init/capture/list/prune)"),
+        ("mcp", "Run RevitCli as a Model Context Protocol server")
     };
 
     internal static readonly (string Command, string Description)[] InteractiveHelpEntries =
@@ -49,6 +51,10 @@ internal static class CliCommandCatalog
         ("schedule export", "Export schedule data (--category, --name, --fields, --output)"),
         ("schedule create", "Create a ViewSchedule (--category, --fields, --name)"),
         ("import <file> --category <cat> --match-by <param>", "Batch-write params from CSV (--dry-run, --on-missing, --on-duplicate)"),
+        ("history capture", "Append a snapshot to .revitcli/history/ (--source, --exclude-fixes)"),
+        ("history list", "List recent snapshots (--include-fixes, --limit)"),
+        ("history prune --keep <duration|count>", "Drop old snapshots (--dry-run, --apply)"),
+        ("mcp serve", "Start MCP stdio server (for Claude Desktop / Cursor)"),
         ("init <template>", "Create .revitcli.yml from starter template"),
         ("doctor", "Check setup, server discovery, and connectivity"),
         ("batch <file>", "Execute commands from a JSON batch file"),
@@ -91,6 +97,8 @@ internal static class CliCommandCatalog
         root.AddCommand(SnapshotCommand.Create(client));
 
         root.AddCommand(ImportCommand.Create(client));
+        root.AddCommand(HistoryCommand.Create(client));
+        root.AddCommand(McpCommand.Create(client));
 
         if (includeBatchCommand)
             root.AddCommand(BatchCommand.Create(client, config));
