@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Base styles for the RevitCli dashboard. The dashboard is dark-only by
+ * default — BIM project leads typically run it in office hours alongside
+ * Revit, where a dark UI is restful next to bright drawing canvases.
+ *
+ * Keep this file small. Page-specific styles belong in the relevant
+ * +page.svelte; only cross-cutting tokens live here.
+ */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply min-h-screen;
+  }
+
+  a {
+    @apply text-rc-accent hover:underline;
+  }
+
+  code,
+  pre,
+  .mono {
+    @apply font-mono;
+  }
+}
+
+@layer components {
+  .rc-card {
+    @apply rounded-lg border border-rc-border bg-rc-surface p-4 shadow-sm;
+  }
+
+  .rc-stat-label {
+    @apply text-xs uppercase tracking-wide text-rc-muted;
+  }
+
+  .rc-stat-value {
+    @apply text-3xl font-semibold;
+  }
+}
