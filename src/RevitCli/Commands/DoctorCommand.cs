@@ -440,18 +440,17 @@ internal sealed class DoctorEnvironment
 
     public string ResolvedRevit2026InstallDir =>
         !string.IsNullOrWhiteSpace(Revit2026InstallDir)
-            ? Revit2026InstallDir!
-            : Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "Autodesk", "Revit 2026");
+            ? Revit2026InstallDir!.Trim()
+            : RevitInstallDirResolver.DefaultInstallDir(2026);
 
     public static DoctorEnvironment Current()
     {
         return new DoctorEnvironment
         {
-            Revit2026InstallDir =
-                Environment.GetEnvironmentVariable("REVITCLI_REVIT2026_INSTALL_DIR") ??
-                Environment.GetEnvironmentVariable("Revit2026InstallDir")
+            // Resolve via the shared helper so doctor reports the same path the
+            // csproj references at build time (env-var override -> Autodesk
+            // convention -> default Program Files location).
+            Revit2026InstallDir = RevitInstallDirResolver.Resolve(2026)
         };
     }
 }

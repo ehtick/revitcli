@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
@@ -5,6 +6,7 @@ using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Commands;
 using RevitCli.Config;
+using RevitCli.Diagnostics;
 using RevitCli.Shared;
 using RevitCli.Tests.Client;
 using Xunit;
@@ -13,6 +15,27 @@ namespace RevitCli.Tests.Commands;
 
 public class DoctorCommandTests
 {
+    /// <summary>
+    /// Restores a process env var to its prior value (or removes it if it
+    /// wasn't set) when disposed. Lets tests mutate
+    /// <c>Revit2026InstallDir</c> / <c>REVITCLI_REVIT2026_INSTALL_DIR</c>
+    /// without leaking into other tests.
+    /// </summary>
+    private sealed class EnvVarScope : IDisposable
+    {
+        private readonly string _name;
+        private readonly string? _previous;
+
+        public EnvVarScope(string name, string? value)
+        {
+            _name = name;
+            _previous = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, value);
+        }
+
+        public void Dispose() => Environment.SetEnvironmentVariable(_name, _previous);
+    }
+
     private static DoctorEnvironment CreateDoctorEnvironment()
     {
         var root = Path.Combine(Path.GetTempPath(), $"revitcli_doctor_{System.Guid.NewGuid():N}");
@@ -295,6 +318,87 @@ public class DoctorCommandTests
         Assert.Equal(1, exitCode);
         Assert.Contains("stale", writer.ToString(), System.StringComparison.OrdinalIgnoreCase);
         Assert.Contains("pid", writer.ToString(), System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RevitInstallDirResolver_PrefersRevitCliOverrideEnvVar()
+    {
+        // Per-test sandbox so the explicit override has somewhere safe to point.
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli_resolver_{Guid.NewGuid():N}");
+        var revitCliDir = Path.Combine(root, "revitcli-override");
+        var autodeskDir = Path.Combine(root, "autodesk-convention");
+
+        using var revitCli = new EnvVarScope("REVITCLI_REVIT2026_INSTALL_DIR", revitCliDir);
+        using var autodesk = new EnvVarScope("Revit2026InstallDir", autodeskDir);
+
+        Assert.Equal(revitCliDir, RevitInstallDirResolver.Resolve(2026));
+    }
+
+    [Fact]
+    public void RevitInstallDirResolver_HonorsAutodeskConventionEnvVar()
+    {
+        // Reproduces the bug: Revit installed at a non-default path that the
+        // user advertised via the Autodesk-convention Revit<year>InstallDir.
+        var customDir = Path.Combine("D:", "revit2026", "Revit 2026");
+
+        using var revitCli = new EnvVarScope("REVITCLI_REVIT2026_INSTALL_DIR", null);
+        using var autodesk = new EnvVarScope("Revit2026InstallDir", customDir);
+
+        Assert.Equal(customDir, RevitInstallDirResolver.Resolve(2026));
+    }
+
+    [Fact]
+    public void RevitInstallDirResolver_FallsBackToProgramFilesDefault()
+    {
+        using var revitCli = new EnvVarScope("REVITCLI_REVIT2026_INSTALL_DIR", null);
+        using var autodesk = new EnvVarScope("Revit2026InstallDir", null);
+
+        var resolved = RevitInstallDirResolver.Resolve(2026);
+
+        Assert.EndsWith(Path.Combine("Autodesk", "Revit 2026"), resolved);
+        Assert.Equal(RevitInstallDirResolver.DefaultInstallDir(2026), resolved);
+    }
+
+    [Fact]
+    public void RevitInstallDirResolver_TreatsWhitespaceOnlyEnvVarAsUnset()
+    {
+        using var revitCli = new EnvVarScope("REVITCLI_REVIT2025_INSTALL_DIR", "   ");
+        using var autodesk = new EnvVarScope("Revit2025InstallDir", null);
+
+        Assert.Equal(RevitInstallDirResolver.DefaultInstallDir(2025), RevitInstallDirResolver.Resolve(2025));
+    }
+
+    [Fact]
+    public async Task Execute_MissingDllsReportsResolvedPath_NotHardcodedDefault()
+    {
+        // Simulate: Revit installed at a non-default path, env var advertises
+        // it, but we deliberately leave the DLLs absent so the precheck fails.
+        // The FAIL message must mention the env-var path so users see whether
+        // their override was honored.
+        var customDir = Path.Combine(Path.GetTempPath(), $"revitcli_doctor_{Guid.NewGuid():N}", "Revit 2026");
+        Directory.CreateDirectory(customDir);
+
+        var environment = CreateDoctorEnvironment();
+        environment = new DoctorEnvironment
+        {
+            UserProfile = environment.UserProfile,
+            AppData = environment.AppData,
+            Revit2026InstallDir = customDir,
+            CliVersion = environment.CliVersion
+        };
+        WriteAddinManifest(environment, CurrentCliAssemblyPath());
+
+        var status = new StatusInfo { RevitVersion = "2026", RevitYear = 2026, AddinVersion = environment.CliVersion };
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(status)));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment);
+
+        Assert.Equal(1, exitCode);
+        var output = writer.ToString();
+        Assert.Contains(customDir, output);
+        Assert.DoesNotContain("C:\\Program Files\\Autodesk\\Revit 2026", output);
     }
 
     [Fact]
