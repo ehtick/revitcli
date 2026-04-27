@@ -54,7 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   into any GitHub workflow to install the CLI, run `check --output sarif`,
   and upload to Code Scanning. See `docs/ci/github-actions.md`.
 
-### Added — v1.9 profile governance (foundation)
+### Added — v1.9 profile governance (complete)
 
 - `revitcli profile` command cluster:
   - `profile validate [--profile PATH]` — schema + reference-completeness
@@ -66,6 +66,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   - `profile diff <a> <b> [--output table|json|markdown]` — structural
     diff (added / removed / changed) under `checks.`, `publish.`,
     `presets.`, `defaults.` keys.
+  - `profile install <git-url> [--ref <ref>] [--subpath <relative>]
+    [--target <dir>] [--force]` — shallow-clones a remote profile
+    bundle into `.revitcli/profiles/<name>@<ref>/` via LibGit2Sharp.
+    Prints the resulting path + a suggested `extends:` line.
+- **Multi-extends**: `extends:` now accepts an array (`extends: [base.yml,
+  team.yml]`) in addition to the existing single-string form. Parents
+  resolve left-to-right (later parents override earlier).
+- **Deep-merge mode**: opt-in via `extendsStrategy: deep-merge` at the
+  profile root. Dictionary entries (`checks.<name>`, `publish.<name>`,
+  etc.) merge by key; conflicts use child-wins. Default remains
+  `replace` for byte-identical backward compat.
+- Cycle detection extended to multi-parent DAGs (a→b→c→a still throws).
+
+### Added — v1.8 family management (foundation; purge / validate / export land in a follow-up)
+
+- `revitcli family ls [--unused] [--category <name>] [--output table|json|csv]`
+  — lists families in the active document.
+- New addin endpoint `GET /api/families?unused=true|false&category=<name>`
+  served by `FamiliesController`. Token auth applies as for every other
+  endpoint.
+- `IRevitOperations.ListFamiliesAsync(FamilyListRequest)` is additive —
+  v1.7 add-ins paired with the v1.8 CLI return 404, which the client
+  maps to a clear "endpoint requires v1.8 add-in" message.
+
+### Added — MCP phase 2 (resources + safe writes)
+
+- New MCP methods: `resources/list` and `resources/read`. Capabilities
+  advertise `resources` when any are registered.
+- 3 read-only resources:
+  - `revitcli://snapshot/latest` (`application/json`) — fresh
+    summary-only snapshot via the addin.
+  - `revitcli://history/` (`application/json`) — recent snapshots from
+    `HistoryStore` index.
+  - `revitcli://profile/effective` (`text/yaml`) — resolved effective
+    profile via `ProfileResolver`.
+- New `snapshot` tool — read-only fresh capture for LLMs.
+- New `set` tool — **double-gated** for safety:
+  1. `mcp serve --allow-writes` flag must be set (server-side opt-in).
+  2. Each call must include `confirm: true` in arguments (per-call opt-in).
+  Without either, the tool returns a content-text refusal explaining how
+  to enable. Defense in depth for LLM-driven model writes.
+
+### Added — v2.0 dashboard (phase 1 — skeleton)
+
+- New top-level dashboard project under `dashboard/` (SvelteKit +
+  adapter-static + Tailwind + Chart.js). Phase 1 ships:
+  - Project skeleton with pinned dependency versions (Node ≥ 20, npm
+    ≥ 10). No `npm install` is run at check-in time — users run their
+    own.
+  - Overview page (current score, element-counts, 7-day sparkline
+    placeholder div). Charts and Multi-project view land in a v2.0
+    follow-up.
+  - History loader via `?history=` query param or `/data/history.json`
+    fallback.
+- `revitcli dashboard serve [--port 8080] [--history-dir .revitcli/history]`
+  — localhost-only static-file server backed by `HttpListener` (BCL,
+  no new NuGet). Refuses to start if `dashboard/build/` is missing
+  with a clear message.
+- `revitcli dashboard build --output ./public [--history-dir <dir>]
+  [--force]` — copies the prebuilt dashboard + injects the user's
+  history index into `public/data/history.json`. Refuses to overwrite
+  a non-empty output dir without `--force`.
 
 ### Added — MCP adapter (side track, unchanged)
 

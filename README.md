@@ -60,7 +60,9 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli mcp serve` | MCP stdio server for Claude Desktop / Cursor |
 | `revitcli check --output sarif\|pr-comment` | SARIF 2.1.0 / PR-comment report (v1.7) |
 | `revitcli ci doctor` | Detect CI provider + emit workflow snippet (v1.7) |
-| `revitcli profile validate` / `show --resolve` / `diff` | Profile lint, resolve, structural diff (v1.9) |
+| `revitcli profile validate` / `show --resolve` / `diff` / `install` | Profile lint, resolve, diff, git install (v1.9) |
+| `revitcli family ls` | List Revit families (--unused, --category) (v1.8) |
+| `revitcli dashboard serve` / `build` | Serve / package the static dashboard (v2.0 — phase 1) |
 
 ## Features
 
