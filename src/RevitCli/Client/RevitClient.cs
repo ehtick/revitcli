@@ -230,6 +230,22 @@ public class RevitClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Drop the listed family ids from the active document. The CLI is
+    /// responsible for selecting the ids (--unused / --category / --keep);
+    /// the addin runs the deletion in a single Revit transaction.
+    /// </summary>
+    public Task<ApiResponse<FamilyPurgeResult>> PurgeFamiliesAsync(FamilyPurgeRequest request)
+        => PostAsync<FamilyPurgeResult>("/api/families/purge", request);
+
+    /// <summary>
+    /// Save the listed families as standalone .rfa files under
+    /// <see cref="FamilyExportRequest.OutputDir"/>. In-place families
+    /// are reported as failures (Revit can't <c>EditFamily</c> on them).
+    /// </summary>
+    public Task<ApiResponse<FamilyExportResult>> ExportFamiliesAsync(FamilyExportRequest request)
+        => PostAsync<FamilyExportResult>("/api/families/export", request);
+
     public async Task<ApiResponse<ModelSnapshot>> CaptureSnapshotAsync(SnapshotRequest request)
     {
         try

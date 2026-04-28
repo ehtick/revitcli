@@ -90,6 +90,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   v1.7 add-ins paired with the v1.8 CLI return 404, which the client
   maps to a clear "endpoint requires v1.8 add-in" message.
 
+### Added — v1.8 family management (CLI completion: validate / purge / export)
+
+Closes the v1.8 family CLI surface. The CLI side ships in this PR with
+fully mocked HTTP coverage; the corresponding Revit addin endpoints
+(`POST /api/families/purge`, `POST /api/families/export`) land in a
+Windows-only follow-up because the addin needs a live Revit session to
+build and test against.
+
+- `revitcli family validate [--category NAME] [--rules CSV] [--output table|json|csv] [--fail-on error|warning]`
+  — built-in invariant checks: name-non-empty, name-no-path-chars,
+  category-known, loadable-or-in-place. Default `--fail-on=error`
+  matches `audit` semantics; warnings (placeholder category) do not
+  fail CI by default.
+- `revitcli family purge [--category NAME] [--keep CSV] [--apply] [--yes]`
+  — drops families with zero placed instances. Default mode is dry-run
+  (lists candidates); `--apply --yes` actually deletes. In-place
+  families are filtered out client-side (Revit can't drop them as
+  families). `--keep` accepts substring patterns to safelist by name.
+  Audit log entry on apply (`action: "family-purge"`).
+- `revitcli family export [--all|--category NAME|--name SUBSTR] [--output-dir DIR] [--overwrite] [--dry-run]`
+  — saves families as standalone .rfa files. In-place and non-loadable
+  families are filtered out. Partial failures exit 2 (consistent with
+  other write commands). Audit log entry on apply.
+- New shared DTOs: `FamilyPurgeRequest/Result`, `FamilyExportRequest/Result`,
+  `FamilyValidationIssue` (shape mirrors `AuditIssue` so SARIF / dashboard
+  consumers can lift the same fields without conditioning on source).
+- `RevitClient.PurgeFamiliesAsync` / `ExportFamiliesAsync` added; both
+  POST to the new family endpoints. Will return 404 against a v1.7
+  addin until the Windows follow-up lands.
+
 ### Added — MCP phase 2 (resources + safe writes)
 
 - New MCP methods: `resources/list` and `resources/read`. Capabilities
