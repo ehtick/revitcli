@@ -32,6 +32,7 @@ public static class ProfileCommand
         command.AddCommand(CreateShowCommand());
         command.AddCommand(CreateDiffCommand());
         command.AddCommand(CreateInstallCommand());
+        command.AddCommand(CreateSimulateCommand());
         return command;
     }
 
@@ -632,5 +633,180 @@ public static class ProfileCommand
             throw new FileNotFoundException(
                 $"No {ProfileLoader.FileName} found by walking up from {Directory.GetCurrentDirectory()}.");
         return discovered;
+    }
+
+    // ─── simulate (v2.1) ────────────────────────────────────────────────
+
+    private static Command CreateSimulateCommand()
+    {
+        var pipelineArg = new Argument<string>(
+            "pipeline",
+            "Name of the publish pipeline to simulate (must exist under publish.<name> in the profile).");
+        var profileOpt = new Option<string?>(
+            "--profile",
+            "Path to .revitcli.yml profile (default: walk up from cwd).");
+        var outputOpt = new Option<string>(
+            name: "--output",
+            description: "Output format: table | json.",
+            getDefaultValue: () => "table");
+        var failOnOpt = new Option<string>(
+            name: "--fail-on",
+            description:
+                "Exit with non-zero when the simulator's worst finding meets this severity. " +
+                "info | warning | error. Default: error.",
+            getDefaultValue: () => "error");
+
+        var cmd = new Command(
+            "simulate",
+            "Dry-evaluate a publish pipeline without contacting Revit. Reports preset / precheck completeness, surface concerns (sheets: ALL, unknown formats), and a runtime estimate.")
+        {
+            pipelineArg, profileOpt, outputOpt, failOnOpt,
+        };
+
+        cmd.SetHandler(async (string pipeline, string? profilePath, string output, string failOn) =>
+        {
+            Environment.ExitCode = await ExecuteSimulateAsync(
+                pipeline, profilePath, output, failOn, Console.Out, Console.Error);
+        }, pipelineArg, profileOpt, outputOpt, failOnOpt);
+
+        return cmd;
+    }
+
+    public static async Task<int> ExecuteSimulateAsync(
+        string pipelineName,
+        string? profilePathOverride,
+        string outputFormat,
+        string failOn,
+        TextWriter stdout,
+        TextWriter stderr)
+    {
+        string resolvedPath;
+        try
+        {
+            resolvedPath = ResolveProfilePath(profilePathOverride);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or ArgumentException)
+        {
+            await stderr.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        ProjectProfile profile;
+        try
+        {
+            profile = ProfileLoader.Load(resolvedPath);
+        }
+        catch (Exception ex)
+        {
+            await stderr.WriteLineAsync($"Error loading profile: {ex.Message}");
+            return 1;
+        }
+
+        ProfileSimulator.PipelineReport report;
+        try
+        {
+            report = ProfileSimulator.SimulatePipeline(profile, pipelineName);
+        }
+        catch (ArgumentException ex)
+        {
+            await stderr.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        if (string.Equals(outputFormat, "json", StringComparison.OrdinalIgnoreCase))
+        {
+            var jsonOpts = new JsonSerializerOptions(JsonSerializerOptions.Default)
+            {
+                WriteIndented = true,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+            };
+            await stdout.WriteLineAsync(JsonSerializer.Serialize(report, jsonOpts));
+        }
+        else
+        {
+            await stdout.WriteLineAsync(RenderSimulateTable(report, resolvedPath));
+        }
+
+        return DecideSimulateExitCode(report.WorstSeverity, failOn);
+    }
+
+    private static int DecideSimulateExitCode(ProfileSimulator.Severity worst, string failOn)
+    {
+        // Exit-code policy mirrors `audit` / `family validate`: caller
+        // picks the threshold; default 'error' so info/warning don't
+        // break a CI gate. Empty / unknown failOn reverts to 'error'.
+        var threshold = (failOn ?? "error").Trim().ToLowerInvariant();
+        var thresholdSeverity = threshold switch
+        {
+            "info" => ProfileSimulator.Severity.Info,
+            "warning" => ProfileSimulator.Severity.Warning,
+            _ => ProfileSimulator.Severity.Error,
+        };
+        return worst >= thresholdSeverity ? 1 : 0;
+    }
+
+    private static string RenderSimulateTable(ProfileSimulator.PipelineReport r, string profilePath)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Pipeline '{r.Name}' (from {profilePath})");
+        sb.AppendLine(new string('=', Math.Min(70, profilePath.Length + r.Name.Length + 14)));
+
+        if (!string.IsNullOrWhiteSpace(r.Precheck))
+        {
+            sb.Append("  Precheck: '").Append(r.Precheck).Append("'");
+            if (!string.IsNullOrWhiteSpace(r.PrecheckFailOn))
+                sb.Append("  failOn=").Append(r.PrecheckFailOn);
+            sb.AppendLine();
+            if (r.PrecheckRules.Count > 0)
+                sb.Append("    rules: ").AppendLine(string.Join(", ", r.PrecheckRules));
+            else
+                sb.AppendLine("    rules: (none)");
+        }
+        else
+        {
+            sb.AppendLine("  Precheck: (none — pipeline runs exports unconditionally)");
+        }
+
+        sb.Append("  Presets (").Append(r.Presets.Count).AppendLine("):");
+        foreach (var p in r.Presets)
+        {
+            var sheetLabel = p.ExportsAllSheets
+                ? "all"
+                : (p.Sheets.Count > 0 ? string.Join(",", p.Sheets) : "(none)");
+            var viewsLabel = p.Views.Count > 0 ? $", views=[{string.Join(",", p.Views)}]" : "";
+            var dirLabel = string.IsNullOrWhiteSpace(p.OutputDir) ? "" : $", outputDir={p.OutputDir}";
+            sb.Append("    - ").Append(p.Name)
+              .Append("  format=").Append(string.IsNullOrWhiteSpace(p.Format) ? "?" : p.Format)
+              .Append(", sheets=[").Append(sheetLabel).Append("]")
+              .Append(viewsLabel)
+              .AppendLine(dirLabel);
+        }
+
+        sb.Append("  Incremental: ").Append(r.Incremental ? "yes" : "no");
+        if (r.Incremental)
+        {
+            sb.Append("  baseline=").Append(string.IsNullOrWhiteSpace(r.BaselinePath) ? "(default)" : r.BaselinePath);
+            sb.Append("  sinceMode=").Append(r.SinceMode);
+        }
+        sb.AppendLine();
+
+        sb.Append("  Webhook: ").AppendLine(string.IsNullOrWhiteSpace(r.WebhookUrl) ? "(none)" : r.WebhookUrl);
+
+        sb.AppendLine();
+        if (r.Findings.Count == 0)
+        {
+            sb.AppendLine("Findings: (clean)");
+        }
+        else
+        {
+            sb.AppendLine($"Findings ({r.Findings.Count}):");
+            foreach (var f in r.Findings)
+            {
+                sb.Append("  [").Append(f.Severity.ToString().ToLowerInvariant()).Append("] ")
+                  .Append(f.Code).Append(": ").AppendLine(f.Message);
+            }
+        }
+
+        return sb.ToString().TrimEnd();
     }
 }

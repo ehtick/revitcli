@@ -175,6 +175,36 @@ Scanning ingestion pipeline. Now they can.
   history index into `public/data/history.json`. Refuses to overwrite
   a non-empty output dir without `--force`.
 
+### Added — v2.1 step 1: `profile simulate <pipeline>`
+
+First step of the v2.1 "Configuration Confidence" milestone (see
+`docs/v2.1-roadmap.md`). Closes the gap between schema lint and
+runtime errors: `profile validate` checks that the YAML parses;
+`profile simulate <name>` walks the publish pipeline as if it were
+about to run, without contacting Revit, and reports reference
+completeness + surface concerns.
+
+- New CLI command `revitcli profile simulate <pipeline>
+  [--profile PATH] [--output table|json] [--fail-on info|warning|error]`.
+- Static analysis surfaces:
+  - **error** — preset name not defined; precheck name not defined;
+    preset has no `format`.
+  - **warning** — preset uses an unknown format (not dwg|pdf|ifc);
+    preset has neither sheets nor views; precheck has no rules.
+  - **info** — preset uses `sheets: ALL` (full-document export,
+    confirm intent).
+- Aggregates ALL rule sources of a check into the precheck report
+  (auditRules + requiredParameters + naming) — not just the literal
+  `auditRules:` list. Operators see what the precheck actually
+  exercises.
+- Webhook URL, incremental-publish settings, and baseline path
+  surface in the report so the operator sees the full runtime
+  surface in one place.
+- New `docs/v2.1-roadmap.md` lays out the v2.1 plan: this step (✅),
+  multi-Revit-version smoke matrix (next), and journal signing /
+  verify (last).
+
+
 ### Added — MCP adapter (side track, unchanged)
 
 - `revitcli mcp serve` — Model Context Protocol stdio server (spec
