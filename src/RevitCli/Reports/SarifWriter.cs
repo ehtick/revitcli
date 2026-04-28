@@ -167,4 +167,100 @@ public static class SarifWriter
 
         return bag.Count == 0 ? null : bag;
     }
+
+    /// <summary>
+    /// Render a sequence of <see cref="FamilyValidationIssue"/> values
+    /// into SARIF 2.1.0 JSON. Same envelope as <see cref="Render"/>
+    /// so a CI consumer (GitHub Code Scanning) can ingest family
+    /// validation runs and audit runs uniformly. The locations and
+    /// per-result properties carry family-flavored fields
+    /// (<c>revitFamilyId</c>, <c>revitFamilyName</c>) instead of the
+    /// element-flavored ones audit uses, but the shape is otherwise
+    /// identical.
+    /// </summary>
+    public static string RenderFamilyValidation(
+        IEnumerable<FamilyValidationIssue> issues, SarifWriterOptions? options = null)
+    {
+        options ??= new SarifWriterOptions();
+
+        var version = options.ToolVersion;
+        if (string.IsNullOrWhiteSpace(version))
+            version = AssemblyVersionReader.CurrentCliVersion();
+
+        var results = new List<SarifResult>();
+        foreach (var issue in issues)
+            results.Add(BuildFamilyResult(issue, options));
+
+        var log = new SarifLog
+        {
+            Runs = new List<SarifRun>
+            {
+                new()
+                {
+                    Tool = new SarifTool
+                    {
+                        Driver = new SarifToolComponent
+                        {
+                            Name = options.ToolName,
+                            Version = version,
+                            InformationUri = options.InformationUri,
+                        }
+                    },
+                    Results = results,
+                }
+            }
+        };
+
+        return JsonSerializer.Serialize(log, options.Indented ? IndentedOptions : CompactOptions);
+    }
+
+    private static SarifResult BuildFamilyResult(FamilyValidationIssue issue, SarifWriterOptions options)
+    {
+        return new SarifResult
+        {
+            RuleId = issue.Rule ?? "",
+            Level = MapSeverity(issue.Severity),
+            Message = new SarifMessage { Text = issue.Message ?? "" },
+            Locations = BuildFamilyLocations(issue),
+            Properties = BuildFamilyProperties(issue, options),
+        };
+    }
+
+    private static IReadOnlyList<SarifLocation>? BuildFamilyLocations(FamilyValidationIssue issue)
+    {
+        // A family always has both an id and a name in our model — no
+        // "no-location" case. We still keep the shape parallel to
+        // BuildLocations(AuditIssue) so a SARIF reader can apply the
+        // same logical-location handling to both runs.
+        var name = string.IsNullOrEmpty(issue.FamilyName)
+            ? $"family:#{issue.FamilyId}"
+            : $"family:{issue.FamilyName}#{issue.FamilyId}";
+
+        return new List<SarifLocation>
+        {
+            new()
+            {
+                LogicalLocations = new List<SarifLogicalLocation>
+                {
+                    new() { Name = name, Kind = "family" }
+                }
+            }
+        };
+    }
+
+    private static IReadOnlyDictionary<string, object>? BuildFamilyProperties(
+        FamilyValidationIssue issue, SarifWriterOptions options)
+    {
+        var bag = new Dictionary<string, object>
+        {
+            ["revitFamilyId"] = issue.FamilyId,
+        };
+        if (!string.IsNullOrWhiteSpace(issue.FamilyName))
+            bag["revitFamilyName"] = issue.FamilyName;
+        if (!string.IsNullOrWhiteSpace(issue.Category))
+            bag["revitCategory"] = issue.Category;
+        if (!string.IsNullOrWhiteSpace(options.DocumentPath))
+            bag["documentPath"] = options.DocumentPath!;
+        return bag;
+    }
 }

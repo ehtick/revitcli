@@ -120,6 +120,22 @@ build and test against.
   POST to the new family endpoints. Will return 404 against a v1.7
   addin until the Windows follow-up lands.
 
+### Added — `family validate --output sarif`
+
+Closes the CI integration story for v1.8 family validation. Previously
+`audit --output sarif` produced SARIF for model-level checks but family
+issues had no SARIF projection — they couldn't ride the same Code
+Scanning ingestion pipeline. Now they can.
+
+- New `family validate --output sarif` flag — same SARIF 2.1.0 envelope
+  as `audit --output sarif`, so a CI consumer (GitHub Code Scanning,
+  Azure DevOps SARIF importer, etc.) ingests both runs uniformly.
+- New `SarifWriter.RenderFamilyValidation(IEnumerable<FamilyValidationIssue>)`
+  — family-flavored projection: per-result `properties.revitFamilyId` /
+  `revitFamilyName` / `revitCategory` / `documentPath`, logical
+  locations as `family:<name>#<id>` with `kind: "family"` so a SARIF
+  reader can disambiguate model-element issues from family issues.
+
 ### Added — MCP phase 2 (resources + safe writes)
 
 - New MCP methods: `resources/list` and `resources/read`. Capabilities

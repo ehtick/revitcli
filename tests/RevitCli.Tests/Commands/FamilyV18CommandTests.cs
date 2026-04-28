@@ -136,6 +136,30 @@ public class FamilyV18CommandTests
         Assert.True(doc.RootElement.GetArrayLength() >= 1);
     }
 
+    [Fact]
+    public async Task Validate_SarifOutput_IsValidSarif21WithFamilyResults()
+    {
+        // The SARIF projection is unit-tested in
+        // FamilyValidationSarifTests; this smoke-test covers the CLI
+        // wire-through (--output sarif → SarifWriter.RenderFamilyValidation).
+        var handler = new FamilyHttpHandler();
+        handler.Enqueue("/api/families", HttpStatusCode.OK,
+            ApiResponse<FamilyInfo[]>.Ok(new[]
+            {
+                new FamilyInfo { Id = 5001, Name = "Bad/Name", Category = "Walls", IsLoadable = true, IsInPlace = false }
+            }));
+        var (client, writer) = MakeClientAndWriter(handler);
+
+        await FamilyCommand.ExecuteValidateAsync(client, null, null, "sarif", null, writer);
+
+        using var doc = JsonDocument.Parse(writer.ToString());
+        Assert.Equal("2.1.0", doc.RootElement.GetProperty("version").GetString());
+        var results = doc.RootElement.GetProperty("runs")[0].GetProperty("results");
+        Assert.Equal(1, results.GetArrayLength());
+        Assert.Equal("name-no-path-chars", results[0].GetProperty("ruleId").GetString());
+        Assert.Equal(5001, results[0].GetProperty("properties").GetProperty("revitFamilyId").GetInt64());
+    }
+
     // ─── purge ────────────────────────────────────────────────────────────
 
     [Fact]

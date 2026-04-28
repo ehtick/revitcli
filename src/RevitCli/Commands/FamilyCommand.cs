@@ -147,7 +147,7 @@ public static class FamilyCommand
         var rulesOpt = new Option<string?>("--rules",
             "Comma-separated list of rule ids to run (default: all). " +
             $"Available: {string.Join(", ", FamilyValidator.AllRuleIds)}");
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, csv");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, csv, sarif");
         var failOnOpt = new Option<string?>("--fail-on",
             "Exit code 1 when any issue at this severity or above is found: error|warning. " +
             "Default: error.");
@@ -202,6 +202,14 @@ public static class FamilyCommand
                 break;
             case "csv":
                 await output.WriteLineAsync(FormatValidationCsv(issues));
+                break;
+            case "sarif":
+                // Same SARIF 2.1.0 envelope as `audit --output sarif` so
+                // GitHub Code Scanning can ingest both uniformly. Family
+                // issues carry revitFamilyId / revitFamilyName under
+                // `properties` and `family:<name>#<id>` logical locations.
+                await output.WriteLineAsync(
+                    Reports.SarifWriter.RenderFamilyValidation(issues));
                 break;
             default:
                 await output.WriteLineAsync(FormatValidationTable(issues, families.Length));
