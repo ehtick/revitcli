@@ -82,8 +82,16 @@ public class ApiServer : IDisposable
                 WriteServerInfo(actualPort);
                 return;
             }
+            // WriteServerInfo runs after the listener is up, so its failure modes
+            // (TimeoutException from the cross-process mutex, IOException /
+            // UnauthorizedAccessException from the atomic file write) must reach
+            // this catch — otherwise the already-listening server and its run
+            // task escape unhandled and leak.
             catch (Exception ex) when (ex is HttpListenerException or System.Net.Sockets.SocketException
-                                        or InvalidOperationException)
+                                        or InvalidOperationException
+                                        or TimeoutException
+                                        or IOException
+                                        or UnauthorizedAccessException)
             {
                 lastError = ex;
                 Console.Error.WriteLine(
@@ -92,6 +100,7 @@ public class ApiServer : IDisposable
                 ObserveRunTask(runTask);
                 _server = null;
                 _runTask = null;
+                _actualPort = 0;
                 if (i == 10) throw;
             }
         }
@@ -336,9 +345,11 @@ public class ApiServer : IDisposable
             if (info?.Token != _token)
                 return;
 
-            // Belt-and-suspenders: only delete entries that are unambiguously ours.
-            // Either the same PID OR the same port indicates the entry belongs to this
-            // server instance; both diverging means a different server overwrote ours.
+            // Belt-and-suspenders: token equality (checked above) already proves the
+            // file was written by this server instance. As a second line of defense,
+            // skip the delete if either the PID or the port has drifted from what we
+            // currently hold — that points at a stale info file the OS may have
+            // recycled rather than something we actively own.
             var currentPid = Process.GetCurrentProcess().Id;
             if (info.Pid != currentPid || info.Port != _actualPort)
                 return;

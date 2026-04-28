@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -275,9 +276,13 @@ public sealed class RealRevitOperations : IRevitOperations
 
     /// <summary>
     /// Validate that the value can be coerced to the parameter's storage type
-    /// without actually modifying the parameter. Used by dry-run.
+    /// without actually modifying the parameter. Used by dry-run, so it must
+    /// exercise every check that <see cref="SetParameterValue"/> would do —
+    /// including the display→internal unit conversion for <c>Double</c>
+    /// parameters — otherwise dry-run can succeed for inputs that the real
+    /// write would reject.
     /// </summary>
-    private static void ValidateCoercion(Parameter param, string value)
+    private static void ValidateCoercion(Document doc, Parameter param, string value)
     {
         switch (param.StorageType)
         {
@@ -289,9 +294,12 @@ public sealed class RealRevitOperations : IRevitOperations
                         $"Cannot convert '{value}' to integer for parameter '{param.Definition.Name}'.");
                 break;
             case StorageType.Double:
-                if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var dblVal))
                     throw new ArgumentException(
                         $"Cannot convert '{value}' to number for parameter '{param.Definition.Name}'.");
+                // Same unit-conversion check SetParameterValue performs — dry-run
+                // must fail in lockstep with the real write, not silently pass.
+                ConvertDoubleToInternalUnits(doc, param, dblVal);
                 break;
             case StorageType.ElementId:
                 if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
@@ -301,6 +309,32 @@ public sealed class RealRevitOperations : IRevitOperations
             default:
                 throw new ArgumentException(
                     $"Unsupported storage type for parameter '{param.Definition.Name}'.");
+        }
+    }
+
+    /// <summary>
+    /// Map a Double parameter value from display units to Revit's internal
+    /// units. Throws <see cref="ArgumentException"/> when the parameter's
+    /// display unit cannot be determined — callers must propagate so that
+    /// <see cref="ValidateCoercion"/> and <see cref="SetParameterValue"/>
+    /// stay in lockstep.
+    /// </summary>
+    private static double ConvertDoubleToInternalUnits(Document doc, Parameter param, double dblVal)
+    {
+        try
+        {
+            var specTypeId = param.Definition.GetDataType();
+            var formatOptions = doc.GetUnits().GetFormatOptions(specTypeId);
+            var unitTypeId = formatOptions.GetUnitTypeId();
+            return UnitUtils.ConvertToInternalUnits(dblVal, unitTypeId);
+        }
+        catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException
+                                    or InvalidOperationException
+                                    or ArgumentException)
+        {
+            throw new ArgumentException(
+                $"Cannot determine display unit for parameter '{param.Definition.Name}': {ex.Message}. " +
+                "Pass the value in Revit internal units or fix the project's unit settings.", ex);
         }
     }
 
@@ -324,25 +358,7 @@ public sealed class RealRevitOperations : IRevitOperations
             case StorageType.Double:
                 if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var dblVal))
                     throw new ArgumentException($"Cannot convert '{value}' to number for parameter '{param.Definition.Name}'.");
-                // Convert from display units to internal units. Failure here means we can't
-                // map the display unit deterministically — surface it instead of silently
-                // writing raw values that look right in the API but wrong in the model.
-                try
-                {
-                    var specTypeId = param.Definition.GetDataType();
-                    var formatOptions = doc.GetUnits().GetFormatOptions(specTypeId);
-                    var unitTypeId = formatOptions.GetUnitTypeId();
-                    dblVal = UnitUtils.ConvertToInternalUnits(dblVal, unitTypeId);
-                }
-                catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException
-                                            or InvalidOperationException
-                                            or ArgumentException)
-                {
-                    throw new ArgumentException(
-                        $"Cannot determine display unit for parameter '{param.Definition.Name}': {ex.Message}. " +
-                        "Pass the value in Revit internal units or fix the project's unit settings.", ex);
-                }
-                param.Set(dblVal);
+                param.Set(ConvertDoubleToInternalUnits(doc, param, dblVal));
                 break;
 
             case StorageType.ElementId:
@@ -393,6 +409,12 @@ public sealed class RealRevitOperations : IRevitOperations
         };
     }
 
+    // De-dupe stderr warnings for filter unit-conversion failures. Without this,
+    // ConvertFilterValueToInternal — invoked once per candidate Element inside
+    // MatchesFilter — would emit one warning per element on a large model and
+    // flood stderr / slow query and audit paths.
+    private static readonly ConcurrentDictionary<string, byte> _filterUnitConversionWarnings = new();
+
     private static double ConvertFilterValueToInternal(Document doc, Parameter param, double filterValue)
     {
         if (param.StorageType != StorageType.Double)
@@ -410,10 +432,13 @@ public sealed class RealRevitOperations : IRevitOperations
                                     or ArgumentException)
         {
             // Filter compare against unconvertible parameter — fall back to raw value with a warning
-            // so users notice when their filter on a unit-bearing field may not match.
-            Console.Error.WriteLine(
-                $"[RevitCli] Filter on '{param.Definition.Name}' could not be unit-converted ({ex.Message}); " +
-                "comparing against raw internal value.");
+            // so users notice when their filter on a unit-bearing field may not match. Warn at most
+            // once per (parameter, filterValue) pair across the lifetime of the addin.
+            var key = $"{param.Definition.Name}|{filterValue.ToString("R", CultureInfo.InvariantCulture)}";
+            if (_filterUnitConversionWarnings.TryAdd(key, 0))
+                Console.Error.WriteLine(
+                    $"[RevitCli] Filter on '{param.Definition.Name}' could not be unit-converted ({ex.Message}); " +
+                    "comparing against raw internal value.");
             return filterValue;
         }
     }
@@ -649,8 +674,10 @@ public sealed class RealRevitOperations : IRevitOperations
                     throw new InvalidOperationException(
                         $"Element {ToCliElementId(element.Id)} ({element.Name}): parameter '{request.Param}' is read-only.");
 
-                // Validate type coercion before adding to preview (catches "abc" → int early)
-                ValidateCoercion(param, request.Value);
+                // Validate type coercion (and unit conversion for Double) before
+                // adding to preview, so dry-run rejects the same inputs SetParameterValue
+                // would reject during the actual write.
+                ValidateCoercion(doc, param, request.Value);
 
                 var oldValue = FormatParameterValue(doc, param);
                 preview.Add(new SetPreviewItem
