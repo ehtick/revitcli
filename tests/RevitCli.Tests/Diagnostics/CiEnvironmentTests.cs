@@ -61,7 +61,10 @@ public class CiEnvironmentTests
     [Fact]
     public void Detect_AzureDevOps_WhenTfBuildTrue()
     {
-        var detection = CiEnvironment.Detect(Lookup(("TF_BUILD", "True"), ("Agent_OS", "Windows_NT")));
+        // Azure Pipelines exposes the `Agent.OS` pipeline variable as the
+        // env var AGENT_OS (dot -> underscore + uppercase). Use the canonical
+        // form so we exercise the same lookup name as a real Azure Linux runner.
+        var detection = CiEnvironment.Detect(Lookup(("TF_BUILD", "True"), ("AGENT_OS", "Windows_NT")));
 
         Assert.True(detection.IsCi);
         Assert.Equal(CiEnvironment.AzureDevOps, detection.Provider);

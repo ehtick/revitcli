@@ -65,9 +65,12 @@ public static class ProfileResolver
 
     /// <summary>
     /// Resolve <paramref name="profilePath"/> via <see cref="ProfileLoader.Load"/>
-    /// and emit the merged effective profile in the requested format. Adds a
-    /// header comment line listing the inheritance chain so reviewers can see
-    /// where each value came from.
+    /// and emit the merged effective profile in the requested format. The YAML
+    /// output is prefixed with a `# Resolved profile (chain: ...)` comment so
+    /// human reviewers can trace inheritance; the JSON output is intentionally
+    /// header-free so machine consumers (`jq`, `JsonDocument.Parse`, downstream
+    /// CI tooling) can consume stdout directly without stripping a `//`-style
+    /// comment that JSON does not allow.
     /// </summary>
     public static string Render(string profilePath, ProfileRenderFormat format)
     {
@@ -79,7 +82,7 @@ public static class ProfileResolver
 
         return format switch
         {
-            ProfileRenderFormat.Json => RenderJson(merged, chain),
+            ProfileRenderFormat.Json => RenderJson(merged),
             ProfileRenderFormat.Yaml => RenderYaml(merged, chain),
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unsupported render format."),
         };
@@ -100,7 +103,7 @@ public static class ProfileResolver
         return sb.ToString();
     }
 
-    private static string RenderJson(ProjectProfile profile, IReadOnlyList<string> chain)
+    private static string RenderJson(ProjectProfile profile)
     {
         // Use camelCase to match the YAML wire form so callers can map identifiers
         // back to docs without translating naming conventions.
@@ -111,11 +114,10 @@ public static class ProfileResolver
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
         };
 
-        var sb = new StringBuilder();
-        sb.Append(BuildHeader(chain, "// "));
-        sb.Append(JsonSerializer.Serialize(profile, options));
-        sb.Append('\n');
-        return sb.ToString();
+        // No `// chain` header — that would break `jq` / JsonDocument.Parse.
+        // Callers that want to surface the inheritance chain alongside JSON
+        // output can call GetInheritanceChain themselves and write it to stderr.
+        return JsonSerializer.Serialize(profile, options) + "\n";
     }
 
     private static string BuildHeader(IReadOnlyList<string> chain, string commentPrefix)
