@@ -138,6 +138,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   tools (`set` / `import` / `fix` / `rollback`) deferred pending a safety
   review of LLM-driven model writes.
 
+### Added — post-audit follow-ups
+
+- `revitcli export --dry-run` now actually parses: validates inputs and resolves
+  sheet/view selectors but writes zero files; previously the README documented
+  the flag while the parser rejected it.
+
+### Fixed — post-audit follow-ups
+
+- `revitcli doctor` now honors the `Revit<year>InstallDir` env var (Autodesk
+  convention used by the addin csproj) when looking for `RevitAPI.dll`, so
+  installs at non-default locations no longer trigger a false `FAIL`. The
+  diagnostic message reports the path actually checked.
+
+### Internal — repo hygiene and security hardening (no user-facing API changes)
+
+- **Build**: centralized version (`Directory.Build.props` → `RevitCliVersion`) and
+  central NuGet management (`Directory.Packages.props`). `TreatWarningsAsErrors`
+  now enabled across all projects.
+- **Add-in security**: API token now derives from `RandomNumberGenerator` (32 random
+  bytes, hex) instead of `Guid.NewGuid()`. `~/.revitcli/server.json` is ACL-locked
+  to the current Windows user (FullControl only, inheritance disabled) on write.
+- **Add-in robustness**: `RemoveServerInfo` no longer leaks foreign server entries
+  (`&&` → `||` ownership check). Port-bind retry, atomic write, and run-task
+  observation now log narrowly-typed exceptions to stderr instead of swallowing
+  them silently. `Thread.Sleep` retain-loop kept (already async-safe outside the
+  Revit UI thread).
+- **Add-in `/api/export`**: path traversal check now uses `Path.GetFullPath`
+  canonicalization + `StartsWith(userProfile)` instead of a literal `..`
+  substring search. Validated against 8 attack/legit cases.
+- **Add-in `set`**: display→internal unit conversion failures now surface as
+  `400` with a clear message instead of silently writing the raw value.
+- **CLI HTTP**: default `HttpClient.Timeout` is 30s (override via
+  `REVITCLI_HTTP_TIMEOUT_SECONDS`, clamped 1-3600). Previously implicit 100s.
+- **CLI**: bare catches in `RevitClient.DiscoverServerUrl`, `CliConfig.Load`,
+  and `JournalLogger.Log` narrowed and surfaced to stderr.
+- **CLI**: shared `ServerInfo.DefaultPort` constant removes 3-way port
+  hardcoding between addin, client, and config.
+- **CI**: actions pinned to commit SHA. CLI `ci.yml` now matrices on
+  ubuntu-latest × windows-latest. `ci-addin.yml` triggers on PR (paths
+  filter) plus a daily 02:00 cron, no longer dispatch-only. `release.yml`
+  drops `continue-on-error: true` from per-Revit-year add-in builds.
+- **Tests**: `Fix_Apply_FailsWhenBaselineCannotBeSavedAndSkipsSet` reworked
+  to use a cross-platform invalid baseline path (was Windows-only via `<>`).
+
 ## [1.5.0] - 2026-04-26
 
 ### Added
@@ -205,7 +249,7 @@ import (P3) writes parameter values back from CSV in batched transactions.
 - No changes to existing commands, profiles, DTOs, or addin endpoints.
 - `import` reuses the existing `/api/elements` (query) and `/api/elements/set`
   (write) endpoints — **no addin upgrade required**. Users on v1.2.0 addin
-  + v1.3.0 CLI gain `import` immediately.
+  - v1.3.0 CLI gain `import` immediately.
 
 ### Test count
 
@@ -285,7 +329,7 @@ only the 3 sheets that changed, not the whole set.
 ### Changed
 
 - **`SnapshotDiffer.Diff`** — new signature accepts `SinceMode sinceMode =
-  SinceMode.Meta`. Existing callers (v1.1.0 `revitcli diff` command) keep
+SinceMode.Meta`. Existing callers (v1.1.0 `revitcli diff` command) keep
   MetaHash-only behavior; new P2 call sites pass `SinceMode.Content`
   explicitly. A P1 baseline (empty ContentHash) falls back to MetaHash
   comparison automatically — no schema bump, no forced baseline rebuild.

@@ -99,7 +99,11 @@ public static class CiEnvironment
             {
                 Provider = AzureDevOps,
                 DisplayName = "Azure Pipelines",
-                RunnerOs = lookup("Agent_OS"),
+                // Azure exposes the `Agent.OS` pipeline variable as the
+                // env var AGENT_OS (dot -> underscore + uppercase). Linux
+                // and macOS runners are case-sensitive, so reading the
+                // mixed-case form would always be null on those runners.
+                RunnerOs = lookup("AGENT_OS"),
                 IsCi = true,
             };
         }
@@ -242,6 +246,9 @@ public static class CiEnvironment
     // dumps the snippet to stdout and trimming saves screen space.
 
     public const string GitHubActionsSnippet = @"# .github/workflows/revitcli-check.yml
+# RevitCli check drives Revit and therefore needs a self-hosted Windows runner
+# with Revit installed. Replace `[self-hosted, windows]` below with your runner
+# labels (e.g. `[self-hosted, windows, revit-2026]`).
 name: RevitCli Check
 on:
   pull_request:
@@ -250,7 +257,7 @@ permissions:
   security-events: write
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -294,9 +301,12 @@ pipeline {
 ";
 
     public const string AzurePipelinesSnippet = @"# azure-pipelines.yml
+# RevitCli check drives Revit and therefore requires a self-hosted Windows
+# agent with Revit installed. Replace 'Self-Hosted-Windows-Revit' with the
+# name of your agent pool.
 trigger: [main]
 pool:
-  vmImage: ubuntu-latest
+  name: 'Self-Hosted-Windows-Revit'
 steps:
   - task: UseDotNet@2
     inputs:

@@ -57,6 +57,30 @@ public class PlaceholderOperationsTests
     }
 
     [Fact]
+    public async Task ExportAsync_DryRun_ReturnsDryRunProgressMessage()
+    {
+        // Server-side contract: when ExportRequest.DryRun is true, the operation
+        // must return Status="completed" with a "Dry run: ..." message that names
+        // the count of would-be files and the output directory.
+        var request = new ExportRequest
+        {
+            Format = "dwg",
+            Sheets = new() { "A1*", "A2*" },
+            OutputDir = "/tmp/exports",
+            DryRun = true
+        };
+
+        var progress = await _operations.ExportAsync(request);
+
+        Assert.Equal("completed", progress.Status);
+        Assert.Equal(100, progress.Progress);
+        Assert.NotNull(progress.Message);
+        Assert.StartsWith("Dry run:", progress.Message);
+        Assert.Contains("file(s)", progress.Message);
+        Assert.Contains("/tmp/exports", progress.Message);
+    }
+
+    [Fact]
     public async Task GetExportProgressAsync_ReturnsProgressForTaskId()
     {
         var progress = await _operations.GetExportProgressAsync("test-123");

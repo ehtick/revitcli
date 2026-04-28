@@ -163,7 +163,7 @@ publish:
     }
 
     [Fact]
-    public void Render_Json_EmitsValidJsonAfterHeader()
+    public void Render_Json_EmitsParseableJsonWithoutCommentHeader()
     {
         var path = WriteProfile("a.yml", """
 version: 1
@@ -174,12 +174,15 @@ checks:
 
         var rendered = ProfileResolver.Render(path, ProfileRenderFormat.Json);
 
-        Assert.StartsWith("// Resolved profile (chain:", rendered);
-        var bodyStart = rendered.IndexOf('\n');
-        var json = rendered.Substring(bodyStart + 1);
+        // JSON output must not be prefixed with a `//` comment — JSON has no
+        // comment syntax and machine consumers (jq, JsonDocument.Parse, CI
+        // tooling) would fail on the very first line. The chain header is
+        // YAML-only.
+        Assert.False(rendered.TrimStart().StartsWith("//", StringComparison.Ordinal),
+            "JSON output must not include a // chain header.");
 
         // JsonDocument.Parse will throw on malformed JSON — that is the assertion.
-        using var doc = JsonDocument.Parse(json);
+        using var doc = JsonDocument.Parse(rendered);
         Assert.Equal(JsonValueKind.Object, doc.RootElement.ValueKind);
         Assert.True(doc.RootElement.TryGetProperty("checks", out _));
     }

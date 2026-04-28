@@ -100,6 +100,10 @@ public static class AuditReportFormats
         return ext switch
         {
             ".sarif" => Sarif,
+            // .md is the round-trip companion to GetDefaultExtension("pr-comment").
+            // Without this case `revitcli check --report report.md` would fall
+            // through to the default table renderer instead of PrCommentWriter.
+            ".md" => PrComment,
             _ => null
         };
     }

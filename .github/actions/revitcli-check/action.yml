@@ -1,26 +1,26 @@
-name: 'RevitCli Check'
-description: 'Run RevitCli check and upload SARIF to Code Scanning'
-author: 'RevitCli'
+name: "RevitCli Check"
+description: "Run RevitCli check and upload SARIF to Code Scanning"
+author: "RevitCli"
 branding:
-  icon: 'check-circle'
-  color: 'blue'
+  icon: "check-circle"
+  color: "blue"
 
 inputs:
   revitcli-version:
     description: 'RevitCli .NET tool version (use "latest" or pin a specific version e.g. "1.7.0")'
     required: false
-    default: 'latest'
+    default: "latest"
   profile:
-    description: 'Path to a .revitcli.yml profile (relative to working-directory). Leave empty to auto-discover.'
+    description: "Path to a .revitcli.yml profile (relative to working-directory). Leave empty to auto-discover."
     required: false
-    default: ''
+    default: ""
   working-directory:
-    description: 'Directory to run the check in. Defaults to repository root.'
+    description: "Directory to run the check in. Defaults to repository root."
     required: false
-    default: '.'
+    default: "."
 
 runs:
-  using: 'composite'
+  using: "composite"
   steps:
     # SHA-pinned per the supply-chain hardening guide. Update with `gh api`
     # before bumping the major version label below — never trust a floating tag.
@@ -28,7 +28,7 @@ runs:
       # actions/setup-dotnet v4.3.1
       uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
       with:
-        dotnet-version: '8.0.x'
+        dotnet-version: "8.0.x"
 
     - name: Install RevitCli
       shell: bash
@@ -55,6 +55,12 @@ runs:
         fi
 
     - name: Upload SARIF to Code Scanning
+      # `if: always()` ensures the SARIF file is uploaded even when
+      # `revitcli check` exits non-zero (which it does whenever the
+      # `failOn` threshold is crossed). Without this, the upload step
+      # would be skipped on the very PRs that have new findings to
+      # surface — defeating the action's primary purpose.
+      if: always()
       # github/codeql-action/upload-sarif v3.28.1
       # Pin to a SHA so a compromised tag cannot inject malicious code; bump
       # this together with the version comment when refreshing the action.

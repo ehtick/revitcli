@@ -162,10 +162,11 @@ checks:
 
         Assert.Equal(0, exit);
         var output = writer.ToString();
-        Assert.StartsWith("// Resolved profile (chain:", output);
-        var jsonStart = output.IndexOf('\n');
-        var json = output.Substring(jsonStart + 1);
-        using var doc = JsonDocument.Parse(json);
+        // stdout must be parseable JSON straight off the wire — no `//`
+        // chain header that would break `jq` and JsonDocument.Parse.
+        Assert.False(output.TrimStart().StartsWith("//", StringComparison.Ordinal),
+            "JSON output must not include a // chain header.");
+        using var doc = JsonDocument.Parse(output);
         Assert.True(doc.RootElement.TryGetProperty("checks", out _));
         Assert.True(doc.RootElement.TryGetProperty("publish", out _));
     }

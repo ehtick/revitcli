@@ -42,6 +42,12 @@ public sealed class HistoryStore
     private const string SnapshotPrefix = "snapshot-";
     private const string SnapshotExtension = ".json.gz";
 
+    // Hard cap on a snapshot's decompressed size. A real Revit project snapshot
+    // tops out well under this; anything above is either corrupt or a crafted
+    // gzip bomb (high compression-ratio file that would explode in memory when
+    // RebuildFromFilesystemAsync runs over the directory).
+    private const long MaxDecompressedSnapshotBytes = 256L * 1024 * 1024; // 256 MB
+
     private static readonly Regex FilenamePattern = new(
         @"^snapshot-(?<ts>\d{8}T\d{6}Z)-(?<hash>[0-9a-f]{8})\.json\.gz$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -292,27 +298,45 @@ public sealed class HistoryStore
                 }
             }
 
+            var actualRemoved = remove;
             if (apply && remove.Count > 0)
             {
+                actualRemoved = new List<SnapshotMetadata>(remove.Count);
                 foreach (var entry in remove)
                 {
-                    var path = Path.Combine(RootDirectory, entry.Id + SnapshotExtension);
+                    if (!TryResolveSnapshotPath(entry.Id, out var path))
+                    {
+                        // Untrusted id (would resolve outside RootDirectory) — skip
+                        // both the delete and the index removal so we never make
+                        // the situation worse.
+                        keep.Add(entry);
+                        continue;
+                    }
+
+                    var deleted = false;
                     try
                     {
                         if (File.Exists(path))
                         {
                             File.Delete(path);
                         }
+                        deleted = true;
                     }
                     catch (IOException)
                     {
-                        // Tolerate transient delete failures; the index rebuild on the
-                        // next call will clean up dangling references.
+                        // Couldn't delete — keep the index entry pointing at the
+                        // file so it remains visible and a future prune retries,
+                        // instead of orphaning the .json.gz on disk.
                     }
                     catch (UnauthorizedAccessException)
                     {
-                        // Same rationale; we report the entry but cannot guarantee removal.
+                        // Same rationale.
                     }
+
+                    if (deleted)
+                        actualRemoved.Add(entry);
+                    else
+                        keep.Add(entry);
                 }
 
                 await WriteIndexAsync(keep, cancellationToken).ConfigureAwait(false);
@@ -320,9 +344,9 @@ public sealed class HistoryStore
 
             return new PruneResult(
                 keep.Count,
-                remove.Count,
-                remove.Sum(entry => entry.Size),
-                remove,
+                actualRemoved.Count,
+                actualRemoved.Sum(entry => entry.Size),
+                actualRemoved,
                 apply);
         }
         finally
@@ -343,17 +367,16 @@ public sealed class HistoryStore
             throw new ArgumentNullException(nameof(metadata));
         }
 
-        var path = Path.Combine(RootDirectory, metadata.Id + SnapshotExtension);
-        if (!File.Exists(path))
+        if (!TryResolveSnapshotPath(metadata.Id, out var path) || !File.Exists(path))
         {
             return null;
         }
 
         await using var fileStream = File.OpenRead(path);
         await using var gz = new GZipStream(fileStream, CompressionMode.Decompress);
-        using var reader = new StreamReader(gz, Encoding.UTF8);
-        var json = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        return JsonSerializer.Deserialize<ModelSnapshot>(json, SnapshotReadOptions);
+        var raw = await ReadGzipBoundedAsync(gz, MaxDecompressedSnapshotBytes, cancellationToken)
+            .ConfigureAwait(false);
+        return JsonSerializer.Deserialize<ModelSnapshot>(raw, SnapshotReadOptions);
     }
 
     /// <summary>
@@ -375,6 +398,68 @@ public sealed class HistoryStore
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Resolve a snapshot id to an absolute on-disk path **only when** that
+    /// path stays within <see cref="RootDirectory"/>. The id field on a
+    /// SnapshotMetadata read out of <c>index.json</c> is not necessarily
+    /// trustworthy: a tampered index could carry <c>"../../etc/shadow"</c>
+    /// and quietly drive Read/Prune at files outside the history dir, so
+    /// every consumer of metadata.Id must route through this guard.
+    /// </summary>
+    private bool TryResolveSnapshotPath(string id, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrEmpty(id))
+            return false;
+
+        var combined = Path.Combine(RootDirectory, id + SnapshotExtension);
+        string canonical;
+        try
+        {
+            canonical = Path.GetFullPath(combined);
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+        {
+            return false;
+        }
+
+        var rootedWithSep = RootDirectory.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+            ? RootDirectory
+            : RootDirectory + Path.DirectorySeparatorChar;
+        if (!canonical.StartsWith(rootedWithSep, StringComparison.Ordinal))
+            return false;
+
+        fullPath = canonical;
+        return true;
+    }
+
+    /// <summary>
+    /// Read a gzip stream with a hard cap on decompressed bytes. Throws
+    /// <see cref="InvalidDataException"/> when the cap is exceeded so the
+    /// caller can treat the snapshot as unreadable rather than letting the
+    /// process exhaust memory on a crafted file.
+    /// </summary>
+    private static async Task<byte[]> ReadGzipBoundedAsync(
+        Stream gz, long maxBytes, CancellationToken cancellationToken)
+    {
+        using var ms = new MemoryStream();
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await gz.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)
+                .ConfigureAwait(false);
+            if (read == 0)
+                break;
+            total += read;
+            if (total > maxBytes)
+                throw new InvalidDataException(
+                    $"Snapshot decompressed size exceeded {maxBytes} bytes; refusing to load further.");
+            await ms.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
+        return ms.ToArray();
     }
 
     private async Task<List<SnapshotMetadata>> LoadOrRebuildIndexAsync(CancellationToken cancellationToken)
@@ -408,8 +493,11 @@ public sealed class HistoryStore
                             continue;
                         }
 
-                        var path = Path.Combine(RootDirectory, entry.Id + SnapshotExtension);
-                        if (File.Exists(path))
+                        // Refuse to honor entries whose id would resolve outside
+                        // RootDirectory — a tampered index.json could otherwise
+                        // smuggle `../../etc/...` style ids past File.Exists into
+                        // later Read/Prune calls.
+                        if (TryResolveSnapshotPath(entry.Id, out var path) && File.Exists(path))
                         {
                             alive.Add(entry);
                         }
@@ -469,9 +557,8 @@ public sealed class HistoryStore
             {
                 await using var fileStream = File.OpenRead(path);
                 await using var gz = new GZipStream(fileStream, CompressionMode.Decompress);
-                using var ms = new MemoryStream();
-                await gz.CopyToAsync(ms, cancellationToken).ConfigureAwait(false);
-                var raw = ms.ToArray();
+                var raw = await ReadGzipBoundedAsync(gz, MaxDecompressedSnapshotBytes, cancellationToken)
+                    .ConfigureAwait(false);
                 fileHash = ComputeSha256Hex(raw);
                 var snapshot = JsonSerializer.Deserialize<ModelSnapshot>(raw, SnapshotReadOptions);
                 if (snapshot != null)
@@ -482,8 +569,9 @@ public sealed class HistoryStore
             }
             catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException)
             {
-                // Snapshot is unreadable but the file exists — keep a stub so the
-                // user can still see the entry and decide how to handle it.
+                // Snapshot is unreadable (corrupt, gzip-bomb-sized, or transient
+                // I/O hiccup) but the file exists — keep a stub so the user can
+                // still see the entry and decide how to handle it.
             }
 
             rebuilt.Add(new SnapshotMetadata

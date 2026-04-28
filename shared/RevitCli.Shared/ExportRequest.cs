@@ -16,4 +16,7 @@ public class ExportRequest
 
     [JsonPropertyName("outputDir")]
     public string OutputDir { get; set; } = "";
+
+    [JsonPropertyName("dryRun")]
+    public bool DryRun { get; set; }
 }

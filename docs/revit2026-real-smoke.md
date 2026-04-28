@@ -6,6 +6,9 @@ This is the internal acceptance gate for the Revit 2026 vertical slice:
 doctor -> status -> query --id -> query <category> --filter -> set --dry-run -> set -> query confirm -> restore
 ```
 
+For releases that touch the v1.5 auto-fix path (`fix` / `rollback` commands or
+recipe matching), also run the **fix loop addendum** at the end of this doc.
+
 The goal is to prove that the CLI, installed add-in, live add-in HTTP server, Revit API bridge, dry-run preview, transaction write, and restore path all work against a real Revit 2026 document.
 
 ## Prerequisites
@@ -180,3 +183,79 @@ Stop and fix the lower layer first when any of these happen:
 - Filter returns zero or multiple elements.
 - Dry-run preview does not include the expected old and new values.
 - The safe parameter is missing, null, read-only, or cannot be restored.
+
+## Fix Loop Addendum (v1.5)
+
+Run when shipping changes to `revitcli fix`, `revitcli rollback`, recipe
+matching, or any code under `src/RevitCli/Fix/` and
+`src/RevitCli.Addin/Services/RealRevitOperations.cs#audit*`.
+
+### Prerequisites
+
+- A `.revitcli.yml` profile in cwd that defines a `fixes:` entry whose
+  `category`, `parameter`, and `match`/`replace` (or `value`) target the test
+  model's safe parameter chosen above. The starter profiles in `profiles/`
+  (`architectural-issue.yml`, `interior-room-data.yml`,
+  `general-publish.yml`) all have commented `fixes:` blocks that can be
+  uncommented and adjusted.
+- The check this fix targets must currently report at least one issue
+  (otherwise the dry-run plan is empty and the smoke is meaningless).
+
+### Sequence
+
+```powershell
+# 1. Plan only — must not write anything
+revitcli fix default --dry-run
+$LASTEXITCODE
+
+# 2. Apply with explicit confirmation. Writes a baseline snapshot + journal
+#    under .revitcli/fix-baseline-<timestamp>.json (path printed by the CLI).
+revitcli fix default --apply --yes
+$LASTEXITCODE
+
+# 3. Confirm the model now passes the originally-failing check.
+revitcli check default
+$LASTEXITCODE
+
+# 4. Roll back using the baseline path printed in step 2.
+revitcli rollback .\.revitcli\fix-baseline-<timestamp>.json --yes
+$LASTEXITCODE
+
+# 5. Confirm the model is back to its pre-fix state.
+revitcli check default
+$LASTEXITCODE
+```
+
+Or run the full sequence via the smoke script's fix flags:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-revit2026.ps1 `
+  -RevitInstallDir "D:\revit2026\Revit 2026" `
+  -ElementId 12345 -Category walls -Filter "Mark = W-01" `
+  -Param Comments -Value "revitcli-smoke-20260426" `
+  -FixDryRun -FixApply -FixCheckName default -FixProfile .\.revitcli.yml `
+  -Apply `
+  -OutputPath ".\revitcli-smoke-2026-fix.json"
+```
+
+### Expected outcomes
+
+- Step 1 prints `Fix plan` with at least 1 action and exit code `0`. No file
+  changes appear under `.revitcli/`.
+- Step 2 prints `Baseline saved: ...` then `Journal saved: ...`, then issues
+  one `SetRequest` per `(param, value)` group. Exit code `0`.
+- Step 3 reports the originally-failing check as passing.
+- Step 4 prints reverse-write count matching step 2 and exit code `0`.
+- Step 5 reports the same failure as step 3's *opposite* — the original issue
+  is back.
+
+### Fix-loop stop conditions (in addition to the base list)
+
+- Dry-run reports zero actions. Either the recipe doesn't match the issue
+  shape, or `AuditIssue.Source` is `inferred` and `--allow-inferred` was not
+  passed.
+- Apply step skips `Set` calls and exits `1` with `Error: failed to save
+  baseline snapshot: ...`. The `--baseline-output` parent directory is not
+  writable.
+- Rollback reports `journal/baseline mismatch` or `document path mismatch`.
+  Don't force it — the model probably moved between apply and rollback.
