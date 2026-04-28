@@ -1525,13 +1525,25 @@ public sealed class RealRevitOperations : IRevitOperations
             var format = request.Format.ToLowerInvariant();
             var taskId = Guid.NewGuid().ToString("N").Substring(0, 8);
 
-            // Ensure output directory exists
-            if (!Directory.Exists(request.OutputDir))
+            // Ensure output directory exists (skip when dry-run — we don't want to
+            // create empty directories on disk for a no-op).
+            if (!request.DryRun && !Directory.Exists(request.OutputDir))
                 Directory.CreateDirectory(request.OutputDir);
 
             // IFC exports entire model — no view/sheet targets needed
             if (format == "ifc")
             {
+                if (request.DryRun)
+                {
+                    return new ExportProgress
+                    {
+                        TaskId = taskId,
+                        Status = "completed",
+                        Progress = 100,
+                        Message = $"Dry run: would export 1 file(s) to {request.OutputDir}"
+                    };
+                }
+
                 ExportIfc(doc, request.OutputDir);
                 return new ExportProgress
                 {
@@ -1542,10 +1554,22 @@ public sealed class RealRevitOperations : IRevitOperations
                 };
             }
 
-            // DWG/PDF require view/sheet targets
+            // DWG/PDF require view/sheet targets — resolution runs even on dry-run
+            // so callers learn early about empty selectors.
             var targets = ResolveExportTargets(doc, request);
             if (targets.Count == 0)
                 throw new InvalidOperationException("No matching views or sheets found.");
+
+            if (request.DryRun)
+            {
+                return new ExportProgress
+                {
+                    TaskId = taskId,
+                    Status = "completed",
+                    Progress = 100,
+                    Message = $"Dry run: would export {targets.Count} file(s) to {request.OutputDir}"
+                };
+            }
 
             switch (format)
             {

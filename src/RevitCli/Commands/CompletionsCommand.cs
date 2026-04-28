@@ -7,7 +7,7 @@ namespace RevitCli.Commands;
 public static class CompletionsCommand
 {
     private static readonly string[] QueryOptions = { "--filter", "--id", "--output" };
-    private static readonly string[] ExportOptions = { "--format", "--sheets", "--output-dir" };
+    private static readonly string[] ExportOptions = { "--format", "--sheets", "--output-dir", "--dry-run" };
     private static readonly string[] SetOptions = { "--filter", "--id", "--param", "--value", "--dry-run" };
     private static readonly string[] AuditOptions = { "--rules", "--list" };
     private static readonly string[] FixOptions =
@@ -262,7 +262,8 @@ public static class CompletionsCommand
             "                    _arguments \\",
             $"                        '--format[Export format]:format:({exportFormats})' \\",
             "                        '--sheets[Sheet patterns]:sheets:' \\",
-            "                        '--output-dir[Output directory]:dir:_directories'",
+            "                        '--output-dir[Output directory]:dir:_directories' \\",
+            "                        '--dry-run[Validate without writing files]'",
             "                    ;;",
             "                set)",
             "                    _arguments \\",

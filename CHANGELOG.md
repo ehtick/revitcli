@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — post-audit follow-ups
+
+- `revitcli export --dry-run` now actually parses: validates inputs and resolves
+  sheet/view selectors but writes zero files; previously the README documented
+  the flag while the parser rejected it.
+
+### Fixed — post-audit follow-ups
+
+- `revitcli doctor` now honors the `Revit<year>InstallDir` env var (Autodesk
+  convention used by the addin csproj) when looking for `RevitAPI.dll`, so
+  installs at non-default locations no longer trigger a false `FAIL`. The
+  diagnostic message reports the path actually checked.
+
 ### Internal — repo hygiene and security hardening (no user-facing API changes)
 
 - **Build**: centralized version (`Directory.Build.props` → `RevitCliVersion`) and
@@ -104,7 +117,7 @@ import (P3) writes parameter values back from CSV in batched transactions.
 - No changes to existing commands, profiles, DTOs, or addin endpoints.
 - `import` reuses the existing `/api/elements` (query) and `/api/elements/set`
   (write) endpoints — **no addin upgrade required**. Users on v1.2.0 addin
-  + v1.3.0 CLI gain `import` immediately.
+  - v1.3.0 CLI gain `import` immediately.
 
 ### Test count
 
@@ -184,7 +197,7 @@ only the 3 sheets that changed, not the whole set.
 ### Changed
 
 - **`SnapshotDiffer.Diff`** — new signature accepts `SinceMode sinceMode =
-  SinceMode.Meta`. Existing callers (v1.1.0 `revitcli diff` command) keep
+SinceMode.Meta`. Existing callers (v1.1.0 `revitcli diff` command) keep
   MetaHash-only behavior; new P2 call sites pass `SinceMode.Content`
   explicitly. A P1 baseline (empty ContentHash) falls back to MetaHash
   comparison automatically — no schema bump, no forced baseline rebuild.
