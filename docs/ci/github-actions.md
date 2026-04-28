@@ -55,3 +55,10 @@ best-effort — failures emit a stderr warning but never change the exit code.
 
 See [`.github/actions/revitcli-check/README.md`](../../.github/actions/revitcli-check/README.md)
 for the action's input reference.
+
+## Deploying the dashboard
+
+For publishing the v2.0 dashboard to GitHub Pages, see
+[`dashboard-github-pages.md`](./dashboard-github-pages.md). The companion
+template at [`dashboard-deploy-template.yml`](./dashboard-deploy-template.yml)
+is ready to copy into `.github/workflows/`.

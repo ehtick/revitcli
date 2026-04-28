@@ -269,6 +269,30 @@ Dashboard — `dashboard/`
 - Layout enables the `/projects` nav link (was disabled in phase 1
   + phase 2). All three v2.0 routes are now live.
 
+### Added — v2.0 dashboard GitHub Pages deploy template
+
+Per `docs/roadmap-2026q2-q3.md` §7 implementation step 9. Operators
+who want to publish their dashboard get a SHA-pinned, ready-to-paste
+workflow + a privacy-conscious operator guide.
+
+- `docs/ci/dashboard-deploy-template.yml` — copy to
+  `.github/workflows/dashboard-deploy.yml`. Builds the SvelteKit SPA,
+  runs `revitcli dashboard build` to inject `history.json` (and
+  optionally one or more `--project NAME:DIR` for the Multi-project
+  route), uploads via `actions/upload-pages-artifact`, deploys via
+  `actions/deploy-pages`. Concurrency-gated on the `pages` group so
+  parallel pushes don't race the deploy lock. All third-party `uses`
+  are SHA-pinned with version-label comments.
+- `docs/ci/dashboard-github-pages.md` — the operator guide. Covers
+  the privacy story up front (the dashboard's `app.html` already
+  carries `<meta name="robots" content="noindex">`, but a public
+  deploy is still publicly fetchable; pointers to the Pages-from-
+  private-repo flow), the `BASE_PATH` adjustments for project / user /
+  custom-domain Pages, what `dashboard build` writes into `data/`,
+  optional site-wide `static/robots.txt`, and the SHA-pin update
+  workflow.
+- `docs/ci/github-actions.md` cross-links the new doc.
+
 ### Added — MCP adapter (side track, unchanged)
 
 - `revitcli mcp serve` — Model Context Protocol stdio server (spec
