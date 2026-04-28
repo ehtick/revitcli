@@ -1,0 +1,70 @@
+name: "RevitCli Check"
+description: "Run RevitCli check and upload SARIF to Code Scanning"
+author: "RevitCli"
+branding:
+  icon: "check-circle"
+  color: "blue"
+
+inputs:
+  revitcli-version:
+    description: 'RevitCli .NET tool version (use "latest" or pin a specific version e.g. "1.7.0")'
+    required: false
+    default: "latest"
+  profile:
+    description: "Path to a .revitcli.yml profile (relative to working-directory). Leave empty to auto-discover."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory to run the check in. Defaults to repository root."
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    # SHA-pinned per the supply-chain hardening guide. Update with `gh api`
+    # before bumping the major version label below — never trust a floating tag.
+    - name: Set up .NET 8 SDK
+      # actions/setup-dotnet v4.3.1
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      with:
+        dotnet-version: "8.0.x"
+
+    - name: Install RevitCli
+      shell: bash
+      run: |
+        if [ "${{ inputs.revitcli-version }}" = "latest" ]; then
+          dotnet tool install -g RevitCli
+        else
+          dotnet tool install -g RevitCli --version "${{ inputs.revitcli-version }}"
+        fi
+        # Ensure the dotnet tools dir is on PATH for subsequent steps.
+        echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+    - name: Run RevitCli check (SARIF)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # Compose the optional --profile flag. We avoid GHA expression-time
+        # ternaries inside `run:` because they collapse to literal strings; a
+        # plain shell branch keeps the args correctly quoted.
+        if [ -n "${{ inputs.profile }}" ]; then
+          revitcli check --profile "${{ inputs.profile }}" --output sarif --report "${RUNNER_TEMP}/revitcli.sarif"
+        else
+          revitcli check --output sarif --report "${RUNNER_TEMP}/revitcli.sarif"
+        fi
+
+    - name: Upload SARIF to Code Scanning
+      # `if: always()` ensures the SARIF file is uploaded even when
+      # `revitcli check` exits non-zero (which it does whenever the
+      # `failOn` threshold is crossed). Without this, the upload step
+      # would be skipped on the very PRs that have new findings to
+      # surface — defeating the action's primary purpose.
+      if: always()
+      # github/codeql-action/upload-sarif v3.28.1
+      # Pin to a SHA so a compromised tag cannot inject malicious code; bump
+      # this together with the version comment when refreshing the action.
+      uses: github/codeql-action/upload-sarif@4f3212b61783c3c68e8309a0f18a699764811cda
+      with:
+        sarif_file: ${{ runner.temp }}/revitcli.sarif
+        category: revitcli

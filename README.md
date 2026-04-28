@@ -55,9 +55,12 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli batch <file>` | Execute commands from a JSON file |
 | `revitcli completions <shell>` | Generate shell completions (bash/zsh/PowerShell) |
 | `revitcli interactive` / `-i` | Interactive REPL mode |
-| `revitcli history init` / `capture` / `list` / `prune` | Local snapshot timeline (v1.6) |
-| `revitcli mcp serve` | MCP stdio server for Claude Desktop / Cursor (v1.7) |
+| `revitcli history init` / `capture` / `list` / `prune` / `diff` / `trend` | Local snapshot timeline + ASCII trend (v1.6) |
+| `revitcli score --history <duration>` | Per-day score time series (v1.6) |
+| `revitcli mcp serve` | MCP stdio server for Claude Desktop / Cursor |
 | `revitcli check --output sarif\|pr-comment` | SARIF 2.1.0 / PR-comment report (v1.7) |
+| `revitcli ci doctor` | Detect CI provider + emit workflow snippet (v1.7) |
+| `revitcli profile validate` / `show --resolve` / `diff` | Profile lint, resolve, structural diff (v1.9) |
 
 ## Features
 

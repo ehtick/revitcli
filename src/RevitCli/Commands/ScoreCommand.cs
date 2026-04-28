@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.CommandLine;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using RevitCli.Client;
+using RevitCli.History;
 using RevitCli.Output;
 using RevitCli.Shared;
 using Spectre.Console;
@@ -29,10 +31,24 @@ public static class ScoreCommand
 
     public static Command Create(RevitClient client)
     {
-        var command = new Command("score", "Calculate model health score (0-100)");
+        var historyOpt = new Option<string?>("--history",
+            "Render a per-day score time series over a window (e.g. 7d, 30d). Reads .revitcli/history/.");
+        var dirOpt = new Option<string?>("--dir", "Override history directory (paired with --history)");
 
-        command.SetHandler(async () =>
+        var command = new Command("score", "Calculate model health score (0-100)")
         {
+            historyOpt,
+            dirOpt,
+        };
+
+        command.SetHandler(async (string? history, string? dir) =>
+        {
+            if (!string.IsNullOrWhiteSpace(history))
+            {
+                Environment.ExitCode = await ExecuteHistoryAsync(history, dir, Console.Out);
+                return;
+            }
+
             if (!ConsoleHelper.IsInteractive)
             {
                 Environment.ExitCode = await ExecuteAsync(client, Console.Out);
@@ -53,7 +69,7 @@ public static class ScoreCommand
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"  Model Health Score: [{color} bold]{result}[/] / 100  [{color}]({grade})[/]");
             AnsiConsole.WriteLine();
-        });
+        }, historyOpt, dirOpt);
 
         return command;
     }
@@ -67,10 +83,394 @@ public static class ScoreCommand
             return 1;
         }
 
-        var grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+        var grade = LetterGrade(score);
         await output.WriteLineAsync($"Model Health Score: {score}/100 ({grade})");
         return 0;
     }
+
+    /// <summary>
+    /// Render one row per day for the past <paramref name="window"/> using the LAST
+    /// snapshot of each day. Score is computed offline from the snapshot itself
+    /// (see <see cref="SnapshotScore"/>) so this works without a live Revit
+    /// connection.
+    /// </summary>
+    public static async Task<int> ExecuteHistoryAsync(
+        string window,
+        string? overrideDir,
+        TextWriter output)
+    {
+        TimeSpan windowSpan;
+        try
+        {
+            windowSpan = HistoryCommand.ParseWindow(window);
+        }
+        catch (FormatException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        HistoryStore store;
+        try
+        {
+            store = string.IsNullOrWhiteSpace(overrideDir)
+                ? HistoryStore.ForProject(Directory.GetCurrentDirectory())
+                : new HistoryStore(overrideDir!);
+        }
+        catch (ArgumentException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        if (!Directory.Exists(store.RootDirectory))
+        {
+            await output.WriteLineAsync(
+                $"Error: history store not initialised. Run 'revitcli history init' (looked in {store.RootDirectory}).");
+            return 1;
+        }
+
+        IReadOnlyList<SnapshotMetadata> entries;
+        try
+        {
+            entries = await store.ListAsync(includeFixBaselines: false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await output.WriteLineAsync($"Error: failed to read history: {ex.Message}");
+            return 1;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var cutoff = now - windowSpan;
+
+        // Group by UTC date, keep latest entry per day, ascending by date.
+        var perDay = entries
+            .Select(meta => new { Meta = meta, At = ParseCapturedAt(meta.CapturedAt) })
+            .Where(x => x.At >= cutoff)
+            .GroupBy(x => x.At.UtcDateTime.Date)
+            .Select(g => g.OrderByDescending(x => x.At).ThenByDescending(x => x.Meta.Id, StringComparer.Ordinal).First())
+            .OrderBy(x => x.At)
+            .ToList();
+
+        if (perDay.Count == 0)
+        {
+            await output.WriteLineAsync($"No snapshots in window ({window}).");
+            return 0;
+        }
+
+        // Load each day's snapshot once; compute score and inter-day diffs.
+        var rows = new List<HistoryScoreRow>(perDay.Count);
+        ModelSnapshot? prevSnap = null;
+        foreach (var entry in perDay)
+        {
+            ModelSnapshot? snap = null;
+            try
+            {
+                snap = await store.ReadAsync(entry.Meta);
+            }
+            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidDataException)
+            {
+                // Missing/corrupt snapshot — emit row with score=null so the user still sees the gap.
+                _ = ex;
+            }
+
+            int? score = snap == null ? null : SnapshotScoreInt(snap);
+            int newCount = 0, resolvedCount = 0, unchangedCount = 0;
+            if (prevSnap != null && snap != null)
+            {
+                ComputeChangeStats(prevSnap, snap, out newCount, out resolvedCount, out unchangedCount);
+            }
+            else if (snap != null)
+            {
+                // First row in the window: nothing to compare against; report element count as unchanged.
+                unchangedCount = TotalElementCount(snap);
+            }
+
+            rows.Add(new HistoryScoreRow(
+                entry.At.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                score,
+                newCount,
+                resolvedCount,
+                unchangedCount));
+
+            if (snap != null)
+            {
+                prevSnap = snap;
+            }
+        }
+
+        await WriteHistoryTableAsync(rows, output);
+        return 0;
+    }
+
+    /// <summary>
+    /// Compute a deterministic 0-100 score directly from a snapshot, without
+    /// requiring a live Revit connection. Used by the v1.6 trend renderer
+    /// (<c>history trend --metric score</c>) and by <c>score --history</c>.
+    /// The score blends three completeness ratios:
+    /// <list type="bullet">
+    ///   <item>Sheets that carry a non-empty <c>Number</c>.</item>
+    ///   <item>Rooms (any case) that carry a non-empty <c>Number</c> and Name.</item>
+    ///   <item>Schedules that have a non-empty name and at least one row.</item>
+    /// </list>
+    /// Empty snapshots default to 100 (no signals to penalise).
+    /// </summary>
+    public static double? SnapshotScore(ModelSnapshot snapshot)
+    {
+        if (snapshot == null)
+        {
+            return null;
+        }
+
+        var components = new List<double>();
+        var sheetRatio = SheetCompleteness(snapshot);
+        if (sheetRatio.HasValue)
+        {
+            components.Add(sheetRatio.Value);
+        }
+
+        var roomRatio = RoomMetadataCompleteness(snapshot);
+        if (roomRatio.HasValue)
+        {
+            components.Add(roomRatio.Value);
+        }
+
+        var scheduleRatio = ScheduleCompleteness(snapshot);
+        if (scheduleRatio.HasValue)
+        {
+            components.Add(scheduleRatio.Value);
+        }
+
+        if (components.Count == 0)
+        {
+            return 100.0;
+        }
+
+        return Math.Round(components.Average() * 100.0, 0, MidpointRounding.AwayFromZero);
+    }
+
+    internal static int SnapshotScoreInt(ModelSnapshot snapshot)
+    {
+        var v = SnapshotScore(snapshot);
+        if (!v.HasValue)
+        {
+            return 0;
+        }
+
+        var clamped = Math.Min(100.0, Math.Max(0.0, v.Value));
+        return (int)Math.Round(clamped, MidpointRounding.AwayFromZero);
+    }
+
+    internal static string LetterGrade(int score)
+    {
+        if (score >= 90) return "A";
+        if (score >= 80) return "B";
+        if (score >= 70) return "C";
+        if (score >= 60) return "D";
+        return "F";
+    }
+
+    private static double? SheetCompleteness(ModelSnapshot snapshot)
+    {
+        if (snapshot.Sheets == null || snapshot.Sheets.Count == 0)
+        {
+            return null;
+        }
+
+        var withNumber = snapshot.Sheets.Count(s => !string.IsNullOrWhiteSpace(s.Number));
+        return (double)withNumber / snapshot.Sheets.Count;
+    }
+
+    private static double? RoomMetadataCompleteness(ModelSnapshot snapshot)
+    {
+        if (snapshot.Categories == null)
+        {
+            return null;
+        }
+
+        // Find any category whose name resembles "rooms" — fixture data uses lower-case "rooms".
+        List<SnapshotElement>? rooms = null;
+        foreach (var pair in snapshot.Categories)
+        {
+            if (string.Equals(pair.Key, "rooms", StringComparison.OrdinalIgnoreCase))
+            {
+                rooms = pair.Value;
+                break;
+            }
+        }
+
+        if (rooms == null || rooms.Count == 0)
+        {
+            return null;
+        }
+
+        var complete = 0;
+        foreach (var room in rooms)
+        {
+            var hasNumber = room.Parameters != null
+                && room.Parameters.TryGetValue("Number", out var num)
+                && !string.IsNullOrWhiteSpace(num);
+            var hasName = !string.IsNullOrWhiteSpace(room.Name);
+            if (hasNumber && hasName)
+            {
+                complete++;
+            }
+        }
+
+        return (double)complete / rooms.Count;
+    }
+
+    private static double? ScheduleCompleteness(ModelSnapshot snapshot)
+    {
+        if (snapshot.Schedules == null || snapshot.Schedules.Count == 0)
+        {
+            return null;
+        }
+
+        var ok = snapshot.Schedules.Count(s => !string.IsNullOrWhiteSpace(s.Name) && s.RowCount > 0);
+        return (double)ok / snapshot.Schedules.Count;
+    }
+
+    private static int TotalElementCount(ModelSnapshot snapshot)
+    {
+        if (snapshot.Summary?.ElementCounts != null && snapshot.Summary.ElementCounts.Count > 0)
+        {
+            return snapshot.Summary.ElementCounts.Values.Sum();
+        }
+
+        var total = 0;
+        if (snapshot.Categories != null)
+        {
+            foreach (var entries in snapshot.Categories.Values)
+            {
+                if (entries != null)
+                {
+                    total += entries.Count;
+                }
+            }
+        }
+        return total;
+    }
+
+    private static void ComputeChangeStats(
+        ModelSnapshot from,
+        ModelSnapshot to,
+        out int added,
+        out int removed,
+        out int unchanged)
+    {
+        added = 0;
+        removed = 0;
+        unchanged = 0;
+
+        var fromIds = new HashSet<long>();
+        if (from.Categories != null)
+        {
+            foreach (var list in from.Categories.Values)
+            {
+                if (list == null) continue;
+                foreach (var el in list)
+                {
+                    fromIds.Add(el.Id);
+                }
+            }
+        }
+
+        var toIds = new HashSet<long>();
+        if (to.Categories != null)
+        {
+            foreach (var list in to.Categories.Values)
+            {
+                if (list == null) continue;
+                foreach (var el in list)
+                {
+                    toIds.Add(el.Id);
+                }
+            }
+        }
+
+        foreach (var id in toIds)
+        {
+            if (fromIds.Contains(id)) unchanged++;
+            else added++;
+        }
+
+        foreach (var id in fromIds)
+        {
+            if (!toIds.Contains(id)) removed++;
+        }
+    }
+
+    private static DateTimeOffset ParseCapturedAt(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DateTimeOffset.MinValue;
+        }
+
+        return DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed
+            : DateTimeOffset.MinValue;
+    }
+
+    private static async Task WriteHistoryTableAsync(IReadOnlyList<HistoryScoreRow> rows, TextWriter output)
+    {
+        const string dateHeader = "date";
+        const string scoreHeader = "score";
+        const string letterHeader = "letter";
+        const string newHeader = "new";
+        const string resolvedHeader = "resolved";
+        const string unchangedHeader = "unchanged";
+
+        var dateW = Math.Max(dateHeader.Length, rows.Max(r => r.Date.Length));
+        var scoreW = Math.Max(scoreHeader.Length, rows.Max(r =>
+            (r.Score?.ToString(CultureInfo.InvariantCulture) ?? "-").Length));
+        var letterW = Math.Max(letterHeader.Length, rows.Max(r =>
+            (r.Score.HasValue ? LetterGrade(r.Score.Value) : "-").Length));
+        var newW = Math.Max(newHeader.Length, rows.Max(r =>
+            r.NewCount.ToString(CultureInfo.InvariantCulture).Length));
+        var resolvedW = Math.Max(resolvedHeader.Length, rows.Max(r =>
+            r.ResolvedCount.ToString(CultureInfo.InvariantCulture).Length));
+        var unchangedW = Math.Max(unchangedHeader.Length, rows.Max(r =>
+            r.UnchangedCount.ToString(CultureInfo.InvariantCulture).Length));
+
+        await output.WriteLineAsync(string.Join("  ", new[]
+        {
+            dateHeader.PadRight(dateW),
+            scoreHeader.PadLeft(scoreW),
+            letterHeader.PadRight(letterW),
+            newHeader.PadLeft(newW),
+            resolvedHeader.PadLeft(resolvedW),
+            unchangedHeader.PadLeft(unchangedW),
+        }));
+
+        foreach (var row in rows)
+        {
+            var scoreText = row.Score?.ToString(CultureInfo.InvariantCulture) ?? "-";
+            var letterText = row.Score.HasValue ? LetterGrade(row.Score.Value) : "-";
+            await output.WriteLineAsync(string.Join("  ", new[]
+            {
+                row.Date.PadRight(dateW),
+                scoreText.PadLeft(scoreW),
+                letterText.PadRight(letterW),
+                row.NewCount.ToString(CultureInfo.InvariantCulture).PadLeft(newW),
+                row.ResolvedCount.ToString(CultureInfo.InvariantCulture).PadLeft(resolvedW),
+                row.UnchangedCount.ToString(CultureInfo.InvariantCulture).PadLeft(unchangedW),
+            }));
+        }
+    }
+
+    internal sealed record HistoryScoreRow(
+        string Date,
+        int? Score,
+        int NewCount,
+        int ResolvedCount,
+        int UnchangedCount);
 
     private static async Task<int> RunScore(RevitClient client)
     {

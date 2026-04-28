@@ -162,20 +162,20 @@ public static class CheckCommand
         else if (failOn == "warning" && (hasErrors || hasWarnings))
             exitCode = 1;
 
-        // Webhook notification (suppressed when called from publish precheck)
-        if (sendNotify && !string.IsNullOrWhiteSpace(profile.Defaults.Notify))
+        // Webhook notification (suppressed when called from publish precheck).
+        // Mirrors PublishCommand's pattern: best-effort, never affects exit code.
+        if (sendNotify
+            && !string.IsNullOrWhiteSpace(profile.Defaults.Notify)
+            && profile.Defaults.Notify.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            await WebhookNotifier.NotifyAsync(profile.Defaults.Notify, new
-            {
-                type = "check",
-                check = checkName,
-                passed = displayPassed,
-                failed = displayFailed,
-                suppressed = suppressedCount,
-                issueCount = allIssues.Count,
-                status = exitCode == 0 ? "passed" : "failed",
-                timestamp = DateTime.UtcNow.ToString("o")
-            });
+            await WebhookNotifier.NotifyCheckAsync(
+                profile.Defaults.Notify,
+                checkName,
+                displayPassed,
+                displayFailed,
+                suppressedCount,
+                severityFailed: exitCode != 0,
+                profilePath: run.Data.ProfilePath);
         }
 
         return exitCode;

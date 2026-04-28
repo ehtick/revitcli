@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.History;
+using RevitCli.Output;
 using RevitCli.Shared;
 
 namespace RevitCli.Commands;
@@ -18,6 +19,8 @@ namespace RevitCli.Commands;
 ///   <item><c>history capture</c> - capture a fresh snapshot via the addin and append it.</item>
 ///   <item><c>history list</c> - tabular listing of stored snapshots.</item>
 ///   <item><c>history prune</c> - drop entries older than retention or beyond a count cap.</item>
+///   <item><c>history diff</c> - reuse the v1.1 differ between two stored snapshots.</item>
+///   <item><c>history trend</c> - ASCII sparkline of any numeric metric over a window.</item>
 /// </list>
 /// Exit codes follow the project convention: <c>0</c> on success, <c>1</c> on
 /// user/usage errors and Revit communication failures.
@@ -31,6 +34,8 @@ public static class HistoryCommand
         command.AddCommand(CreateCaptureCommand(client));
         command.AddCommand(CreateListCommand());
         command.AddCommand(CreatePruneCommand());
+        command.AddCommand(CreateDiffCommand());
+        command.AddCommand(CreateTrendCommand());
         return command;
     }
 
@@ -452,5 +457,389 @@ public static class HistoryCommand
         while (value >= 1024 && i < suffixes.Length - 1);
 
         return value.ToString("0.##", CultureInfo.InvariantCulture) + " " + suffixes[i];
+    }
+
+    // ------------------------------------------------------------------
+    // diff
+    // ------------------------------------------------------------------
+
+    private static Command CreateDiffCommand()
+    {
+        var fromArg = new Argument<string>("from", "Baseline reference (@-N | ISO 8601 | duration like 7d)");
+        var toArg = new Argument<string>("to", "Target reference (@-N | ISO 8601 | duration like 7d)");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table | json | markdown");
+        var maxRowsOpt = new Option<int>("--max-rows", () => 20, "Rows shown per section in table/markdown");
+        var categoriesOpt = new Option<string?>("--categories", "Comma-separated category filter");
+        var includeFixesOpt = new Option<bool>("--include-fixes", () => false,
+            "Include fix-baseline entries when resolving references");
+        var dirOpt = new Option<string?>("--dir", "Override history directory");
+
+        var cmd = new Command("diff", "Diff two snapshots resolved from history references")
+        {
+            fromArg,
+            toArg,
+            outputOpt,
+            maxRowsOpt,
+            categoriesOpt,
+            includeFixesOpt,
+            dirOpt,
+        };
+
+        cmd.SetHandler(async (string from, string to, string outputFormat,
+                              int maxRows, string? categories, bool includeFixes, string? dir) =>
+        {
+            Environment.ExitCode = await ExecuteDiffAsync(
+                from, to, outputFormat, maxRows, categories, includeFixes, dir, Console.Out);
+        }, fromArg, toArg, outputOpt, maxRowsOpt, categoriesOpt, includeFixesOpt, dirOpt);
+
+        return cmd;
+    }
+
+    public static async Task<int> ExecuteDiffAsync(
+        string fromRef,
+        string toRef,
+        string outputFormat,
+        int maxRows,
+        string? categoriesFilter,
+        bool includeFixes,
+        string? overrideDir,
+        TextWriter output)
+    {
+        if (string.IsNullOrWhiteSpace(fromRef) || string.IsNullOrWhiteSpace(toRef))
+        {
+            await output.WriteLineAsync("Error: both <from> and <to> references are required.");
+            return 1;
+        }
+
+        if (maxRows <= 0)
+        {
+            await output.WriteLineAsync("Error: --max-rows must be greater than 0.");
+            return 1;
+        }
+
+        Func<IReadOnlyList<SnapshotMetadata>, SnapshotMetadata?> fromSelector;
+        Func<IReadOnlyList<SnapshotMetadata>, SnapshotMetadata?> toSelector;
+        try
+        {
+            fromSelector = HistoryReference.Parse(fromRef);
+            toSelector = HistoryReference.Parse(toRef);
+        }
+        catch (FormatException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        HistoryStore store;
+        try
+        {
+            store = ResolveStore(overrideDir);
+        }
+        catch (ArgumentException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        if (!Directory.Exists(store.RootDirectory))
+        {
+            await output.WriteLineAsync(
+                $"Error: history store not initialised. Run 'revitcli history init' (looked in {store.RootDirectory}).");
+            return 1;
+        }
+
+        IReadOnlyList<SnapshotMetadata> entries;
+        try
+        {
+            entries = await store.ListAsync(includeFixes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await output.WriteLineAsync($"Error: failed to read history: {ex.Message}");
+            return 1;
+        }
+
+        // HistoryReference.Parse returns selectors that resolve over the supplied
+        // list. The selector accepts the list in any order — it sorts internally.
+        var fromMeta = fromSelector(entries);
+        if (fromMeta == null)
+        {
+            await output.WriteLineAsync($"Error: no snapshot matches reference '{fromRef}'.");
+            return 1;
+        }
+
+        var toMeta = toSelector(entries);
+        if (toMeta == null)
+        {
+            await output.WriteLineAsync($"Error: no snapshot matches reference '{toRef}'.");
+            return 1;
+        }
+
+        ModelSnapshot? fromSnap;
+        ModelSnapshot? toSnap;
+        try
+        {
+            fromSnap = await store.ReadAsync(fromMeta);
+            toSnap = await store.ReadAsync(toMeta);
+        }
+        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            await output.WriteLineAsync($"Error: failed to read snapshot payload: {ex.Message}");
+            return 1;
+        }
+
+        if (fromSnap == null)
+        {
+            await output.WriteLineAsync($"Error: snapshot file missing for '{fromRef}' (id={fromMeta.Id}).");
+            return 1;
+        }
+        if (toSnap == null)
+        {
+            await output.WriteLineAsync($"Error: snapshot file missing for '{toRef}' (id={toMeta.Id}).");
+            return 1;
+        }
+
+        SnapshotDiff diff;
+        try
+        {
+            diff = SnapshotDiffer.Diff(fromSnap, toSnap, fromMeta.Id, toMeta.Id);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        if (!string.IsNullOrWhiteSpace(categoriesFilter))
+        {
+            var allow = new HashSet<string>(
+                categoriesFilter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var key in new List<string>(diff.Categories.Keys))
+            {
+                if (!allow.Contains(key))
+                {
+                    diff.Categories.Remove(key);
+                }
+            }
+            foreach (var key in new List<string>(diff.Summary.PerCategory.Keys))
+            {
+                if (!allow.Contains(key))
+                {
+                    diff.Summary.PerCategory.Remove(key);
+                }
+            }
+        }
+
+        var rendered = DiffRenderer.Render(diff, outputFormat ?? "table", maxRows);
+        await output.WriteLineAsync(rendered);
+        return 0;
+    }
+
+    // ------------------------------------------------------------------
+    // trend
+    // ------------------------------------------------------------------
+
+    private static Command CreateTrendCommand()
+    {
+        var metricOpt = new Option<string>("--metric", () => "score",
+            "Metric: score | sheets | schedules | elements.<category> | count.<key>");
+        var windowOpt = new Option<string>("--window", () => "30d",
+            "Time window (e.g. 7d, 30d, 24h, 60m)");
+        var widthOpt = new Option<int>("--width", () => 60, "Sparkline width in characters (default 60)");
+        var includeFixesOpt = new Option<bool>("--include-fixes", () => false,
+            "Include fix-baseline entries in the series");
+        var dirOpt = new Option<string?>("--dir", "Override history directory");
+
+        var cmd = new Command("trend", "Render an ASCII sparkline of a metric over time")
+        {
+            metricOpt,
+            windowOpt,
+            widthOpt,
+            includeFixesOpt,
+            dirOpt,
+        };
+
+        cmd.SetHandler(async (string metric, string window, int width, bool includeFixes, string? dir) =>
+        {
+            Environment.ExitCode = await ExecuteTrendAsync(
+                metric, window, width, includeFixes, dir, Console.Out);
+        }, metricOpt, windowOpt, widthOpt, includeFixesOpt, dirOpt);
+
+        return cmd;
+    }
+
+    public static async Task<int> ExecuteTrendAsync(
+        string metric,
+        string window,
+        int width,
+        bool includeFixes,
+        string? overrideDir,
+        TextWriter output)
+    {
+        if (string.IsNullOrWhiteSpace(metric))
+        {
+            metric = MetricExtractor.ScoreMetric;
+        }
+
+        if (width <= 0)
+        {
+            await output.WriteLineAsync("Error: --width must be greater than 0.");
+            return 1;
+        }
+
+        TimeSpan windowSpan;
+        try
+        {
+            windowSpan = ParseWindow(window);
+        }
+        catch (FormatException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        HistoryStore store;
+        try
+        {
+            store = ResolveStore(overrideDir);
+        }
+        catch (ArgumentException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        if (!Directory.Exists(store.RootDirectory))
+        {
+            await output.WriteLineAsync(
+                $"History store not initialised. Run 'revitcli history init' (looked in {store.RootDirectory}).");
+            return 0;
+        }
+
+        IReadOnlyList<SnapshotMetadata> entries;
+        try
+        {
+            entries = await store.ListAsync(includeFixes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await output.WriteLineAsync($"Error: failed to read history: {ex.Message}");
+            return 1;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var cutoff = now - windowSpan;
+
+        // entries arrive newest-first from ListAsync; flip to chronological for the renderer.
+        var inWindow = entries
+            .Where(e => ParseCapturedAt(e.CapturedAt) >= cutoff)
+            .OrderBy(e => ParseCapturedAt(e.CapturedAt))
+            .ThenBy(e => e.Id, StringComparer.Ordinal)
+            .ToList();
+
+        if (inWindow.Count == 0)
+        {
+            await output.WriteLineAsync($"No snapshots in window ({window}).");
+            return 0;
+        }
+
+        var points = new List<TrendRenderer.Point>(inWindow.Count);
+        foreach (var meta in inWindow)
+        {
+            ModelSnapshot? snap = null;
+            try
+            {
+                snap = await store.ReadAsync(meta);
+            }
+            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidDataException)
+            {
+                // Treat as missing data; sparkline draws a blank cell.
+            }
+
+            double? value = null;
+            if (snap != null)
+            {
+                value = MetricExtractor.Extract(
+                    snap,
+                    metric,
+                    scoreLookup: ScoreCommand.SnapshotScore);
+            }
+
+            var label = FormatTrendLabel(meta.CapturedAt);
+            points.Add(new TrendRenderer.Point(label, value));
+        }
+
+        var rendered = TrendRenderer.Render(points, width);
+        await output.WriteLineAsync($"metric: {metric}    window: {window}    points: {points.Count}");
+        await output.WriteLineAsync(rendered.Combined);
+        return 0;
+    }
+
+    internal static TimeSpan ParseWindow(string window)
+    {
+        if (string.IsNullOrWhiteSpace(window))
+        {
+            throw new FormatException("Window is required (e.g. 30d, 24h, 60m).");
+        }
+
+        var trimmed = window.Trim();
+        if (trimmed.Length < 2)
+        {
+            throw new FormatException(
+                $"Invalid window '{window}': use a duration like 30d, 24h, 60m, or 30s.");
+        }
+
+        var suffix = char.ToLowerInvariant(trimmed[trimmed.Length - 1]);
+        var head = trimmed.Substring(0, trimmed.Length - 1);
+        if (!long.TryParse(head, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount) || amount < 0)
+        {
+            throw new FormatException(
+                $"Invalid window '{window}': numeric portion must be a non-negative integer.");
+        }
+
+        try
+        {
+            return suffix switch
+            {
+                'd' => TimeSpan.FromDays(amount),
+                'h' => TimeSpan.FromHours(amount),
+                'm' => TimeSpan.FromMinutes(amount),
+                's' => TimeSpan.FromSeconds(amount),
+                _ => throw new FormatException(
+                    $"Invalid window '{window}': unknown suffix '{suffix}' (use d/h/m/s)."),
+            };
+        }
+        catch (OverflowException)
+        {
+            throw new FormatException($"Invalid window '{window}': value too large.");
+        }
+    }
+
+    private static DateTimeOffset ParseCapturedAt(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DateTimeOffset.MinValue;
+        }
+
+        return DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed
+            : DateTimeOffset.MinValue;
+    }
+
+    private static string FormatTrendLabel(string capturedAt)
+    {
+        var parsed = ParseCapturedAt(capturedAt);
+        if (parsed == DateTimeOffset.MinValue)
+        {
+            return capturedAt ?? string.Empty;
+        }
+
+        return parsed.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     }
 }

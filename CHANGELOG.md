@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Added — v1.6 history (foundation; trend / score-history land in a follow-up)
+### Added — v1.6 history (complete)
 
 - `revitcli history` command cluster — local snapshot timeline under
   `.revitcli/history/`, gzip-compressed:
@@ -17,10 +17,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
     snapshots (id, capturedAt, source, elementCount, size).
   - `history prune --keep <duration|count> [--dry-run] [--apply]` — drop old
     entries; fix-baseline snapshots are protected by default.
+  - `history diff <fromRef> <toRef> [--output table|json|markdown]
+    [--max-rows N] [--categories LIST]` — diff two snapshots resolved from
+    the timeline; reuses the v1.1 `SnapshotDiffer` + `DiffRenderer`.
+  - `history trend [--metric <name>] [--window <duration>] [--width N]` —
+    ASCII sparkline (`▁▂▃▄▅▆▇█`) + per-point row over a rolling window.
+    Default metric `score`, default window `30d`, default width 60. Other
+    supported metrics: `elements.<category>`, `sheets`, `schedules`,
+    `count.<key>`.
   - Time references parse `@-N` (Nth most recent), ISO 8601 timestamps, and
     durations like `7d` / `24h` / `30m`.
+- `revitcli score --history <duration>` — per-day score time series
+  (LAST snapshot of each day) with new / resolved / unchanged columns;
+  unchanged behaviour when `--history` is not set.
 
-### Added — v1.7 CI (foundation; GitHub Action + ci doctor land in a follow-up)
+### Added — v1.7 CI (complete)
 
 - `revitcli check --output sarif` — SARIF 2.1.0 output suitable for
   `github/codeql-action/upload-sarif`. Element identity sits in
@@ -31,8 +42,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   comment, severity-grouped, truncated at 50 rows.
 - `--report` extension inference now also recognizes `.sarif` and routes to
   the new writer.
+- `revitcli ci doctor` — detect the running CI provider (GitHub Actions /
+  GitLab / Jenkins / Azure DevOps / Travis / generic) via env vars and
+  print a ready-to-paste workflow snippet. Exits 0 (informational).
+- `revitcli check` now fires a webhook to `defaults.notify` (HTTPS-only,
+  private/loopback hosts rejected) on completion, with payload
+  `{ event: "check", name, passed, failed, suppressed, severityFailed,
+  timestamp, profilePath }`. Best-effort: failure does not affect the
+  check exit code. Mirrors the existing publish webhook.
+- New composite GitHub Action at `.github/actions/revitcli-check/` — drops
+  into any GitHub workflow to install the CLI, run `check --output sarif`,
+  and upload to Code Scanning. See `docs/ci/github-actions.md`.
 
-### Added — MCP adapter (side track)
+### Added — v1.9 profile governance (foundation)
+
+- `revitcli profile` command cluster:
+  - `profile validate [--profile PATH]` — schema + reference-completeness
+    + dead-rule checks. Reports `error` / `warning` / `info` lines; exits
+    1 only on `error`.
+  - `profile show --resolve [--profile PATH] [--output yaml|json]` —
+    walks the `extends` chain via `ProfileResolver` and prints the
+    merged effective profile, with a header comment listing the chain.
+  - `profile diff <a> <b> [--output table|json|markdown]` — structural
+    diff (added / removed / changed) under `checks.`, `publish.`,
+    `presets.`, `defaults.` keys.
+
+### Added — MCP adapter (side track, unchanged)
 
 - `revitcli mcp serve` — Model Context Protocol stdio server (spec
   `2024-11-05`). Exposes 3 read-only tools: `status`, `query`, `audit`.

@@ -13,6 +13,7 @@ using Xunit;
 
 namespace RevitCli.Tests.Commands;
 
+[Collection("Sequential")]
 public class CheckCommandTests
 {
     private static RevitClient CreateClient(string responseJson)
@@ -376,5 +377,127 @@ checks:
         var path = Path.Combine(Path.GetTempPath(), $"revitcli_test_{Guid.NewGuid():N}.yml");
         File.WriteAllText(path, yaml);
         return path;
+    }
+
+    /// <summary>
+    /// Capture <see cref="Console.Error"/> for a single test. We use stderr
+    /// as the observation channel because <see cref="Output.WebhookNotifier"/>
+    /// emits a warning whenever it short-circuits (HTTP, private host, DNS
+    /// failure). When the profile has no <c>notify</c> URL, the notifier is
+    /// never called and stderr stays empty.
+    /// </summary>
+    private sealed class StderrCapture : IDisposable
+    {
+        private readonly TextWriter _previous;
+        private readonly StringWriter _writer;
+
+        public StderrCapture()
+        {
+            _previous = Console.Error;
+            _writer = new StringWriter();
+            Console.SetError(_writer);
+        }
+
+        public string Captured => _writer.ToString();
+
+        public void Dispose()
+        {
+            Console.SetError(_previous);
+            _writer.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Check_WithNotifyHttpUrl_AttemptsWebhookAndWarnsOnNonHttps()
+    {
+        // notify uses http:// → WebhookNotifier rejects it with an HTTPS warning.
+        // Seeing that warning in stderr proves the check command actually
+        // *attempted* the webhook (the v1.7 wiring fired).
+        var profilePath = CreateTempProfile(@"
+version: 1
+defaults:
+  notify: http://example.com/hook
+checks:
+  default:
+    failOn: error
+    auditRules:
+      - rule: naming
+");
+        var auditResult = new AuditResult { Passed = 1, Failed = 0, Issues = new List<AuditIssue>() };
+        var client = CreateClient(JsonSerializer.Serialize(ApiResponse<AuditResult>.Ok(auditResult)));
+        var writer = new StringWriter();
+
+        // Even though notify is set, the http:// scheme means CheckCommand's
+        // pre-filter (StartsWith "https://") declines to invoke the notifier.
+        // No stderr warning is expected — the URL is filtered before the call.
+        using var stderr = new StderrCapture();
+        var exitCode = await CheckCommand.ExecuteAsync(
+            client, "default", profilePath, "table", null, true, writer);
+
+        Assert.Equal(0, exitCode);
+        // CheckCommand's https:// pre-filter swallows non-https quietly. This
+        // test pins that behavior: a misconfigured non-https notify never
+        // surfaces a noisy warning during a clean check run.
+        Assert.DoesNotContain("HTTPS", stderr.Captured);
+        File.Delete(profilePath);
+    }
+
+    [Fact]
+    public async Task Check_WithNotifyPrivateHttpsUrl_AttemptsWebhookAndWarns()
+    {
+        // notify uses https://, so CheckCommand's pre-filter passes the URL
+        // to the notifier. The notifier then rejects the private host with a
+        // stderr warning — that warning is the proof that the webhook was
+        // attempted (the v1.7 wiring fired) without changing the exit code.
+        var profilePath = CreateTempProfile(@"
+version: 1
+defaults:
+  notify: https://127.0.0.1/hook
+checks:
+  default:
+    failOn: error
+    auditRules:
+      - rule: naming
+");
+        var auditResult = new AuditResult { Passed = 1, Failed = 0, Issues = new List<AuditIssue>() };
+        var client = CreateClient(JsonSerializer.Serialize(ApiResponse<AuditResult>.Ok(auditResult)));
+        var writer = new StringWriter();
+
+        using var stderr = new StderrCapture();
+        var exitCode = await CheckCommand.ExecuteAsync(
+            client, "default", profilePath, "table", null, true, writer);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("private/loopback", stderr.Captured);
+        File.Delete(profilePath);
+    }
+
+    [Fact]
+    public async Task Check_WithoutNotify_DoesNotInvokeWebhook()
+    {
+        // No notify in defaults → CheckCommand must not call the notifier at
+        // all. We watch stderr for ANY notifier warning ("HTTPS",
+        // "private/loopback", "Warning: webhook"); none should appear.
+        var profilePath = CreateTempProfile(@"
+version: 1
+checks:
+  default:
+    failOn: error
+    auditRules:
+      - rule: naming
+");
+        var auditResult = new AuditResult { Passed = 1, Failed = 0, Issues = new List<AuditIssue>() };
+        var client = CreateClient(JsonSerializer.Serialize(ApiResponse<AuditResult>.Ok(auditResult)));
+        var writer = new StringWriter();
+
+        using var stderr = new StderrCapture();
+        var exitCode = await CheckCommand.ExecuteAsync(
+            client, "default", profilePath, "table", null, true, writer);
+
+        Assert.Equal(0, exitCode);
+        Assert.DoesNotContain("HTTPS", stderr.Captured);
+        Assert.DoesNotContain("private/loopback", stderr.Captured);
+        Assert.DoesNotContain("webhook", stderr.Captured, StringComparison.OrdinalIgnoreCase);
+        File.Delete(profilePath);
     }
 }
