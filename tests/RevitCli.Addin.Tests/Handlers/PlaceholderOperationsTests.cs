@@ -177,4 +177,35 @@ public class PlaceholderOperationsTests
         Assert.Equal(0, result.Failed);
         Assert.Empty(result.Issues);
     }
+
+    [Fact]
+    public async Task ListFamiliesAsync_DefaultRequest_ReturnsThreeFixedFamilies()
+    {
+        var result = await _operations.ListFamiliesAsync(new FamilyListRequest());
+
+        Assert.Equal(3, result.Length);
+        Assert.Contains(result, f => f.Name == "M_Single-Flush" && f.Category == "Doors");
+        Assert.Contains(result, f => f.Name == "M_Fixed" && f.Category == "Windows");
+        Assert.Contains(result, f => f.IsInPlace);
+    }
+
+    [Fact]
+    public async Task ListFamiliesAsync_UnusedFilter_DropsPlacedFamilies()
+    {
+        var result = await _operations.ListFamiliesAsync(
+            new FamilyListRequest { IncludeUnplaced = true });
+
+        Assert.NotEmpty(result);
+        Assert.All(result, f => Assert.False(f.IsPlaced));
+    }
+
+    [Fact]
+    public async Task ListFamiliesAsync_CategoryFilter_KeepsOnlyMatching()
+    {
+        var result = await _operations.ListFamiliesAsync(
+            new FamilyListRequest { Category = "Doors" });
+
+        Assert.Single(result);
+        Assert.Equal("Doors", result[0].Category);
+    }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using RevitCli.Shared;
 
@@ -148,6 +149,56 @@ public class PlaceholderRevitOperations : IRevitOperations
             RowCount = 0,
             PlacedOnSheet = null
         });
+    }
+
+    public Task<FamilyInfo[]> ListFamiliesAsync(FamilyListRequest request)
+    {
+        var families = new[]
+        {
+            new FamilyInfo
+            {
+                Id = 5001,
+                Name = "M_Single-Flush",
+                Category = "Doors",
+                IsInPlace = false,
+                IsLoadable = true,
+                FilePath = null,
+                IsPlaced = true
+            },
+            new FamilyInfo
+            {
+                Id = 5002,
+                Name = "M_Fixed",
+                Category = "Windows",
+                IsInPlace = false,
+                IsLoadable = true,
+                FilePath = null,
+                IsPlaced = true
+            },
+            new FamilyInfo
+            {
+                Id = 5003,
+                Name = "Placeholder InPlace Wall",
+                Category = "Walls",
+                IsInPlace = true,
+                IsLoadable = false,
+                FilePath = null,
+                IsPlaced = false
+            }
+        };
+
+        IEnumerable<FamilyInfo> filtered = families;
+        if (!string.IsNullOrWhiteSpace(request?.Category))
+        {
+            filtered = filtered.Where(f =>
+                string.Equals(f.Category, request!.Category, StringComparison.OrdinalIgnoreCase));
+        }
+        if (request?.IncludeUnplaced == true)
+        {
+            filtered = filtered.Where(f => !f.IsPlaced);
+        }
+
+        return Task.FromResult(filtered.ToArray());
     }
 
     public Task<ModelSnapshot> CaptureSnapshotAsync(SnapshotRequest request)

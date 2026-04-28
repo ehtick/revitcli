@@ -28,6 +28,7 @@
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="System.Text.Encoding.CodePages" />
+    <PackageReference Include="LibGit2Sharp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\shared\RevitCli.Shared\RevitCli.Shared.csproj" />

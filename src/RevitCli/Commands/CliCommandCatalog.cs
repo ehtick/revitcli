@@ -33,7 +33,9 @@ internal static class CliCommandCatalog
         ("history", "Manage local snapshot history (init/capture/list/prune/diff/trend)"),
         ("mcp", "Run RevitCli as a Model Context Protocol server"),
         ("ci", "CI integration helpers (detect provider, emit workflow templates)"),
-        ("profile", "Validate, resolve, and diff .revitcli.yml profiles")
+        ("profile", "Validate, resolve, diff, and install .revitcli.yml profiles"),
+        ("family", "Manage Revit families (list)"),
+        ("dashboard", "Serve or package the RevitCli web dashboard (v2.0)")
     };
 
     internal static readonly (string Command, string Description)[] InteractiveHelpEntries =
@@ -64,6 +66,10 @@ internal static class CliCommandCatalog
         ("profile validate", "Schema/reference checker for .revitcli.yml"),
         ("profile show --resolve", "Print merged effective profile (yaml|json)"),
         ("profile diff <a> <b>", "Structural diff between two profiles (table|json|markdown)"),
+        ("profile install <git-url>", "Shallow-clone a remote profile bundle (--ref, --subpath, --target, --force)"),
+        ("family ls", "List families in the active document (--unused, --category, --output)"),
+        ("dashboard serve [--port 8080]", "Serve the prebuilt dashboard on localhost"),
+        ("dashboard build --output ./public", "Copy the prebuilt dashboard + inject history into a deploy folder"),
         ("init <template>", "Create .revitcli.yml from starter template"),
         ("doctor", "Check setup, server discovery, and connectivity"),
         ("batch <file>", "Execute commands from a JSON batch file"),
@@ -110,6 +116,8 @@ internal static class CliCommandCatalog
         root.AddCommand(McpCommand.Create(client));
         root.AddCommand(CiCommand.Create());
         root.AddCommand(ProfileCommand.Create());
+        root.AddCommand(FamilyCommand.Create(client));
+        root.AddCommand(DashboardCommand.Create());
 
         if (includeBatchCommand)
             root.AddCommand(BatchCommand.Create(client, config));
