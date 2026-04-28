@@ -11,6 +11,10 @@ namespace RevitCli.Client;
 
 public class RevitClient : IDisposable
 {
+    public const int DefaultPort = ServerInfo.DefaultPort;
+    public const string DefaultBaseUrl = "http://localhost:17839";
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
+
     private readonly HttpClient _http;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -34,11 +38,34 @@ public class RevitClient : IDisposable
         _http = http;
     }
 
-    public RevitClient(string baseUrl = "http://localhost:17839", string token = "")
+    public RevitClient(string baseUrl = DefaultBaseUrl, string token = "")
+        : this(baseUrl, token, ResolveTimeout())
     {
-        _http = new HttpClient { BaseAddress = new System.Uri(baseUrl) };
+    }
+
+    public RevitClient(string baseUrl, string token, TimeSpan timeout)
+    {
+        _http = new HttpClient
+        {
+            BaseAddress = new System.Uri(baseUrl),
+            Timeout = timeout
+        };
         if (!string.IsNullOrEmpty(token))
             _http.DefaultRequestHeaders.Add("X-RevitCli-Token", token);
+    }
+
+    private static TimeSpan ResolveTimeout()
+    {
+        var raw = Environment.GetEnvironmentVariable("REVITCLI_HTTP_TIMEOUT_SECONDS");
+        if (!string.IsNullOrWhiteSpace(raw)
+            && int.TryParse(raw, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var seconds)
+            && seconds > 0
+            && seconds <= 3600)
+        {
+            return TimeSpan.FromSeconds(seconds);
+        }
+        return DefaultRequestTimeout;
     }
 
     public void Dispose()
@@ -65,258 +92,108 @@ public class RevitClient : IDisposable
                             return ($"http://localhost:{info.Port}", info.Token ?? "");
                     }
                     catch (System.ArgumentException) { /* process not found */ }
+                    catch (System.ComponentModel.Win32Exception) { /* access denied — treat as unavailable */ }
                 }
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or JsonException
+                                    or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            Console.Error.WriteLine($"[RevitCli] Could not read server.json: {ex.Message}");
+        }
         return (configuredUrl, "");
     }
 
-    public async Task<ApiResponse<StatusInfo>> GetStatusAsync()
+    // ── Generic request helpers ────────────────────────────────────
+
+    /// <summary>
+    /// Execute a GET request and deserialize the response.
+    /// Handles connection failures and communication errors uniformly.
+    /// </summary>
+    private async Task<ApiResponse<T>> GetAsync<T>(string url)
     {
         try
         {
-            var url = "/api/status";
             var response = await _http.GetAsync(url);
             var json = await SendAndRead(response, "GET", url);
-            return JsonSerializer.Deserialize<ApiResponse<StatusInfo>>(json, JsonOptions)!;
+            return JsonSerializer.Deserialize<ApiResponse<T>>(json, JsonOptions)!;
         }
         catch (HttpRequestException ex)
         {
             if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<StatusInfo>.Fail("Revit is not running or plugin is not loaded.");
+            return ApiResponse<T>.Fail("Revit is not running or plugin is not loaded.");
         }
         catch (Exception ex) when (ex is TaskCanceledException or JsonException)
         {
-            return ApiResponse<StatusInfo>.Fail($"Communication error: {ex.Message}");
+            return ApiResponse<T>.Fail($"Communication error: {ex.Message}");
         }
     }
 
-    public async Task<ApiResponse<ElementInfo[]>> QueryElementsAsync(string? category, string? filter)
+    /// <summary>
+    /// Execute a POST request with a JSON body and deserialize the response.
+    /// Handles connection failures and communication errors uniformly.
+    /// </summary>
+    private async Task<ApiResponse<T>> PostAsync<T>(string url, object request)
     {
         try
         {
-            var parts = new List<string>();
-            if (category != null) parts.Add($"category={System.Uri.EscapeDataString(category)}");
-            if (filter != null) parts.Add($"filter={System.Uri.EscapeDataString(filter)}");
-            var url = $"/api/elements?{string.Join("&", parts)}";
-
-            var response = await _http.GetAsync(url);
-            var json = await SendAndRead(response, "GET", url);
-            return JsonSerializer.Deserialize<ApiResponse<ElementInfo[]>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ElementInfo[]>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<ElementInfo[]>.Fail($"Communication error: {ex.Message}");
-        }
-    }
-
-    public async Task<ApiResponse<ElementInfo>> QueryElementByIdAsync(long id)
-    {
-        try
-        {
-            var url = $"/api/elements/{id}";
-            var response = await _http.GetAsync(url);
-            var json = await SendAndRead(response, "GET", url);
-            return JsonSerializer.Deserialize<ApiResponse<ElementInfo>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ElementInfo>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<ElementInfo>.Fail($"Communication error: {ex.Message}");
-        }
-    }
-
-    public async Task<ApiResponse<ExportProgress>> ExportAsync(ExportRequest request)
-    {
-        try
-        {
-            var url = "/api/export";
             var content = new StringContent(
                 JsonSerializer.Serialize(request),
                 Encoding.UTF8,
                 "application/json");
             var response = await _http.PostAsync(url, content);
             var json = await SendAndRead(response, "POST", url);
-            return JsonSerializer.Deserialize<ApiResponse<ExportProgress>>(json, JsonOptions)!;
+            return JsonSerializer.Deserialize<ApiResponse<T>>(json, JsonOptions)!;
         }
         catch (HttpRequestException ex)
         {
             if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ExportProgress>.Fail("Revit is not running or plugin is not loaded.");
+            return ApiResponse<T>.Fail("Revit is not running or plugin is not loaded.");
         }
         catch (Exception ex) when (ex is TaskCanceledException or JsonException)
         {
-            return ApiResponse<ExportProgress>.Fail($"Communication error: {ex.Message}");
+            return ApiResponse<T>.Fail($"Communication error: {ex.Message}");
         }
     }
 
-    public async Task<ApiResponse<ExportProgress>> GetExportProgressAsync(string taskId)
+    // ── Public API methods ─────────────────────────────────────────
+
+    public Task<ApiResponse<StatusInfo>> GetStatusAsync()
+        => GetAsync<StatusInfo>("/api/status");
+
+    public Task<ApiResponse<ElementInfo[]>> QueryElementsAsync(string? category, string? filter)
     {
-        try
-        {
-            var url = $"/api/tasks/{taskId}";
-            var response = await _http.GetAsync(url);
-            var json = await SendAndRead(response, "GET", url);
-            return JsonSerializer.Deserialize<ApiResponse<ExportProgress>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ExportProgress>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<ExportProgress>.Fail($"Communication error: {ex.Message}");
-        }
+        var parts = new List<string>();
+        if (category != null) parts.Add($"category={System.Uri.EscapeDataString(category)}");
+        if (filter != null) parts.Add($"filter={System.Uri.EscapeDataString(filter)}");
+        var url = $"/api/elements?{string.Join("&", parts)}";
+        return GetAsync<ElementInfo[]>(url);
     }
 
-    public async Task<ApiResponse<SetResult>> SetParameterAsync(SetRequest request)
-    {
-        try
-        {
-            var url = "/api/elements/set";
-            var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                Encoding.UTF8,
-                "application/json");
-            var response = await _http.PostAsync(url, content);
-            var json = await SendAndRead(response, "POST", url);
-            return JsonSerializer.Deserialize<ApiResponse<SetResult>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<SetResult>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<SetResult>.Fail($"Communication error: {ex.Message}");
-        }
-    }
+    public Task<ApiResponse<ElementInfo>> QueryElementByIdAsync(long id)
+        => GetAsync<ElementInfo>($"/api/elements/{id}");
 
-    public async Task<ApiResponse<AuditResult>> AuditAsync(AuditRequest request)
-    {
-        try
-        {
-            var url = "/api/audit";
-            var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                Encoding.UTF8,
-                "application/json");
-            var response = await _http.PostAsync(url, content);
-            var json = await SendAndRead(response, "POST", url);
-            return JsonSerializer.Deserialize<ApiResponse<AuditResult>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<AuditResult>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<AuditResult>.Fail($"Communication error: {ex.Message}");
-        }
-    }
+    public Task<ApiResponse<ExportProgress>> ExportAsync(ExportRequest request)
+        => PostAsync<ExportProgress>("/api/export", request);
 
-    public async Task<ApiResponse<ScheduleInfo[]>> ListSchedulesAsync()
-    {
-        try
-        {
-            var url = "/api/schedules";
-            var response = await _http.GetAsync(url);
-            var json = await SendAndRead(response, "GET", url);
-            return JsonSerializer.Deserialize<ApiResponse<ScheduleInfo[]>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ScheduleInfo[]>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<ScheduleInfo[]>.Fail($"Communication error: {ex.Message}");
-        }
-    }
+    public Task<ApiResponse<ExportProgress>> GetExportProgressAsync(string taskId)
+        => GetAsync<ExportProgress>($"/api/tasks/{taskId}");
 
-    public async Task<ApiResponse<ScheduleData>> ExportScheduleAsync(ScheduleExportRequest request)
-    {
-        try
-        {
-            var url = "/api/schedules/export";
-            var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                Encoding.UTF8,
-                "application/json");
-            var response = await _http.PostAsync(url, content);
-            var json = await SendAndRead(response, "POST", url);
-            return JsonSerializer.Deserialize<ApiResponse<ScheduleData>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ScheduleData>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<ScheduleData>.Fail($"Communication error: {ex.Message}");
-        }
-    }
+    public Task<ApiResponse<SetResult>> SetParameterAsync(SetRequest request)
+        => PostAsync<SetResult>("/api/elements/set", request);
 
-    public async Task<ApiResponse<ScheduleCreateResult>> CreateScheduleAsync(ScheduleCreateRequest request)
-    {
-        try
-        {
-            var url = "/api/schedules/create";
-            var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                Encoding.UTF8,
-                "application/json");
-            var response = await _http.PostAsync(url, content);
-            var json = await SendAndRead(response, "POST", url);
-            return JsonSerializer.Deserialize<ApiResponse<ScheduleCreateResult>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ScheduleCreateResult>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<ScheduleCreateResult>.Fail($"Communication error: {ex.Message}");
-        }
-    }
+    public Task<ApiResponse<AuditResult>> AuditAsync(AuditRequest request)
+        => PostAsync<AuditResult>("/api/audit", request);
 
-    public async Task<ApiResponse<ModelSnapshot>> CaptureSnapshotAsync(SnapshotRequest request)
-    {
-        try
-        {
-            var url = "/api/snapshot";
-            var content = new StringContent(
-                JsonSerializer.Serialize(request),
-                Encoding.UTF8,
-                "application/json");
-            var response = await _http.PostAsync(url, content);
-            var json = await SendAndRead(response, "POST", url);
-            return JsonSerializer.Deserialize<ApiResponse<ModelSnapshot>>(json, JsonOptions)!;
-        }
-        catch (HttpRequestException ex)
-        {
-            if (Verbose) Console.Error.WriteLine($"[HTTP] Connection failed: {ex.Message}");
-            return ApiResponse<ModelSnapshot>.Fail("Revit is not running or plugin is not loaded.");
-        }
-        catch (Exception ex) when (ex is TaskCanceledException or JsonException)
-        {
-            return ApiResponse<ModelSnapshot>.Fail($"Communication error: {ex.Message}");
-        }
-    }
+    public Task<ApiResponse<ScheduleInfo[]>> ListSchedulesAsync()
+        => GetAsync<ScheduleInfo[]>("/api/schedules");
+
+    public Task<ApiResponse<ScheduleData>> ExportScheduleAsync(ScheduleExportRequest request)
+        => PostAsync<ScheduleData>("/api/schedules/export", request);
+
+    public Task<ApiResponse<ScheduleCreateResult>> CreateScheduleAsync(ScheduleCreateRequest request)
+        => PostAsync<ScheduleCreateResult>("/api/schedules/create", request);
+
+    public Task<ApiResponse<ModelSnapshot>> CaptureSnapshotAsync(SnapshotRequest request)
+        => PostAsync<ModelSnapshot>("/api/snapshot", request);
 }

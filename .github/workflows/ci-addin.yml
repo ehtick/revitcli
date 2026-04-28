@@ -1,6 +1,19 @@
-name: CI - Addin (Windows)
+name: CI - Addin (Windows + Revit)
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/RevitCli.Addin/**'
+      - 'shared/**'
+      - 'tests/RevitCli.Addin.Tests/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - '.github/workflows/ci-addin.yml'
+  schedule:
+    # Daily fallback so the add-in never goes more than a day without a build,
+    # even if no PR touches the add-in code.
+    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       revit_install_dir:
@@ -12,17 +25,27 @@ jobs:
   build-addin:
     runs-on: [self-hosted, windows, revit2026]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
+
+      - name: Resolve Revit install dir
+        id: revit
+        shell: pwsh
+        run: |
+          $dir = "${{ github.event.inputs.revit_install_dir }}"
+          if ([string]::IsNullOrWhiteSpace($dir)) {
+            $dir = 'C:\Program Files\Autodesk\Revit 2026'
+          }
+          echo "DIR=$dir" >> $env:GITHUB_OUTPUT
 
       - name: Check Revit API DLLs
         shell: pwsh
         run: |
-          $dir = "${{ github.event.inputs.revit_install_dir }}"
+          $dir = "${{ steps.revit.outputs.DIR }}"
           $missing = @()
           foreach ($dll in @('RevitAPI.dll', 'RevitAPIUI.dll')) {
             if (-not (Test-Path "$dir\$dll")) { $missing += $dll }
@@ -37,19 +60,19 @@ jobs:
       - name: Restore
         run: dotnet restore
         env:
-          Revit2026InstallDir: ${{ github.event.inputs.revit_install_dir }}
+          Revit2026InstallDir: ${{ steps.revit.outputs.DIR }}
 
       - name: Build Addin
         run: dotnet build src/RevitCli.Addin --no-restore
         env:
-          Revit2026InstallDir: ${{ github.event.inputs.revit_install_dir }}
+          Revit2026InstallDir: ${{ steps.revit.outputs.DIR }}
 
       - name: Build Addin Tests
         run: dotnet build tests/RevitCli.Addin.Tests --no-restore
         env:
-          Revit2026InstallDir: ${{ github.event.inputs.revit_install_dir }}
+          Revit2026InstallDir: ${{ steps.revit.outputs.DIR }}
 
       - name: Run Addin Tests
         run: dotnet test tests/RevitCli.Addin.Tests --no-build --verbosity normal
         env:
-          Revit2026InstallDir: ${{ github.event.inputs.revit_install_dir }}
+          Revit2026InstallDir: ${{ steps.revit.outputs.DIR }}

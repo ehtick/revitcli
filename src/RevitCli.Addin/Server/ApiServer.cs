@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -50,10 +51,11 @@ public class ApiServer : IDisposable
     public void Start()
     {
         _cts = new CancellationTokenSource();
-        _token = Guid.NewGuid().ToString("N");
+        _token = GenerateToken();
 
         // Try ports starting from _port, fallback to next 10
         int actualPort = _port;
+        Exception? lastError = null;
         for (int i = 0; i <= 10; i++)
         {
             WebServer? server = null;
@@ -67,8 +69,10 @@ public class ApiServer : IDisposable
                 {
                     server.Dispose();
                     ObserveRunTask(runTask);
+                    lastError = new InvalidOperationException(
+                        $"RevitCli API server did not start listening on port {actualPort}.");
                     if (i == 10)
-                        throw new InvalidOperationException($"RevitCli API server did not start listening on port {actualPort}.");
+                        throw lastError;
                     continue;
                 }
 
@@ -78,15 +82,44 @@ public class ApiServer : IDisposable
                 WriteServerInfo(actualPort);
                 return;
             }
-            catch (Exception)
+            // WriteServerInfo runs after the listener is up, so its failure modes
+            // (TimeoutException from the cross-process mutex, IOException /
+            // UnauthorizedAccessException from the atomic file write) must reach
+            // this catch — otherwise the already-listening server and its run
+            // task escape unhandled and leak.
+            catch (Exception ex) when (ex is HttpListenerException or System.Net.Sockets.SocketException
+                                        or InvalidOperationException
+                                        or TimeoutException
+                                        or IOException
+                                        or UnauthorizedAccessException)
             {
+                lastError = ex;
+                Console.Error.WriteLine(
+                    $"[RevitCli] Port {actualPort} unavailable: {ex.GetType().Name}: {ex.Message}");
                 server?.Dispose();
                 ObserveRunTask(runTask);
                 _server = null;
                 _runTask = null;
+                _actualPort = 0;
                 if (i == 10) throw;
             }
         }
+
+        if (lastError != null)
+            throw lastError;
+    }
+
+    private static string GenerateToken()
+    {
+        var bytes = new byte[32];
+        using (var rng = RandomNumberGenerator.Create())
+        {
+            rng.GetBytes(bytes);
+        }
+        var sb = new StringBuilder(bytes.Length * 2);
+        foreach (var b in bytes)
+            sb.Append(b.ToString("x2"));
+        return sb.ToString();
     }
 
     private static bool WaitForListening(WebServer server, Task runTask, TimeSpan timeout)
@@ -196,6 +229,7 @@ public class ApiServer : IDisposable
         var fileName = Path.GetFileName(_serverInfoPath);
         var tempPath = Path.Combine(dir, $".{fileName}.{Guid.NewGuid():N}.tmp");
         File.WriteAllText(tempPath, json);
+        TryRestrictToCurrentUser(tempPath);
         try
         {
             IOException? lastError = null;
@@ -207,6 +241,7 @@ public class ApiServer : IDisposable
                         File.Replace(tempPath, _serverInfoPath, null);
                     else
                         File.Move(tempPath, _serverInfoPath);
+                    TryRestrictToCurrentUser(_serverInfoPath);
                     return;
                 }
                 catch (IOException ex)
@@ -228,7 +263,64 @@ public class ApiServer : IDisposable
                 if (File.Exists(tempPath))
                     File.Delete(tempPath);
             }
-            catch { }
+            catch (IOException ex)
+            {
+                Console.Error.WriteLine($"[RevitCli] Failed to remove server.json temp file: {ex.Message}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Console.Error.WriteLine($"[RevitCli] Failed to remove server.json temp file: {ex.Message}");
+            }
+        }
+    }
+
+    private static void TryRestrictToCurrentUser(string path)
+    {
+#if NETFRAMEWORK
+        TryRestrictAclWindows(path);
+#else
+        if (OperatingSystem.IsWindows())
+            TryRestrictAclWindows(path);
+#endif
+    }
+
+#if NETFRAMEWORK
+    private static void TryRestrictAclWindows(string path)
+#else
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void TryRestrictAclWindows(string path)
+#endif
+    {
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var sid = identity.User;
+            if (sid == null) return;
+
+            var fileInfo = new FileInfo(path);
+            var security = new System.Security.AccessControl.FileSecurity();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                sid,
+                System.Security.AccessControl.FileSystemRights.FullControl,
+                System.Security.AccessControl.AccessControlType.Allow));
+#if NETFRAMEWORK
+            fileInfo.SetAccessControl(security);
+#else
+            System.IO.FileSystemAclExtensions.SetAccessControl(fileInfo, security);
+#endif
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // ACL hardening is best-effort; token in file still gates access.
+        }
+        catch (PlatformNotSupportedException)
+        {
+            // Non-Windows path — token still gates access.
+        }
+        catch (IOException)
+        {
+            // File concurrently moved/replaced; harmless.
         }
     }
 
@@ -244,19 +336,32 @@ public class ApiServer : IDisposable
 
                 info = JsonSerializer.Deserialize<ServerInfo>(File.ReadAllText(_serverInfoPath));
             }
-            catch
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
+                Console.Error.WriteLine($"[RevitCli] Could not read server.json during cleanup: {ex.Message}");
                 return;
             }
 
             if (info?.Token != _token)
                 return;
 
+            // Belt-and-suspenders: token equality (checked above) already proves the
+            // file was written by this server instance. As a second line of defense,
+            // skip the delete if either the PID or the port has drifted from what we
+            // currently hold — that points at a stale info file the OS may have
+            // recycled rather than something we actively own.
             var currentPid = Process.GetCurrentProcess().Id;
-            if (info.Pid != currentPid && info.Port != _actualPort)
+            if (info.Pid != currentPid || info.Port != _actualPort)
                 return;
 
-            try { File.Delete(_serverInfoPath); } catch { }
+            try
+            {
+                File.Delete(_serverInfoPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"[RevitCli] Could not delete server.json during cleanup: {ex.Message}");
+            }
         }, throwOnTimeout: false);
     }
 
@@ -285,8 +390,9 @@ public class ApiServer : IDisposable
 
             action();
         }
-        catch when (!throwOnTimeout)
+        catch (Exception ex) when (!throwOnTimeout)
         {
+            Console.Error.WriteLine($"[RevitCli] server.json lock action failed: {ex.GetType().Name}: {ex.Message}");
             return;
         }
         finally
@@ -306,7 +412,8 @@ public class ApiServer : IDisposable
         {
             normalizedPath = Path.GetFullPath(serverInfoPath).ToUpperInvariant();
         }
-        catch
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException
+                                    or NotSupportedException or System.Security.SecurityException)
         {
             normalizedPath = serverInfoPath.ToUpperInvariant();
         }
@@ -326,6 +433,7 @@ public class ApiServer : IDisposable
         ObserveRunTask(runTask);
         _server = null;
         _runTask = null;
+        _cts?.Dispose();
         _cts = null;
     }
 
@@ -334,7 +442,9 @@ public class ApiServer : IDisposable
         if (task == null)
             return;
 
-        try { task.Wait(ServerStopTimeout); } catch { }
+        try { task.Wait(ServerStopTimeout); }
+        catch (AggregateException) { /* faults observed below */ }
+        catch (OperationCanceledException) { /* expected on shutdown */ }
 
         if (task.IsFaulted)
         {

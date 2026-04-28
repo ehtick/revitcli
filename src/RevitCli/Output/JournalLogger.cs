@@ -14,7 +14,8 @@ public static class JournalLogger
 
     /// <summary>
     /// Append a journal entry to .revitcli/journal.jsonl (relative to profile or cwd).
-    /// Each line is a self-contained JSON object.
+    /// Each line is a self-contained JSON object. Failures are surfaced on stderr but
+    /// never block the running command — the journal is an audit aid, not a gate.
     /// </summary>
     public static void Log(string? profileDir, object entry)
     {
@@ -28,9 +29,10 @@ public static class JournalLogger
             var line = JsonSerializer.Serialize(entry, JsonOpts);
             File.AppendAllText(journalPath, line + Environment.NewLine);
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                    or System.Security.SecurityException or JsonException)
         {
-            // Journal logging is best-effort — never break the command
+            Console.Error.WriteLine($"[RevitCli] Journal write failed (audit trail incomplete): {ex.Message}");
         }
     }
 }

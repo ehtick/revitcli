@@ -12,7 +12,7 @@ public sealed class RevitCliApp : IExternalApplication
     private ApiServer? _server;
     private RevitBridge? _bridge;
     private IRevitOperations? _operations;
-    private const int DefaultPort = 17839;
+    private const int DefaultPort = ServerInfo.DefaultPort;
 
     public Result OnStartup(UIControlledApplication application)
     {
