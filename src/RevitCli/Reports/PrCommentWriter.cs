@@ -135,13 +135,16 @@ public static class PrCommentWriter
         if (string.IsNullOrEmpty(value))
             return "";
 
-        // Replace pipes (table separator), backticks (escape), and embedded
-        // newlines so the markdown table stays single-row.
+        // Pipes (table-cell separator), backticks (start an inline-code span
+        // that can break table parsing when unbalanced inside a cell), and
+        // any line break (would split the row) — escape so the markdown table
+        // stays single-row and renders predictably across GFM renderers.
         var sanitized = value
             .Replace("\r\n", " ")
             .Replace("\r", " ")
             .Replace("\n", " ")
-            .Replace("|", "\\|");
+            .Replace("|", "\\|")
+            .Replace("`", "\\`");
         return sanitized;
     }
 }

@@ -110,8 +110,10 @@ public class AuditReportFormatsTests
     [InlineData(".sarif", "sarif")]
     [InlineData("sarif", "sarif")]
     [InlineData(".SARIF", "sarif")]
+    [InlineData(".md", "pr-comment")]
+    [InlineData("md", "pr-comment")]
+    [InlineData(".MD", "pr-comment")]
     [InlineData(".json", null)]
-    [InlineData(".md", null)]
     [InlineData("", null)]
     [InlineData(null, null)]
     public void InferFormatFromExtension_ReturnsExpected(string? extension, string? expected)
