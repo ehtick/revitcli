@@ -21,17 +21,18 @@ public static class ExportCommand
         var sheetsOpt = new Option<string[]>("--sheets", () => System.Array.Empty<string>(), "Sheet name patterns (e.g. \"A1*\", \"all\")");
         var viewsOpt = new Option<string[]>("--views", () => System.Array.Empty<string>(), "View name patterns (e.g. \"Level 1\", \"all\")");
         var outputDirOpt = new Option<string>("--output-dir", () => config.ExportDir, "Output directory for exported files");
+        var dryRunOpt = new Option<bool>("--dry-run", "Validate inputs and resolve targets without writing files");
 
         var command = new Command("export", "Export sheets or views from the Revit model")
         {
-            formatOpt, sheetsOpt, viewsOpt, outputDirOpt
+            formatOpt, sheetsOpt, viewsOpt, outputDirOpt, dryRunOpt
         };
 
-        command.SetHandler(async (format, sheets, views, outputDir) =>
+        command.SetHandler(async (format, sheets, views, outputDir, dryRun) =>
         {
             if (!ConsoleHelper.IsInteractive)
             {
-                Environment.ExitCode = await ExecuteAsync(client, format, sheets, views, outputDir, Console.Out);
+                Environment.ExitCode = await ExecuteAsync(client, format, sheets, views, outputDir, dryRun, Console.Out);
                 return;
             }
 
@@ -47,7 +48,8 @@ public static class ExportCommand
                 Format = format.ToLower(),
                 Sheets = sheets.ToList(),
                 Views = views.ToList(),
-                OutputDir = Path.GetFullPath(outputDir)
+                OutputDir = ResolveOutputDir(outputDir, dryRun),
+                DryRun = dryRun
             };
 
             var result = await client.ExportAsync(request);
@@ -59,6 +61,13 @@ public static class ExportCommand
             }
 
             var progress = result.Data!;
+
+            if (dryRun && progress.Status == "completed")
+            {
+                AnsiConsole.MarkupLine($"[yellow]Dry run:[/] {Markup.Escape(progress.Message ?? $"would export to {request.OutputDir}")}");
+                return;
+            }
+
             if (progress.Status == "completed")
             {
                 AnsiConsole.MarkupLine($"[green]Export completed.[/] Task ID: {progress.TaskId}");
@@ -108,12 +117,15 @@ public static class ExportCommand
                 AnsiConsole.MarkupLine("[red]Export timed out or lost connection to Revit.[/]");
                 Environment.ExitCode = 1;
             }
-        }, formatOpt, sheetsOpt, viewsOpt, outputDirOpt);
+        }, formatOpt, sheetsOpt, viewsOpt, outputDirOpt, dryRunOpt);
 
         return command;
     }
 
     public static async Task<int> ExecuteAsync(RevitClient client, string format, string[] sheets, string[] views, string outputDir, TextWriter output)
+        => await ExecuteAsync(client, format, sheets, views, outputDir, false, output);
+
+    public static async Task<int> ExecuteAsync(RevitClient client, string format, string[] sheets, string[] views, string outputDir, bool dryRun, TextWriter output)
     {
         if (string.IsNullOrEmpty(format) || !ValidFormats.Contains(format.ToLower()))
         {
@@ -126,7 +138,8 @@ public static class ExportCommand
             Format = format.ToLower(),
             Sheets = sheets.ToList(),
             Views = views.ToList(),
-            OutputDir = Path.GetFullPath(outputDir)
+            OutputDir = ResolveOutputDir(outputDir, dryRun),
+            DryRun = dryRun
         };
 
         var result = await client.ExportAsync(request);
@@ -138,6 +151,14 @@ public static class ExportCommand
         }
 
         var progress = result.Data!;
+
+        if (dryRun && progress.Status == "completed")
+        {
+            var msg = progress.Message ?? $"would export to {request.OutputDir}";
+            await output.WriteLineAsync($"Dry run: {msg}");
+            return 0;
+        }
+
         if (progress.Status == "completed")
         {
             await output.WriteLineAsync($"Export completed. Task ID: {progress.TaskId}");
@@ -168,5 +189,16 @@ public static class ExportCommand
         else if (DateTime.UtcNow >= deadline)
             await output.WriteLineAsync("Error: export timed out after 10 minutes.");
         return 1;
+    }
+
+    // Dry-run never writes files, so the server doesn't need a resolved path.
+    // Calling Path.GetFullPath("") would silently substitute the current
+    // working directory, which is not what the user asked for when they
+    // omit --output-dir alongside --dry-run.
+    private static string ResolveOutputDir(string outputDir, bool dryRun)
+    {
+        if (dryRun && string.IsNullOrWhiteSpace(outputDir))
+            return string.Empty;
+        return Path.GetFullPath(outputDir);
     }
 }

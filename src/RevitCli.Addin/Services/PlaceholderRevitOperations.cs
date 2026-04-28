@@ -45,9 +45,26 @@ public class PlaceholderRevitOperations : IRevitOperations
 
     public Task<ExportProgress> ExportAsync(ExportRequest request)
     {
+        var taskId = Guid.NewGuid().ToString("N").Substring(0, 8);
+        if (request.DryRun)
+        {
+            // Placeholder cannot resolve real selectors — count placeholder targets so
+            // callers see a deterministic, non-zero number that mirrors the real path.
+            var count = (request.Sheets?.Count ?? 0) + (request.Views?.Count ?? 0);
+            if (count == 0)
+                count = 1;
+            return Task.FromResult(new ExportProgress
+            {
+                TaskId = taskId,
+                Status = "completed",
+                Progress = 100,
+                Message = $"Dry run: would export {count} file(s) to {request.OutputDir}"
+            });
+        }
+
         return Task.FromResult(new ExportProgress
         {
-            TaskId = Guid.NewGuid().ToString("N").Substring(0, 8),
+            TaskId = taskId,
             Status = "completed",
             Progress = 100
         });

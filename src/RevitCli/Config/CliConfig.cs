@@ -2,13 +2,14 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RevitCli.Shared;
 
 namespace RevitCli.Config;
 
 public class CliConfig
 {
     [JsonPropertyName("serverUrl")]
-    public string ServerUrl { get; set; } = "http://localhost:17839";
+    public string ServerUrl { get; set; } = $"http://localhost:{ServerInfo.DefaultPort}";
 
     [JsonPropertyName("defaultOutput")]
     public string DefaultOutput { get; set; } = "table";
@@ -35,8 +36,10 @@ public class CliConfig
             var json = File.ReadAllText(ConfigPath);
             return JsonSerializer.Deserialize<CliConfig>(json) ?? new CliConfig();
         }
-        catch
+        catch (Exception ex) when (ex is IOException or JsonException
+                                    or UnauthorizedAccessException or System.Security.SecurityException)
         {
+            Console.Error.WriteLine($"[RevitCli] Could not read config.json — using defaults. ({ex.Message})");
             return new CliConfig();
         }
     }

@@ -5,10 +5,7 @@
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <RootNamespace>RevitCli.Addin</RootNamespace>
-    <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>latest</LangVersion>
-    <Version>1.3.0</Version>
 
     <!-- RevitYear: 2024 (net48), 2025 (net8.0-windows), 2026 (net8.0-windows) -->
     <RevitYear Condition="'$(RevitYear)' == ''">2026</RevitYear>
@@ -32,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="EmbedIO" Version="3.5.2" />
+    <PackageReference Include="EmbedIO" />
   </ItemGroup>
 
   <ItemGroup>

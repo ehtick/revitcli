@@ -2,8 +2,8 @@
 
 Command-line interface for Autodesk Revit. Query elements, batch export, modify parameters, snapshot/diff models, and write parameters back from CSV — all from your terminal.
 
-> **Status: v1.3.0 — Model-as-Code complete**
-> Local BIMOps runner with versioning. Standards checking, deliverable publishing, model snapshots, incremental publish, CSV writeback. Supports Revit 2024/2025/2026.
+> **Status: v1.5 — Auto-fix Playbooks complete**
+> Local BIMOps runner with versioning. Standards checking, deliverable publishing, model snapshots, incremental publish, CSV writeback, and recipe-driven `fix`/`rollback`. Supports Revit 2024/2025/2026.
 
 ```bash
 revitcli status                                              # connection check
@@ -268,10 +268,10 @@ docs/superpowers/          # Design specs and implementation plans
 
 ## Publishing
 
-1. Update version in `src/RevitCli/RevitCli.csproj` and `src/RevitCli.Addin/RevitCli.Addin.csproj`
-2. Update `CHANGELOG.md`
-3. Tag and push: `git tag v1.4.0 && git push origin v1.4.0`
-4. GitHub Actions auto-publishes to NuGet.org
+1. Update `RevitCliVersion` in `Directory.Build.props` (single source of truth for both the CLI and add-in projects).
+2. Update `CHANGELOG.md`.
+3. Tag and push: `git tag v1.5.0 && git push origin v1.5.0`.
+4. GitHub Actions auto-publishes the CLI to NuGet.org and the multi-Revit-year add-in ZIP to the GitHub release.
 
 > Requires `NUGET_API_KEY` secret in repository settings.
 
