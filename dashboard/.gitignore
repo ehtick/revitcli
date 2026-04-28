@@ -8,3 +8,8 @@ dist/
 .env
 .env.local
 .env.*.local
+
+# Playwright artefacts (test runner output, browser binaries cache).
+test-results/
+playwright-report/
+playwright/.cache/

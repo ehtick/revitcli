@@ -293,6 +293,34 @@ workflow + a privacy-conscious operator guide.
   workflow.
 - `docs/ci/github-actions.md` cross-links the new doc.
 
+### Added — v2.0 dashboard Playwright e2e (closes §7 step 10)
+
+Per `docs/roadmap-2026q2-q3.md` §7 implementation step 10. Smoke
+coverage for all three v2.0 routes; stub-data driven so the suite
+runs from a fresh checkout with no operator history.
+
+- `dashboard/playwright.config.ts` — single Chromium project,
+  `webServer` launches `npm run dev` automatically. CI gets
+  `forbidOnly`, fewer retries, GitHub reporter; local devs get the
+  default `list` reporter and reused-server semantics.
+- `dashboard/tests/e2e/`:
+  - `overview.spec.ts` — header, demo-data badge, both Chart.js
+    mounts (bar + sparkline), full nav surface
+  - `history.spec.ts` — heading, time-series chart, delta table row
+    count, Δscore column rendering
+  - `projects.spec.ts` — card count, score-DESC sort order, per-card
+    sparkline mount, score / elements / captures labels
+  - `README.md` — run instructions + strategy notes
+- `dashboard/package.json` — adds `@playwright/test` devDep + two
+  scripts (`test:e2e`, `test:e2e:install`)
+- `dashboard/.gitignore` — adds `test-results/`, `playwright-report/`,
+  `playwright/.cache/`
+
+Strategy: every assertion targets `data-test-id` hooks rather than
+display copy, and pins SHAPE (counts, presence) rather than VALUES
+(specific scores) so a future stub-data tweak or copy revision
+doesn't break the suite.
+
 ### Added — MCP adapter (side track, unchanged)
 
 - `revitcli mcp serve` — Model Context Protocol stdio server (spec
