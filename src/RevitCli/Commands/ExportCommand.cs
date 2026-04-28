@@ -48,7 +48,7 @@ public static class ExportCommand
                 Format = format.ToLower(),
                 Sheets = sheets.ToList(),
                 Views = views.ToList(),
-                OutputDir = Path.GetFullPath(outputDir),
+                OutputDir = ResolveOutputDir(outputDir, dryRun),
                 DryRun = dryRun
             };
 
@@ -138,7 +138,7 @@ public static class ExportCommand
             Format = format.ToLower(),
             Sheets = sheets.ToList(),
             Views = views.ToList(),
-            OutputDir = Path.GetFullPath(outputDir),
+            OutputDir = ResolveOutputDir(outputDir, dryRun),
             DryRun = dryRun
         };
 
@@ -189,5 +189,16 @@ public static class ExportCommand
         else if (DateTime.UtcNow >= deadline)
             await output.WriteLineAsync("Error: export timed out after 10 minutes.");
         return 1;
+    }
+
+    // Dry-run never writes files, so the server doesn't need a resolved path.
+    // Calling Path.GetFullPath("") would silently substitute the current
+    // working directory, which is not what the user asked for when they
+    // omit --output-dir alongside --dry-run.
+    private static string ResolveOutputDir(string outputDir, bool dryRun)
+    {
+        if (dryRun && string.IsNullOrWhiteSpace(outputDir))
+            return string.Empty;
+        return Path.GetFullPath(outputDir);
     }
 }

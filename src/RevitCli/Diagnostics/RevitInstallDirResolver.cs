@@ -7,13 +7,13 @@ namespace RevitCli.Diagnostics;
 /// Resolves the on-disk install directory for a given Revit year by consulting,
 /// in order:
 /// <list type="number">
-///   <item><description><c>REVITCLI_REVIT&lt;year&gt;_INSTALL_DIR</c> (RevitCli override)</description></item>
-///   <item><description><c>Revit&lt;year&gt;InstallDir</c> (Autodesk / csproj convention)</description></item>
-///   <item><description>The default <c>%ProgramFiles%\Autodesk\Revit &lt;year&gt;</c></description></item>
+///   <item><description><c>REVITCLI_REVIT&lt;year&gt;_INSTALL_DIR</c> — RevitCli-only override; no csproj reads this variable. It is a superset over the Autodesk convention, intended as an escape hatch when callers want to redirect <c>doctor</c> without touching MSBuild.</description></item>
+///   <item><description><c>Revit&lt;year&gt;InstallDir</c> — Autodesk convention; <c>RevitCli.Addin.Tests.csproj</c> reads this same variable at build time.</description></item>
+///   <item><description>The default <c>%ProgramFiles%\Autodesk\Revit &lt;year&gt;</c>.</description></item>
 /// </list>
-/// Mirrors the resolution that <c>RevitCli.Addin.Tests.csproj</c> performs at
-/// build time so <c>revitcli doctor</c> reports the same path as the project
-/// references rather than the hardcoded default.
+/// When only tier 2 is set, <c>revitcli doctor</c> reports the same path
+/// <c>RevitCli.Addin.Tests.csproj</c> uses at build time. Tier 1 is a
+/// RevitCli-specific override that is not shared with any csproj.
 /// </summary>
 internal static class RevitInstallDirResolver
 {

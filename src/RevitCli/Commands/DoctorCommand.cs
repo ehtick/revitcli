@@ -438,18 +438,25 @@ internal sealed class DoctorEnvironment
     public string ManifestPath => Path.Combine(
         AppData, "Autodesk", "Revit", "Addins", "2026", "RevitCli.addin");
 
+    // Current() seeds Revit2026InstallDir via RevitInstallDirResolver.Resolve(year),
+    // which already trims and substitutes the ProgramFiles fallback for blank inputs,
+    // so the resolved path is non-null and trimmed. The IsNullOrWhiteSpace branch is
+    // exercised only when callers (mainly tests) build a DoctorEnvironment by hand
+    // without calling Current().
     public string ResolvedRevit2026InstallDir =>
-        !string.IsNullOrWhiteSpace(Revit2026InstallDir)
-            ? Revit2026InstallDir!.Trim()
-            : RevitInstallDirResolver.DefaultInstallDir(2026);
+        string.IsNullOrWhiteSpace(Revit2026InstallDir)
+            ? RevitInstallDirResolver.DefaultInstallDir(2026)
+            : Revit2026InstallDir!;
 
     public static DoctorEnvironment Current()
     {
         return new DoctorEnvironment
         {
-            // Resolve via the shared helper so doctor reports the same path the
-            // csproj references at build time (env-var override -> Autodesk
-            // convention -> default Program Files location).
+            // Resolve via the shared helper. When only Revit<year>InstallDir is set,
+            // doctor reports the same path RevitCli.Addin.Tests.csproj reads at
+            // build time. REVITCLI_REVIT<year>_INSTALL_DIR is a RevitCli-only
+            // superset (no csproj consults it) — set that to override doctor
+            // without touching MSBuild.
             Revit2026InstallDir = RevitInstallDirResolver.Resolve(2026)
         };
     }
