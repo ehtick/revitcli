@@ -104,7 +104,7 @@ public class ProfileInstallerTests : IDisposable
         var target = Path.Combine(_root, "installs", "default");
 
         var result = await ProfileInstaller.InstallAsync(
-            _sourceRepoUrl, refSpec: null, subPath: null, targetDir: target);
+            _sourceRepoUrl, refSpec: null, subPath: null, targetDir: target, allowLocalTransport: true);
 
         Assert.Equal(Path.GetFullPath(target), result.TargetDir);
         Assert.True(File.Exists(Path.Combine(target, "main.yml")));
@@ -121,7 +121,7 @@ public class ProfileInstallerTests : IDisposable
         var target = Path.Combine(_root, "installs", "feature");
 
         var result = await ProfileInstaller.InstallAsync(
-            _sourceRepoUrl, refSpec: "feature", subPath: null, targetDir: target);
+            _sourceRepoUrl, refSpec: "feature", subPath: null, targetDir: target, allowLocalTransport: true);
 
         var contents = File.ReadAllText(Path.Combine(target, "main.yml"));
         Assert.Contains("experimental", contents);
@@ -134,7 +134,7 @@ public class ProfileInstallerTests : IDisposable
         var target = Path.Combine(_root, "installs", "v1.0");
 
         await ProfileInstaller.InstallAsync(
-            _sourceRepoUrl, refSpec: "v1.0", subPath: null, targetDir: target);
+            _sourceRepoUrl, refSpec: "v1.0", subPath: null, targetDir: target, allowLocalTransport: true);
 
         // v1.0 points at the first commit, where failOn was still "error".
         var contents = File.ReadAllText(Path.Combine(target, "main.yml"));
@@ -148,7 +148,7 @@ public class ProfileInstallerTests : IDisposable
         var target = Path.Combine(_root, "installs", "team-only");
 
         await ProfileInstaller.InstallAsync(
-            _sourceRepoUrl, refSpec: null, subPath: "team", targetDir: target);
+            _sourceRepoUrl, refSpec: null, subPath: "team", targetDir: target, allowLocalTransport: true);
 
         Assert.True(File.Exists(Path.Combine(target, "team.yml")));
         // main.yml lives outside the requested subpath — it must NOT be copied.
@@ -161,7 +161,7 @@ public class ProfileInstallerTests : IDisposable
         var target = Path.Combine(_root, "installs", "main-file-only");
 
         await ProfileInstaller.InstallAsync(
-            _sourceRepoUrl, refSpec: null, subPath: "main.yml", targetDir: target);
+            _sourceRepoUrl, refSpec: null, subPath: "main.yml", targetDir: target, allowLocalTransport: true);
 
         Assert.True(File.Exists(Path.Combine(target, "main.yml")));
         Assert.False(Directory.Exists(Path.Combine(target, "team")));
@@ -176,7 +176,7 @@ public class ProfileInstallerTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await ProfileInstaller.InstallAsync(
-                _sourceRepoUrl, refSpec: null, subPath: null, targetDir: target));
+                _sourceRepoUrl, refSpec: null, subPath: null, targetDir: target, allowLocalTransport: true));
 
         // The pre-existing file must still be there — install must not have
         // started clobbering before discovering the conflict.
@@ -191,7 +191,7 @@ public class ProfileInstallerTests : IDisposable
         File.WriteAllText(Path.Combine(target, "stale.txt"), "left over");
 
         await ProfileInstaller.InstallAsync(
-            _sourceRepoUrl, refSpec: null, subPath: null, targetDir: target, force: true);
+            _sourceRepoUrl, refSpec: null, subPath: null, targetDir: target, allowLocalTransport: true, force: true);
 
         // stale.txt is gone, replaced by the freshly cloned repo contents.
         Assert.False(File.Exists(Path.Combine(target, "stale.txt")));
@@ -205,7 +205,7 @@ public class ProfileInstallerTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await ProfileInstaller.InstallAsync(
-                _sourceRepoUrl, refSpec: "does-not-exist", subPath: null, targetDir: target));
+                _sourceRepoUrl, refSpec: "does-not-exist", subPath: null, targetDir: target, allowLocalTransport: true));
     }
 
     [Fact]
@@ -215,7 +215,7 @@ public class ProfileInstallerTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await ProfileInstaller.InstallAsync(
-                _sourceRepoUrl, refSpec: null, subPath: "no/such/dir", targetDir: target));
+                _sourceRepoUrl, refSpec: null, subPath: "no/such/dir", targetDir: target, allowLocalTransport: true));
     }
 
     [Theory]

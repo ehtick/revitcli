@@ -392,12 +392,21 @@ public static class ProfileLoader
         var result = new PublishPipeline
         {
             Precheck = childPub.Precheck ?? basePub.Precheck,
-            // Incremental and SinceMode have struct-like defaults so we treat
-            // any explicit child value as overriding; users who want to inherit
-            // simply omit the key and the deserializer leaves the default.
-            Incremental = childPub.Incremental || basePub.Incremental ? (childPub.Incremental || basePub.Incremental) : false,
+            // Incremental: bool POCOs default to false, so the deserializer
+            // cannot tell "child omitted the field" from "child wrote
+            // incremental: false". The previous tautological ternary
+            // collapses to `||`, which is what we keep here. Documented
+            // limitation: once any ancestor enables incremental, descendants
+            // cannot opt back out; promote the field to bool? if a future
+            // PR needs explicit child override.
+            Incremental = childPub.Incremental || basePub.Incremental,
             BaselinePath = childPub.BaselinePath ?? basePub.BaselinePath,
-            SinceMode = !string.IsNullOrEmpty(childPub.SinceMode) && childPub.SinceMode != "content"
+            // SinceMode: child-wins when child sets ANY non-empty value,
+            // including the literal "content" (the previous code excluded
+            // "content" from the child branch, so a child explicitly
+            // reverting to the default would be silently overridden by a
+            // parent's "meta" — broken child-wins semantics).
+            SinceMode = !string.IsNullOrEmpty(childPub.SinceMode)
                 ? childPub.SinceMode
                 : (!string.IsNullOrEmpty(basePub.SinceMode) ? basePub.SinceMode : "content"),
         };

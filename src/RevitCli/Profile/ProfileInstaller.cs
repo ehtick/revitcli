@@ -40,12 +40,26 @@ public static class ProfileInstaller
         string? refSpec,
         string? subPath,
         string targetDir,
-        bool force = false)
+        bool force = false,
+        bool allowLocalTransport = false)
     {
         if (string.IsNullOrWhiteSpace(gitUrl))
             throw new ArgumentException("gitUrl must be provided.", nameof(gitUrl));
         if (string.IsNullOrWhiteSpace(targetDir))
             throw new ArgumentException("targetDir must be provided.", nameof(targetDir));
+
+        // SECURITY: refuse to clone via LibGit2Sharp's local transport
+        // (file:// or bare paths) by default. The local transport reads any
+        // directory the current user can read, which turns
+        // `profile install <some/local/path>` into a generic "expose this
+        // directory's git contents" primitive when the gitUrl is supplied
+        // by anything less trusted than the user themselves. Tests opt in
+        // via allowLocalTransport: true.
+        if (!allowLocalTransport && IsLocalTransport(gitUrl))
+            throw new ArgumentException(
+                $"Refusing to clone local-transport URL '{gitUrl}'. Use https:// or ssh://. " +
+                "Local clones are blocked by default to limit supply-chain risk.",
+                nameof(gitUrl));
 
         // Run synchronously inside Task.Run so the public surface stays awaitable
         // (matches every other XxxAsync method in the CLI) without dragging
@@ -118,20 +132,37 @@ public static class ProfileInstaller
 
             if (subPath != null)
             {
-                var sourceInRepo = Path.Combine(workTreeRoot, NormalizeSubPath(subPath));
-                if (!File.Exists(sourceInRepo) && !Directory.Exists(sourceInRepo))
+                // SECURITY: NormalizeSubPath only normalises separators and
+                // strips a leading slash; it does NOT collapse `..` segments.
+                // Without the boundary check below, `--subpath ../../outside`
+                // would resolve to a real path outside the cloned worktree
+                // and File.Copy / CopyDirectory would happily reach it.
+                var combined = Path.Combine(workTreeRoot, NormalizeSubPath(subPath));
+                var canonicalSource = Path.GetFullPath(combined);
+                var workTreeCanon = Path.GetFullPath(workTreeRoot);
+                var workTreeWithSep = workTreeCanon.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                    ? workTreeCanon
+                    : workTreeCanon + Path.DirectorySeparatorChar;
+                if (!canonicalSource.StartsWith(workTreeWithSep, StringComparison.Ordinal)
+                    && !string.Equals(canonicalSource, workTreeCanon, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"--subpath '{subPath}' resolves outside the cloned repository (refused for safety).");
+                }
+
+                if (!File.Exists(canonicalSource) && !Directory.Exists(canonicalSource))
                     throw new InvalidOperationException(
                         $"--subpath '{subPath}' does not exist inside repository {gitUrl}.");
 
                 Directory.CreateDirectory(fullTarget);
-                if (File.Exists(sourceInRepo))
+                if (File.Exists(canonicalSource))
                 {
-                    var destFile = Path.Combine(fullTarget, Path.GetFileName(sourceInRepo));
-                    File.Copy(sourceInRepo, destFile, overwrite: true);
+                    var destFile = Path.Combine(fullTarget, Path.GetFileName(canonicalSource));
+                    File.Copy(canonicalSource, destFile, overwrite: true);
                 }
                 else
                 {
-                    CopyDirectory(sourceInRepo, fullTarget);
+                    CopyDirectory(canonicalSource, fullTarget);
                 }
             }
 

@@ -9,18 +9,20 @@ using YamlDotNet.Serialization.NamingConventions;
 namespace RevitCli.Profile;
 
 /// <summary>
-/// Pure resolver that walks the <c>extends</c> chain (currently single-parent
-/// only — array extends is deferred per the v1.9 plan) and reports both the
-/// effective merged profile and the chain order, so callers can render
-/// <c>profile show --resolve</c>.
+/// Pure resolver that walks the <c>extends</c> chain — including v1.9
+/// multi-parent <c>extends: [a.yml, b.yml]</c> shape and diamond inheritance
+/// (a→b,c; b→d; c→d) — and reports both the effective merged profile and
+/// the chain order, so callers can render <c>profile show --resolve</c>.
 /// </summary>
 public static class ProfileResolver
 {
     /// <summary>
-    /// Walk the <c>extends</c> chain starting from <paramref name="profilePath"/>
-    /// and return the chain in order from farthest ancestor to the input file.
+    /// Walk the <c>extends</c> graph starting from <paramref name="profilePath"/>
+    /// and return ancestors in post-order (oldest ancestor first, leaf last).
     /// The returned paths are absolute and use <see cref="Path.GetFullPath(string)"/>
-    /// canonical form.
+    /// canonical form. Each path appears at most once even when multiple
+    /// branches reach it (diamond inheritance), and a true cycle on the
+    /// recursion stack throws <see cref="InvalidOperationException"/>.
     /// </summary>
     public static IReadOnlyList<string> GetInheritanceChain(string profilePath)
     {
@@ -31,36 +33,53 @@ public static class ProfileResolver
         if (!File.Exists(canonical))
             throw new FileNotFoundException($"Profile not found: {canonical}", canonical);
 
-        // Walk parents recursively, collecting in child-first order, then reverse
-        // at the end so consumers see [oldest ancestor, ..., effective].
         var chain = new List<string>();
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var current = canonical;
+        var chainSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var inProgress = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        while (current != null)
-        {
-            if (!visited.Add(current))
-                throw new InvalidOperationException(
-                    $"Circular profile inheritance detected at {current}.");
-
-            chain.Add(current);
-
-            var extendsRaw = ReadExtends(current);
-            if (string.IsNullOrWhiteSpace(extendsRaw))
-                break;
-
-            var baseDir = Path.GetDirectoryName(current)!;
-            var parentPath = Path.GetFullPath(Path.Combine(baseDir, extendsRaw!));
-            if (!File.Exists(parentPath))
-                throw new FileNotFoundException(
-                    $"Profile '{current}' extends '{extendsRaw}' which does not exist (resolved {parentPath}).",
-                    parentPath);
-
-            current = parentPath;
-        }
-
-        chain.Reverse();
+        Walk(canonical, chain, chainSet, inProgress);
         return chain;
+    }
+
+    private static void Walk(
+        string current,
+        List<string> chain,
+        HashSet<string> chainSet,
+        HashSet<string> inProgress)
+    {
+        // Cycle detection: only flag a true cycle on the active recursion
+        // stack. Diamonds (the same ancestor reached via two different
+        // branches) are NOT cycles — Pull request #10's deep-merge mode
+        // explicitly allows them, so we silently skip the second visit.
+        if (inProgress.Contains(current))
+            throw new InvalidOperationException(
+                $"Circular profile inheritance detected at {current}.");
+        if (chainSet.Contains(current))
+            return;
+
+        inProgress.Add(current);
+        try
+        {
+            var baseDir = Path.GetDirectoryName(current)!;
+            foreach (var raw in ReadExtendsList(current))
+            {
+                var parentPath = Path.GetFullPath(Path.Combine(baseDir, raw));
+                if (!File.Exists(parentPath))
+                    throw new FileNotFoundException(
+                        $"Profile '{current}' extends '{raw}' which does not exist (resolved {parentPath}).",
+                        parentPath);
+                Walk(parentPath, chain, chainSet, inProgress);
+            }
+            // Post-order: every parent has been added before us, so the
+            // resulting list reads "oldest ancestor first" without a
+            // separate Reverse() pass.
+            chain.Add(current);
+            chainSet.Add(current);
+        }
+        finally
+        {
+            inProgress.Remove(current);
+        }
     }
 
     /// <summary>
@@ -143,12 +162,14 @@ public static class ProfileResolver
         return sb.ToString();
     }
 
-    private static string? ReadExtends(string path)
+    private static IReadOnlyList<string> ReadExtendsList(string path)
     {
         // Build a deserializer focused only on the 'extends' key so we don't
         // re-run the full ProjectProfile schema validation here — the loader
         // will do it during the Load call. Keeps this function infallible
-        // against unrelated schema noise.
+        // against unrelated schema noise. We type Extends as object? so a
+        // single string AND an array literal both deserialise without an
+        // exception; NormalizeExtends reduces both shapes to List<string>.
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
@@ -158,20 +179,44 @@ public static class ProfileResolver
         try
         {
             var stub = deserializer.Deserialize<ExtendsStub>(yaml);
-            return string.IsNullOrWhiteSpace(stub?.Extends) ? null : stub!.Extends;
+            return NormalizeExtends(stub?.Extends);
         }
         catch (YamlDotNet.Core.YamlException)
         {
             // The full loader will surface the parse error with a richer message
             // when the caller invokes Render; here we just bail out of the walk.
-            return null;
+            return Array.Empty<string>();
         }
+    }
+
+    private static IReadOnlyList<string> NormalizeExtends(object? raw)
+    {
+        if (raw == null)
+            return Array.Empty<string>();
+
+        if (raw is string s)
+            return string.IsNullOrWhiteSpace(s)
+                ? Array.Empty<string>()
+                : new[] { s.Trim() };
+
+        if (raw is System.Collections.IEnumerable list)
+        {
+            var result = new List<string>();
+            foreach (var item in list)
+            {
+                if (item is string str && !string.IsNullOrWhiteSpace(str))
+                    result.Add(str.Trim());
+            }
+            return result;
+        }
+
+        return Array.Empty<string>();
     }
 
     private sealed class ExtendsStub
     {
         [YamlMember(Alias = "extends")]
-        public string? Extends { get; set; }
+        public object? Extends { get; set; }
     }
 }
 

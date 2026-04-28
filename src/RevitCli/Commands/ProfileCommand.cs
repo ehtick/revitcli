@@ -31,6 +31,7 @@ public static class ProfileCommand
         command.AddCommand(CreateValidateCommand());
         command.AddCommand(CreateShowCommand());
         command.AddCommand(CreateDiffCommand());
+        command.AddCommand(CreateInstallCommand());
         return command;
     }
 
@@ -535,10 +536,29 @@ public static class ProfileCommand
         // here (not in the installer) so the chosen path is visible in the
         // error message when --force is missing — the installer never sees the
         // null branch.
+        var allowedRoot = Path.GetFullPath(Path.Combine(".revitcli", "profiles"));
+        var allowedRootWithSep = allowedRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+            ? allowedRoot
+            : allowedRoot + Path.DirectorySeparatorChar;
         string finalTarget;
         if (!string.IsNullOrWhiteSpace(target))
         {
             finalTarget = Path.GetFullPath(target);
+            // Confine --target to the workspace's .revitcli/profiles/ tree.
+            // `profile install` should be incapable of writing outside the
+            // workspace even when the user is convinced they want it to:
+            // a stray `--target /etc` paired with `--force` would otherwise
+            // happily overwrite system files using whatever permissions the
+            // CLI has. Users who genuinely need a different on-disk layout
+            // should symlink the .revitcli/profiles/ subdir, not pass an
+            // arbitrary path here.
+            if (!finalTarget.StartsWith(allowedRootWithSep, StringComparison.Ordinal)
+                && !string.Equals(finalTarget, allowedRoot, StringComparison.Ordinal))
+            {
+                await output.WriteLineAsync(
+                    $"Error: --target must resolve inside {allowedRootWithSep}; got '{finalTarget}'.");
+                return 1;
+            }
         }
         else
         {
