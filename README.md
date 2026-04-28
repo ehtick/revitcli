@@ -265,10 +265,10 @@ docs/superpowers/          # Design specs and implementation plans
 
 ## Publishing
 
-1. Update version in `src/RevitCli/RevitCli.csproj` and `src/RevitCli.Addin/RevitCli.Addin.csproj`
-2. Update `CHANGELOG.md`
-3. Tag and push: `git tag v1.4.0 && git push origin v1.4.0`
-4. GitHub Actions auto-publishes to NuGet.org
+1. Update `RevitCliVersion` in `Directory.Build.props` (single source of truth for both the CLI and add-in projects).
+2. Update `CHANGELOG.md`.
+3. Tag and push: `git tag v1.5.0 && git push origin v1.5.0`.
+4. GitHub Actions auto-publishes the CLI to NuGet.org and the multi-Revit-year add-in ZIP to the GitHub release.
 
 > Requires `NUGET_API_KEY` secret in repository settings.
 
