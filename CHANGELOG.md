@@ -204,6 +204,36 @@ completeness + surface concerns.
   multi-Revit-version smoke matrix (next), and journal signing /
   verify (last).
 
+### Added — v2.0 dashboard (phase 2 — Chart.js + History page)
+
+Per `docs/roadmap-2026q2-q3.md` §7. Phase 1 shipped the skeleton +
+data layer + Overview shell with placeholder DOM; phase 2 swaps in
+real Chart.js charts and adds the dedicated History route.
+
+- New shared chart components under `dashboard/src/lib/charts/`:
+  - `CategoryBarChart.svelte` — horizontal bar chart for "elements
+    per category" on Overview. Uses `indexAxis: 'y'` because category
+    names ("Specialty Equipment", "Generic Models") need horizontal
+    space the vertical layout truncates. Auto-sizes its height with
+    row count so dense models still render every bar.
+  - `ScoreSparkline.svelte` — score-over-time line chart. Default is
+    minimal mode (no axes / grid) for the Overview's "last 7
+    captures" widget; History page passes `minimal={false}` to surface
+    the full y-axis 0–100.
+  - `registerCharts.ts` — idempotent global Chart.js registration so
+    SSR (svelte-kit's prerender) doesn't try to touch `window`.
+- New `/history` route — full time-series chart over every captured
+  snapshot + a delta table that compares each capture to the
+  immediately previous one (Δscore, Δelements). Reads from the same
+  `loadHistory()` source as Overview; no extra fetch. For a full
+  element-by-element diff between two captures, the table footer
+  points the operator at `revitcli history diff`.
+- Layout enables the History nav link (was disabled in phase 1).
+  Multi-project remains the only disabled link, marked for a v2.0
+  follow-up.
+- C# side unchanged: `dashboard serve` already handles SPA fallback
+  for any extension-less path (`/history` → `index.html`), so no
+  routing changes were needed.
 
 ### Added — MCP adapter (side track, unchanged)
 

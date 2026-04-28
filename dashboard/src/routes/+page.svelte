@@ -2,10 +2,13 @@
   import { onMount } from 'svelte';
   import { loadHistory, type HistoryDocument } from '$lib/loadHistory';
   import { elementCountsByCategory, extract } from '$lib/score';
+  import CategoryBarChart from '$lib/charts/CategoryBarChart.svelte';
+  import ScoreSparkline from '$lib/charts/ScoreSparkline.svelte';
 
-  // Phase 1 leaves charts as a follow-up: we render structured DOM that
-  // Chart.js will hydrate in v2.0 phase 2 (see roadmap §7). The data layer,
-  // tooling, and IA all need to land in-source first; charts plug in last.
+  // Phase 2: Chart.js charts replace the placeholder DOM that phase 1
+  // shipped. The data projections (elementCountsByCategory,
+  // sparklinePoints) are unchanged — back-compat with C#-generated
+  // history.json is intact.
   let history: HistoryDocument | null = null;
   let loadError = '';
 
@@ -89,19 +92,7 @@
       <h2 class="text-lg font-semibold">Element counts by category</h2>
       <span class="rc-stat-label">top {elementsByCategory.length}</span>
     </header>
-    {#if elementsByCategory.length === 0}
-      <p class="mt-3 text-rc-muted">No category data available.</p>
-    {:else}
-      <!-- Chart.js bar chart will mount here in follow-up -->
-      <ul class="mt-3 space-y-1 mono text-sm" data-test-id="element-counts">
-        {#each elementsByCategory as row}
-          <li class="flex items-center justify-between gap-4">
-            <span>{row.category}</span>
-            <span class="text-rc-accent">{row.count.toLocaleString()}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <CategoryBarChart rows={elementsByCategory} />
   </article>
 
   <article class="rc-card">
@@ -109,22 +100,7 @@
       <h2 class="text-lg font-semibold">Score, last 7 captures</h2>
       <span class="rc-stat-label">sparkline</span>
     </header>
-    {#if sparklinePoints.length === 0}
-      <p class="mt-3 text-rc-muted">No history available.</p>
-    {:else}
-      <!-- Chart.js sparkline will mount here in follow-up -->
-      <ul
-        class="mt-3 grid grid-cols-7 gap-2 mono text-xs"
-        data-test-id="score-sparkline"
-      >
-        {#each sparklinePoints as p}
-          <li class="rc-card flex flex-col items-center gap-1 py-2">
-            <span class="text-rc-muted">{p.date}</span>
-            <span class="text-rc-accent text-base font-semibold">{p.score}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <ScoreSparkline points={sparklinePoints} />
   </article>
 
   <footer class="rc-stat-label">

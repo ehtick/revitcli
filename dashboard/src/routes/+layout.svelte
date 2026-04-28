@@ -1,14 +1,12 @@
 <script lang="ts">
   import '../app.css';
 
-  // Navigation surface for the v2.0 phase 1 dashboard. Only the Overview
-  // page exists today; History and Multi-project links are placeholders for
-  // the v2.0 follow-up phases described in roadmap §7. We keep them disabled
-  // rather than hidden so the IA is visible to early reviewers.
+  // Navigation surface for the v2.0 dashboard. Phase 2 (this commit)
+  // enables the History link; Multi-project is still a follow-up.
   const navLinks: { href: string; label: string; disabled: boolean }[] = [
     { href: '/', label: 'Overview', disabled: false },
-    { href: '/history', label: 'History', disabled: true },
-    { href: '/projects', label: 'Multi-project', disabled: true }
+    { href: '/history', label: 'History', disabled: false },
+    { href: '/projects', label: 'Multi-project', disabled: true },
   ];
 </script>
 
@@ -17,7 +15,7 @@
     <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
       <div class="flex items-center gap-3">
         <span class="rc-stat-value text-rc-accent">RevitCli</span>
-        <span class="rc-stat-label">Dashboard v2.0 (phase 1)</span>
+        <span class="rc-stat-label">Dashboard v2.0 (phase 2)</span>
       </div>
       <nav class="flex items-center gap-4">
         {#each navLinks as link}
