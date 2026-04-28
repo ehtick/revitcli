@@ -235,6 +235,40 @@ real Chart.js charts and adds the dedicated History route.
   for any extension-less path (`/history` → `index.html`), so no
   routing changes were needed.
 
+### Added — v2.0 dashboard (Multi-project route — last §7 in-scope item)
+
+Closes the v2.0 §7 range (In) checklist: the `/projects` route the
+layout was previously advertising as disabled is now live, and the
+CLI grew the supporting `dashboard build --project NAME:DIR` plumbing.
+
+CLI — `revitcli dashboard build`
+- New repeatable flag `--project NAME:DIR` (e.g. `--project
+  "Office:./projA/.revitcli/history"`). Splits on the FIRST colon so
+  Windows drive paths (`Office:C:\proj\hist`) survive intact. Names
+  are case-insensitively unique within the run; duplicates fail fast.
+- Orthogonal to `--history-dir`: pass both for the single-project
+  Overview/History routes AND the multi-project comparison in one
+  build. Pass neither for the v2.0 phase 1 default.
+- New private writer `InjectProjectsAsync` builds
+  `data/projects.json` of shape `{ version, projects: [{ name,
+  historyDir, history }] }`. A missing or malformed per-project
+  `index.json` becomes an inline placeholder so the build never
+  blocks on one bad input — the dashboard renders a "0 captures"
+  card instead.
+
+Dashboard — `dashboard/`
+- `src/lib/loadProjects.ts` — fetcher mirroring `loadHistory.ts`:
+  `?projects=<url>` query param → `/data/projects.json` →
+  `STUB_PROJECTS` fallback. Plus a `latestSummary(p)` helper that
+  the route uses for card-level projection.
+- `src/routes/projects/+page.svelte` — responsive grid (1 → 2 → 3
+  columns) of project cards. Each card carries name, current score,
+  element count, capture count, and a 7-capture sparkline reusing
+  `ScoreSparkline`. Sorted by current score DESC, ties broken by
+  name for determinism.
+- Layout enables the `/projects` nav link (was disabled in phase 1
+  + phase 2). All three v2.0 routes are now live.
+
 ### Added — MCP adapter (side track, unchanged)
 
 - `revitcli mcp serve` — Model Context Protocol stdio server (spec

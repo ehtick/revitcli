@@ -1,12 +1,13 @@
 <script lang="ts">
   import '../app.css';
 
-  // Navigation surface for the v2.0 dashboard. Phase 2 (this commit)
-  // enables the History link; Multi-project is still a follow-up.
+  // Navigation surface for the v2.0 dashboard. All three routes are
+  // now live. Phase 1 shipped Overview; phase 2 enabled History; this
+  // commit enables Multi-project, the last roadmap §7 in-scope route.
   const navLinks: { href: string; label: string; disabled: boolean }[] = [
     { href: '/', label: 'Overview', disabled: false },
     { href: '/history', label: 'History', disabled: false },
-    { href: '/projects', label: 'Multi-project', disabled: true },
+    { href: '/projects', label: 'Multi-project', disabled: false },
   ];
 </script>
 

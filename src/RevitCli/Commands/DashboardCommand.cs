@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -401,6 +403,18 @@ public static class DashboardCommand
             "--history-dir",
             () => DefaultHistoryRelativeDir,
             "History directory whose index.json will be inlined (default: .revitcli/history)");
+        var projectOpt = new Option<string[]>(
+            "--project",
+            description:
+                "Multi-project entry, repeatable. Format: \"NAME:DIR\" where DIR is the " +
+                "path to a `.revitcli/history/` folder. Example: " +
+                "--project \"Office:./projA/.revitcli/history\". The dashboard's /projects " +
+                "page reads the resulting data/projects.json and renders comparative cards. " +
+                "Orthogonal to --history-dir; pass both for single-project AND multi-project " +
+                "views in the same build.")
+        {
+            AllowMultipleArgumentsPerToken = false,
+        };
         var buildDirOpt = new Option<string?>(
             "--build-dir",
             "Override path to the prebuilt SvelteKit output (default: ./dashboard/build)");
@@ -415,15 +429,16 @@ public static class DashboardCommand
         {
             outputOpt,
             historyDirOpt,
+            projectOpt,
             buildDirOpt,
             forceOpt
         };
 
-        build.SetHandler(async (string output, string historyDir, string? buildDir, bool force) =>
+        build.SetHandler(async (string output, string historyDir, string[] projects, string? buildDir, bool force) =>
         {
             Environment.ExitCode = await ExecuteBuildAsync(
-                output, historyDir, buildDir, force, Console.Out);
-        }, outputOpt, historyDirOpt, buildDirOpt, forceOpt);
+                output, historyDir, projects, buildDir, force, Console.Out);
+        }, outputOpt, historyDirOpt, projectOpt, buildDirOpt, forceOpt);
 
         return build;
     }
@@ -434,9 +449,24 @@ public static class DashboardCommand
     /// no Console writes — so tests can capture output via the supplied
     /// <see cref="TextWriter"/>.
     /// </summary>
+    /// <summary>
+    /// Backwards-compatible overload: preserves the v2.0 phase-1 contract
+    /// (no <c>--project</c> support) so existing callers and tests keep
+    /// compiling. Forwards to the multi-project-aware overload with an
+    /// empty project list.
+    /// </summary>
+    public static Task<int> ExecuteBuildAsync(
+        string outputDir,
+        string historyDir,
+        string? buildDirOverride,
+        bool force,
+        TextWriter output)
+        => ExecuteBuildAsync(outputDir, historyDir, Array.Empty<string>(), buildDirOverride, force, output);
+
     public static async Task<int> ExecuteBuildAsync(
         string outputDir,
         string historyDir,
+        string[] projects,
         string? buildDirOverride,
         bool force,
         TextWriter output)
@@ -513,9 +543,147 @@ public static class DashboardCommand
                 $"  history.json placeholder written (no index.json at {Path.GetFullPath(historyIndex)})");
         }
 
+        // Multi-project: parse all --project specs upfront, fail fast on
+        // any malformed entry, then inject a single projects.json. The
+        // /projects route reads it; absence is fine — the route falls
+        // back to a "no projects" empty state.
+        if (projects is { Length: > 0 })
+        {
+            List<(string Name, string Dir)> specs;
+            try
+            {
+                specs = ParseProjectSpecs(projects);
+            }
+            catch (ArgumentException ex)
+            {
+                await output.WriteLineAsync($"Error: {ex.Message}");
+                return 1;
+            }
+
+            var projectsTarget = Path.Combine(dataDir, "projects.json");
+            int injectedReal;
+            try
+            {
+                injectedReal = await InjectProjectsAsync(specs, projectsTarget);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await output.WriteLineAsync($"Error: failed to inject projects: {ex.Message}");
+                return 1;
+            }
+
+            await output.WriteLineAsync(
+                $"  projects.json wrote {specs.Count} project(s) ({injectedReal} with real history, " +
+                $"{specs.Count - injectedReal} placeholder).");
+        }
+
         await output.WriteLineAsync(
             "Deploy by uploading the directory to GitHub Pages, S3, or any static host.");
         return 0;
+    }
+
+    /// <summary>
+    /// Parse a list of <c>NAME:DIR</c> spec strings into typed pairs.
+    /// Splits on the FIRST colon so Windows paths (e.g.
+    /// <c>"Proj:C:\\proj\\hist"</c>) survive the split intact. Throws
+    /// <see cref="ArgumentException"/> with a readable message on any
+    /// malformed entry — caller surfaces it as a user-facing diagnostic.
+    /// Names must be unique within the list (case-insensitive) so the
+    /// resulting projects.json doesn't carry conflicting entries.
+    /// </summary>
+    internal static List<(string Name, string Dir)> ParseProjectSpecs(IEnumerable<string> specs)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<(string, string)>();
+        foreach (var raw in specs ?? Array.Empty<string>())
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                throw new ArgumentException("--project spec cannot be empty.");
+
+            var idx = raw.IndexOf(':');
+            if (idx <= 0)
+                throw new ArgumentException(
+                    $"--project '{raw}' must be in NAME:DIR form (got no name before ':').");
+
+            var name = raw.Substring(0, idx).Trim();
+            var dir = raw.Substring(idx + 1).Trim();
+            if (string.IsNullOrEmpty(name))
+                throw new ArgumentException(
+                    $"--project '{raw}' has an empty name. Use NAME:DIR.");
+            if (string.IsNullOrEmpty(dir))
+                throw new ArgumentException(
+                    $"--project '{raw}' has an empty directory. Use NAME:DIR.");
+            if (!seen.Add(name))
+                throw new ArgumentException(
+                    $"--project name '{name}' is duplicated. Project names must be unique.");
+
+            result.Add((name, dir));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Build <c>data/projects.json</c> from N <c>(name, history-dir)</c>
+    /// pairs. For each pair, reads the directory's <c>index.json</c>; if
+    /// absent, writes a placeholder empty entry so the dashboard's
+    /// <c>/projects</c> route still renders a card (with "no captures").
+    /// Returns the count of projects whose index.json was actually
+    /// loaded — used by the caller to print a summary line.
+    /// </summary>
+    internal static async Task<int> InjectProjectsAsync(
+        IReadOnlyList<(string Name, string Dir)> specs, string targetFile)
+    {
+        var projects = new List<JsonObject>(specs.Count);
+        var injectedReal = 0;
+
+        foreach (var (name, dir) in specs)
+        {
+            var indexPath = Path.Combine(dir, "index.json");
+            JsonNode? historyNode = null;
+            if (File.Exists(indexPath))
+            {
+                try
+                {
+                    var json = await File.ReadAllTextAsync(indexPath);
+                    historyNode = JsonNode.Parse(json);
+                    injectedReal++;
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    historyNode = null;
+                }
+            }
+
+            historyNode ??= new JsonObject
+            {
+                ["version"] = 1,
+                ["entries"] = new JsonArray(),
+            };
+
+            projects.Add(new JsonObject
+            {
+                ["name"] = name,
+                ["historyDir"] = Path.GetFullPath(dir),
+                ["history"] = historyNode,
+            });
+        }
+
+        var doc = new JsonObject
+        {
+            ["version"] = 1,
+            ["projects"] = new JsonArray(projects.ToArray<JsonNode?>()),
+        };
+
+        // Indent for readability — these files are small and operators
+        // sometimes hand-inspect them in PR review of dashboard deploys.
+        var serializerOptions = new System.Text.Json.JsonSerializerOptions(
+            System.Text.Json.JsonSerializerOptions.Default)
+        {
+            WriteIndented = true,
+        };
+        await File.WriteAllTextAsync(targetFile, doc.ToJsonString(serializerOptions), Encoding.UTF8);
+
+        return injectedReal;
     }
 
     /// <summary>
