@@ -80,7 +80,9 @@ revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "
 ## Required RevitCli Improvements
 
 - More `inspect` commands so Codex CLI can discover categories,
-  parameters, sheets, and writable fields without guessing.
+  parameters, schedules, and command paths without guessing.
+- Future `inspect sheets` support so Codex CLI can discover printable and
+  exportable sheet sets.
 - Stable JSON/table outputs with useful exit codes for `doctor`,
   `status`, `check`, `publish --dry-run`, `schedule list`, and `journal`.
 - Plan files for risky writes: generate, show, apply, receipt, rollback.

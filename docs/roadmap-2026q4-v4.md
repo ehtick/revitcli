@@ -124,9 +124,11 @@ CLI know the exact RevitCli command."
 Candidate commands:
 
 - `revitcli inspect categories`: list category aliases, counts, and
-  whether they are writable.
+  next discovery commands. First CLI-only slice shipped via the existing
+  query endpoint.
 - `revitcli inspect params <category>`: show common parameters, sample
-  values, read-only/writeable status, and duplicate names.
+  values, coverage, and dry-run probe command examples. First CLI-only
+  slice shipped via the existing query endpoint.
 - `revitcli inspect schedules`: list schedules, fields, categories, and
   export readiness. First slice shipped as a CLI-side wrapper around
   existing schedule discovery.
@@ -362,7 +364,7 @@ RevitCli into a hidden AI/MCP platform instead of a dependable CLI.
    deprecated, or removed before the next release.
 3. Continue v2.2 with installer hardening, live smoke evidence, release
    checklist cleanup, and Codex CLI workflow docs.
-4. Write `inspect categories` / `inspect params` spec for v2.3 and use
-   `inspect schedules` as the first implementation pattern.
+4. Extend inspect/discover with `inspect sheets` and richer writable
+   metadata when an add-in restart is acceptable.
 5. Collect three real repetitive architect prompts and turn them into
    v2.5 workflow acceptance examples.

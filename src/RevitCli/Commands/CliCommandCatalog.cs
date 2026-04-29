@@ -53,6 +53,8 @@ internal static class CliCommandCatalog
         ("rollback <baseline>", "Restore parameters changed by a fix baseline"),
         ("score", "Calculate model health score (0-100)"),
         ("coverage", "Show parameter fill rates by category"),
+        ("inspect categories", "List common categories and next discovery commands"),
+        ("inspect params <category>", "List parameters seen in a category"),
         ("inspect schedules", "List schedules with ready-to-run export commands"),
         ("schedule list", "List existing schedules in the model"),
         ("schedule export", "Export schedule data (--category, --name, --fields, --output)"),
