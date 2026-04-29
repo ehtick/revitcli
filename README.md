@@ -241,15 +241,22 @@ revitcli publish
 revitcli snapshot --output .revitcli/baseline.json
 ```
 
-## Revit 2026 Real Smoke
+## Revit Real Smoke
 
-Before review or release, validate the real Revit 2026 vertical slice with the internal smoke gate:
+Before review or release, validate the real Revit vertical slice with the internal smoke gate:
 
 ```text
 doctor -> status -> query --id -> query <category> --filter -> set --dry-run -> set -> restore
 ```
 
-Use [docs/revit2026-real-smoke.md](docs/revit2026-real-smoke.md) for the model contract, commands, report paths, and stop conditions.
+For the current 2026 acceptance contract, use [docs/revit2026-real-smoke.md](docs/revit2026-real-smoke.md). For the multi-version gate, run:
+
+```powershell
+revitcli doctor --check-version 2025
+.\scripts\smoke-revit.ps1 -Version 2025 -ElementId 12345 -Filter "Mark = W-01"
+```
+
+See [docs/revit-version-compatibility.md](docs/revit-version-compatibility.md) and copy [docs/ci/smoke-matrix-template.yml](docs/ci/smoke-matrix-template.yml) for 2024 / 2025 / 2026 self-hosted runner smoke.
 
 ## Project Structure
 

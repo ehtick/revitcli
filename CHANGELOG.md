@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — v2.1 configuration confidence
+
+- `revitcli doctor --check-version 2024|2025|2026` validates the requested
+  Revit install path, add-in manifest, server info, and live Revit year
+  instead of assuming the 2026 smoke baseline.
+- `scripts/smoke-revit.ps1 -Version 2024|2025|2026` parameterizes the
+  live smoke chain and records per-version metadata in its JSON report.
+- Added the self-hosted GitHub Actions smoke matrix template at
+  `docs/ci/smoke-matrix-template.yml` and version compatibility notes at
+  `docs/revit-version-compatibility.md`.
+
 ### Added — v1.6 history (complete)
 
 - `revitcli history` command cluster — local snapshot timeline under

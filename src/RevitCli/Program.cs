@@ -37,4 +37,5 @@ var rootCommand = CliCommandCatalog.CreateRootCommand(
     config,
     includeInteractiveCommand: true,
     includeBatchCommand: true);
-return await rootCommand.InvokeAsync(args);
+var invokeExitCode = await rootCommand.InvokeAsync(args);
+return Environment.ExitCode != 0 ? Environment.ExitCode : invokeExitCode;

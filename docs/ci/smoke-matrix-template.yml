@@ -1,0 +1,92 @@
+# Template - copy to `.github/workflows/smoke-matrix.yml` in your repo.
+#
+# Requires three Windows self-hosted runners labelled:
+#   self-hosted, windows, revit-2024
+#   self-hosted, windows, revit-2025
+#   self-hosted, windows, revit-2026
+#
+# Each runner must have the matching Revit version installed, RevitCli.addin
+# installed for that year, and a test model open with the RevitCli server
+# running before the smoke starts.
+
+name: RevitCli Smoke Matrix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Revit ${{ matrix.version }} smoke
+    runs-on: [self-hosted, windows, "${{ matrix.revit_label }}"]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "2024"
+            revit_label: revit-2024
+          - version: "2025"
+            revit_label: revit-2025
+          - version: "2026"
+            revit_label: revit-2026
+
+    env:
+      REVITCLI_SMOKE_ELEMENT_ID: ${{ vars.REVITCLI_SMOKE_ELEMENT_ID }}
+      REVITCLI_SMOKE_CATEGORY: ${{ vars.REVITCLI_SMOKE_CATEGORY || 'walls' }}
+      REVITCLI_SMOKE_FILTER: ${{ vars.REVITCLI_SMOKE_FILTER }}
+      REVITCLI_SMOKE_PARAM: ${{ vars.REVITCLI_SMOKE_PARAM || 'Comments' }}
+      REVITCLI_SMOKE_VALUE: smoke-${{ matrix.version }}-${{ github.run_number }}
+
+    steps:
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+
+      # actions/setup-dotnet v4.3.1
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish CLI for smoke
+        shell: pwsh
+        run: |
+          dotnet publish .\src\RevitCli\RevitCli.csproj -c Release -o .\.artifacts\smoke\bin
+
+      - name: Run live smoke
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:REVITCLI_SMOKE_ELEMENT_ID)) {
+            throw "Set repository variable REVITCLI_SMOKE_ELEMENT_ID."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:REVITCLI_SMOKE_FILTER)) {
+            throw "Set repository variable REVITCLI_SMOKE_FILTER."
+          }
+
+          $revitCli = Join-Path $PWD ".artifacts\smoke\bin\RevitCli.exe"
+          $installDir = [Environment]::GetEnvironmentVariable("REVITCLI_REVIT${{ matrix.version }}_INSTALL_DIR")
+          $args = @(
+            "-Version", "${{ matrix.version }}",
+            "-ElementId", $env:REVITCLI_SMOKE_ELEMENT_ID,
+            "-Category", $env:REVITCLI_SMOKE_CATEGORY,
+            "-Filter", $env:REVITCLI_SMOKE_FILTER,
+            "-Param", $env:REVITCLI_SMOKE_PARAM,
+            "-Value", $env:REVITCLI_SMOKE_VALUE,
+            "-RevitCli", $revitCli,
+            "-OutputPath", ".revitcli\smoke-${{ matrix.version }}.json"
+          )
+          if (-not [string]::IsNullOrWhiteSpace($installDir)) {
+            $args += @("-RevitInstallDir", $installDir)
+          }
+
+          .\scripts\smoke-revit.ps1 @args
+
+      # actions/upload-artifact v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: revitcli-smoke-${{ matrix.version }}
+          path: .revitcli/smoke-${{ matrix.version }}.json

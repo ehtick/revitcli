@@ -3,6 +3,18 @@ namespace RevitCli.Tests.Scripts;
 public sealed class Revit2026SmokeScriptTests
 {
     [Fact]
+    public void VersionedSmokeScript_ExposesSupportedVersionSwitchAndDoctorCheck()
+    {
+        var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "smoke-revit.ps1"));
+
+        Assert.Contains("[ValidateSet(\"2024\", \"2025\", \"2026\")]", script);
+        Assert.Contains("REVITCLI_REVIT${Version}_INSTALL_DIR", script);
+        Assert.Contains("Revit${Version}InstallDir", script);
+        Assert.Contains("@(\"doctor\", \"--check-version\", $Version)", script);
+        Assert.Contains("Autodesk\\Revit\\Addins\\$Version\\RevitCli.addin", script);
+    }
+
+    [Fact]
     public void FixApplyCompletionMessage_IsWrittenAfterReportWrite()
     {
         var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "smoke-revit2026.ps1"));

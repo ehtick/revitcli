@@ -18,7 +18,7 @@ public class DoctorCommandTests
     /// <summary>
     /// Restores a process env var to its prior value (or removes it if it
     /// wasn't set) when disposed. Lets tests mutate
-    /// <c>Revit2026InstallDir</c> / <c>REVITCLI_REVIT2026_INSTALL_DIR</c>
+    /// <c>Revit&lt;year&gt;InstallDir</c> / <c>REVITCLI_REVIT&lt;year&gt;_INSTALL_DIR</c>
     /// without leaking into other tests.
     /// </summary>
     private sealed class EnvVarScope : IDisposable
@@ -36,12 +36,12 @@ public class DoctorCommandTests
         public void Dispose() => Environment.SetEnvironmentVariable(_name, _previous);
     }
 
-    private static DoctorEnvironment CreateDoctorEnvironment()
+    private static DoctorEnvironment CreateDoctorEnvironment(int revitYear = 2026)
     {
         var root = Path.Combine(Path.GetTempPath(), $"revitcli_doctor_{System.Guid.NewGuid():N}");
         var userProfile = Path.Combine(root, "user");
         var appData = Path.Combine(root, "appdata");
-        var revitDir = Path.Combine(root, "Revit 2026");
+        var revitDir = Path.Combine(root, $"Revit {revitYear}");
         Directory.CreateDirectory(userProfile);
         Directory.CreateDirectory(appData);
         Directory.CreateDirectory(revitDir);
@@ -52,7 +52,9 @@ public class DoctorCommandTests
         {
             UserProfile = userProfile,
             AppData = appData,
-            Revit2026InstallDir = revitDir
+            TargetRevitYear = revitYear,
+            RevitInstallDir = revitDir,
+            Revit2026InstallDir = revitYear == 2026 ? revitDir : null
         };
 
         WriteAddinManifest(environment, CurrentCliAssemblyPath());
@@ -64,9 +66,9 @@ public class DoctorCommandTests
 
     private static void WriteAddinManifest(DoctorEnvironment environment, string assemblyPath)
     {
-        var addins = Path.Combine(environment.AppData, "Autodesk", "Revit", "Addins", "2026");
+        var addins = Path.GetDirectoryName(environment.ManifestPath)!;
         Directory.CreateDirectory(addins);
-        File.WriteAllText(Path.Combine(addins, "RevitCli.addin"),
+        File.WriteAllText(environment.ManifestPath,
             $@"<?xml version=""1.0"" encoding=""utf-8""?>
 <RevitAddIns>
   <AddIn Type=""Application"">
@@ -81,6 +83,8 @@ public class DoctorCommandTests
         {
             UserProfile = environment.UserProfile,
             AppData = environment.AppData,
+            TargetRevitYear = environment.TargetRevitYear,
+            RevitInstallDir = environment.RevitInstallDir,
             Revit2026InstallDir = environment.Revit2026InstallDir,
             CliVersion = cliVersion
         };
@@ -119,6 +123,54 @@ public class DoctorCommandTests
         Assert.Contains("Connected to Revit 2026", output);
         Assert.Contains("Test.rvt", output);
         Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task Execute_CheckVersion2025_UsesVersionSpecificInstallAndManifest()
+    {
+        var environment = CreateDoctorEnvironment(2025);
+        var status = new StatusInfo
+        {
+            RevitVersion = "2025",
+            RevitYear = 2025,
+            AddinVersion = environment.CliVersion,
+            DocumentName = "Test.rvt"
+        };
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(status)));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment);
+
+        var output = writer.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Revit 2025 API DLLs found", output);
+        Assert.Contains(Path.Combine("Addins", "2025", "RevitCli.addin"), output);
+        Assert.Contains("Connected to Revit 2025", output);
+    }
+
+    [Fact]
+    public async Task Execute_UnsupportedCheckVersion_ReturnsFailureBeforePrechecks()
+    {
+        var baseline = CreateDoctorEnvironment();
+        var environment = new DoctorEnvironment
+        {
+            UserProfile = baseline.UserProfile,
+            AppData = baseline.AppData,
+            TargetRevitYear = 2023,
+            RevitInstallDir = baseline.RevitInstallDir,
+            Revit2026InstallDir = baseline.Revit2026InstallDir,
+            CliVersion = baseline.CliVersion
+        };
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(
+            new StatusInfo { RevitVersion = "2023", RevitYear = 2023 })));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("Unsupported Revit version 2023", writer.ToString());
     }
 
     [Fact]
@@ -283,7 +335,7 @@ public class DoctorCommandTests
     public async Task Execute_MissingManifest_PrintsAddinManifestFailure()
     {
         var environment = CreateDoctorEnvironment();
-        File.Delete(Path.Combine(environment.AppData, "Autodesk", "Revit", "Addins", "2026", "RevitCli.addin"));
+        File.Delete(environment.ManifestPath);
         var status = new StatusInfo { RevitVersion = "2026", DocumentName = "Test.rvt" };
         var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(status)));
         var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
@@ -383,6 +435,8 @@ public class DoctorCommandTests
         {
             UserProfile = environment.UserProfile,
             AppData = environment.AppData,
+            TargetRevitYear = environment.TargetRevitYear,
+            RevitInstallDir = customDir,
             Revit2026InstallDir = customDir,
             CliVersion = environment.CliVersion
         };

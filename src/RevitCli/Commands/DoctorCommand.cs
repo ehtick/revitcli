@@ -17,24 +17,26 @@ namespace RevitCli.Commands;
 
 public static class DoctorCommand
 {
-    private const string LiveAddinVersionHint =
-        "HINT: Close Revit, reinstall the Revit 2026 add-in, restart Revit, and rerun doctor.";
-
     public static Command Create(RevitClient client, CliConfig config)
     {
         var command = new Command("doctor", "Check RevitCli setup and diagnose issues");
+        var checkVersionOpt = new Option<int>(
+            "--check-version",
+            () => 2026,
+            "Revit version to check for local API DLLs, add-in manifest, and live connection: 2024|2025|2026.");
+        command.AddOption(checkVersionOpt);
 
-        command.SetHandler(async () =>
+        command.SetHandler(async (int checkVersion) =>
         {
-            Environment.ExitCode = await ExecuteAsync(client, config, Console.Out);
-        });
+            Environment.ExitCode = await ExecuteAsync(client, config, Console.Out, checkVersion);
+        }, checkVersionOpt);
 
         return command;
     }
 
-    public static Task<int> ExecuteAsync(RevitClient client, CliConfig config, TextWriter output)
+    public static Task<int> ExecuteAsync(RevitClient client, CliConfig config, TextWriter output, int checkVersion = 2026)
     {
-        return ExecuteAsync(client, config, output, DoctorEnvironment.Current());
+        return ExecuteAsync(client, config, output, DoctorEnvironment.Current(checkVersion));
     }
 
     internal static async Task<int> ExecuteAsync(
@@ -43,6 +45,13 @@ public static class DoctorCommand
         TextWriter output,
         DoctorEnvironment environment)
     {
+        var checkVersion = environment.TargetRevitYear;
+        if (!IsSupportedRevitYear(checkVersion))
+        {
+            await WriteFail(output, $"Unsupported Revit version {checkVersion}. Supported versions: 2024, 2025, 2026.");
+            return 1;
+        }
+
         var hasFailure = false;
 
         // 1. Config file
@@ -56,8 +65,8 @@ public static class DoctorCommand
         await WriteOk(output, $"CLI version: {cliVersion}");
         var expectedVersion = await ParseExpectedVersion(output, cliVersion);
 
-        // 2. Revit 2026 local prerequisites
-        hasFailure |= !await WriteRevit2026ApiCheck(output, environment);
+        // 2. Local prerequisites for the requested Revit version.
+        hasFailure |= !await WriteRevitApiCheck(output, environment);
         hasFailure |= !await WriteAddinManifestCheck(output, environment, expectedVersion);
 
         // 3. Server URL
@@ -71,10 +80,10 @@ public static class DoctorCommand
         if (status.Success)
         {
             await output.WriteLineAsync($"OK: Connected to Revit {status.Data!.RevitVersion}");
-            if (!IsRevit2026(status.Data))
+            if (!IsTargetRevitVersion(status.Data, checkVersion))
             {
                 await output.WriteLineAsync(
-                    $"FAIL: Connected Revit version is {status.Data.RevitVersion}; this internal smoke baseline targets Revit 2026 only.");
+                    $"FAIL: Connected Revit version is {status.Data.RevitVersion}; this smoke baseline targets Revit {checkVersion}.");
                 hasFailure = true;
             }
 
@@ -83,7 +92,7 @@ public static class DoctorCommand
                 if (!ComponentVersion.TryParse(status.Data.AddinVersion, out _))
                 {
                     await WriteFail(output, $"Live Add-in version cannot be parsed: {status.Data.AddinVersion}");
-                    await output.WriteLineAsync(LiveAddinVersionHint);
+                    await output.WriteLineAsync(LiveAddinVersionHint(checkVersion));
                     hasFailure = true;
                 }
                 else if (expectedVersion.HasValue)
@@ -95,7 +104,7 @@ public static class DoctorCommand
                         status.Data.AddinVersion);
                     if (!liveCompatible)
                     {
-                        await output.WriteLineAsync(LiveAddinVersionHint);
+                        await output.WriteLineAsync(LiveAddinVersionHint(checkVersion));
                         hasFailure = true;
                     }
                 }
@@ -107,7 +116,7 @@ public static class DoctorCommand
             else
             {
                 await WriteFail(output, "Live Add-in version is missing from status.");
-                await output.WriteLineAsync(LiveAddinVersionHint);
+                await output.WriteLineAsync(LiveAddinVersionHint(checkVersion));
                 hasFailure = true;
             }
 
@@ -119,7 +128,7 @@ public static class DoctorCommand
         else
         {
             await output.WriteLineAsync($"FAIL: {status.Error}");
-            await output.WriteLineAsync("HINT: Start Revit 2026, confirm the RevitCli add-in is loaded, open the test model, then rerun 'revitcli doctor'.");
+            await output.WriteLineAsync($"HINT: Start Revit {checkVersion}, confirm the RevitCli add-in is loaded, open the test model, then rerun 'revitcli doctor --check-version {checkVersion}'.");
             hasFailure = true;
         }
 
@@ -129,31 +138,37 @@ public static class DoctorCommand
         return hasFailure ? 1 : 0;
     }
 
-    private static bool IsRevit2026(StatusInfo status)
+    private static bool IsTargetRevitVersion(StatusInfo status, int checkVersion)
     {
         if (status.RevitYear != 0)
-            return status.RevitYear == 2026;
+            return status.RevitYear == checkVersion;
 
-        return status.RevitVersion.Contains("2026", StringComparison.OrdinalIgnoreCase);
+        return status.RevitVersion.Contains(checkVersion.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<bool> WriteRevit2026ApiCheck(TextWriter output, DoctorEnvironment environment)
+    private static bool IsSupportedRevitYear(int year) => year is 2024 or 2025 or 2026;
+
+    private static string LiveAddinVersionHint(int year) =>
+        $"HINT: Close Revit, reinstall the Revit {year} add-in, restart Revit, and rerun doctor.";
+
+    private static async Task<bool> WriteRevitApiCheck(TextWriter output, DoctorEnvironment environment)
     {
-        var installDir = environment.ResolvedRevit2026InstallDir;
+        var year = environment.TargetRevitYear;
+        var installDir = environment.ResolvedRevitInstallDir;
         var missing = new[] { "RevitAPI.dll", "RevitAPIUI.dll" }
             .Where(dll => !File.Exists(Path.Combine(installDir, dll)))
             .ToArray();
 
         if (missing.Length == 0)
         {
-            await output.WriteLineAsync($"OK: Revit 2026 API DLLs found ({installDir})");
+            await output.WriteLineAsync($"OK: Revit {year} API DLLs found ({installDir})");
             return true;
         }
 
         await output.WriteLineAsync(
-            $"FAIL: Revit 2026 API DLLs missing at {installDir}: {string.Join(", ", missing)}");
+            $"FAIL: Revit {year} API DLLs missing at {installDir}: {string.Join(", ", missing)}");
         await output.WriteLineAsync(
-            "HINT: Install Revit 2026 or set REVITCLI_REVIT2026_INSTALL_DIR / Revit2026InstallDir to the Revit 2026 install directory.");
+            $"HINT: Install Revit {year} or set REVITCLI_REVIT{year}_INSTALL_DIR / Revit{year}InstallDir to the Revit {year} install directory.");
         return false;
     }
 
@@ -166,7 +181,8 @@ public static class DoctorCommand
         if (!File.Exists(manifestPath))
         {
             await WriteFail(output, $"Add-in manifest missing ({manifestPath})");
-            await output.WriteLineAsync("HINT: Build/publish the add-in and install RevitCli.addin under Autodesk\\Revit\\Addins\\2026.");
+            await output.WriteLineAsync(
+                $"HINT: Build/publish the add-in and install RevitCli.addin under Autodesk\\Revit\\Addins\\{environment.TargetRevitYear}.");
             return false;
         }
 
@@ -339,7 +355,8 @@ public static class DoctorCommand
         {
             await output.WriteLineAsync(
                 $"FAIL: Server info is stale or invalid ({serverInfoPath}): {string.Join(", ", failures)}");
-            await output.WriteLineAsync("HINT: Close Revit, delete the stale server.json if it remains, restart Revit 2026, and rerun doctor.");
+            await output.WriteLineAsync(
+                $"HINT: Close Revit, delete the stale server.json if it remains, restart Revit {environment.TargetRevitYear}, and rerun doctor --check-version {environment.TargetRevitYear}.");
             return false;
         }
 
@@ -429,6 +446,10 @@ internal sealed class DoctorEnvironment
     public string AppData { get; init; } =
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
+    public int TargetRevitYear { get; init; } = 2026;
+
+    public string? RevitInstallDir { get; init; }
+
     public string? Revit2026InstallDir { get; init; }
 
     public string ConfigPath => Path.Combine(UserProfile, ".revitcli", "config.json");
@@ -436,28 +457,34 @@ internal sealed class DoctorEnvironment
     public string ServerInfoPath => Path.Combine(UserProfile, ".revitcli", "server.json");
 
     public string ManifestPath => Path.Combine(
-        AppData, "Autodesk", "Revit", "Addins", "2026", "RevitCli.addin");
+        AppData, "Autodesk", "Revit", "Addins", TargetRevitYear.ToString(), "RevitCli.addin");
 
-    // Current() seeds Revit2026InstallDir via RevitInstallDirResolver.Resolve(year),
-    // which already trims and substitutes the ProgramFiles fallback for blank inputs,
-    // so the resolved path is non-null and trimmed. The IsNullOrWhiteSpace branch is
-    // exercised only when callers (mainly tests) build a DoctorEnvironment by hand
-    // without calling Current().
-    public string ResolvedRevit2026InstallDir =>
-        string.IsNullOrWhiteSpace(Revit2026InstallDir)
-            ? RevitInstallDirResolver.DefaultInstallDir(2026)
-            : Revit2026InstallDir!;
+    public string ResolvedRevitInstallDir
+    {
+        get
+        {
+            var explicitDir = !string.IsNullOrWhiteSpace(RevitInstallDir)
+                ? RevitInstallDir
+                : (TargetRevitYear == 2026 ? Revit2026InstallDir : null);
+            return string.IsNullOrWhiteSpace(explicitDir)
+                ? RevitInstallDirResolver.DefaultInstallDir(TargetRevitYear)
+                : explicitDir!;
+        }
+    }
 
-    public static DoctorEnvironment Current()
+    public string ResolvedRevit2026InstallDir => ResolvedRevitInstallDir;
+
+    public static DoctorEnvironment Current(int targetRevitYear = 2026)
     {
         return new DoctorEnvironment
         {
+            TargetRevitYear = targetRevitYear,
             // Resolve via the shared helper. When only Revit<year>InstallDir is set,
             // doctor reports the same path RevitCli.Addin.Tests.csproj reads at
             // build time. REVITCLI_REVIT<year>_INSTALL_DIR is a RevitCli-only
-            // superset (no csproj consults it) — set that to override doctor
-            // without touching MSBuild.
-            Revit2026InstallDir = RevitInstallDirResolver.Resolve(2026)
+            // superset (no csproj consults it) and can override doctor without
+            // touching MSBuild.
+            RevitInstallDir = RevitInstallDirResolver.Resolve(targetRevitYear)
         };
     }
 }
