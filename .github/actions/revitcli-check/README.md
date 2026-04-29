@@ -34,7 +34,7 @@ permissions:
   security-events: write
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/revitcli-check
@@ -48,7 +48,6 @@ jobs:
 - The composite step pins both `actions/setup-dotnet` and
   `github/codeql-action/upload-sarif` to commit SHAs. Update the SHA **and**
   the trailing version comment in `action.yml` together when bumping.
-- Revit can only be driven on a self-hosted Windows runner. SARIF lint passes
-  (rules that don't require a live Revit document) work fine on Linux, which
-  is why this composite uses `ubuntu-latest` by default.
+- Revit can only be driven on Windows. Use `windows-latest` for profile/SARIF
+  lint and a self-hosted Windows runner when a live Revit document is needed.
 - The SARIF file is written to `${{ runner.temp }}/revitcli.sarif`.
