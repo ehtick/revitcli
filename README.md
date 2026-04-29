@@ -51,7 +51,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli inspect categories` | Discover common categories and next commands |
 | `revitcli inspect params <category>` | Discover parameters seen on a category |
 | `revitcli inspect schedules` | Discover schedules and ready-to-run export commands |
-| `revitcli inspect sheets` | Discover sheets and export candidates for CLI/Codex workflows |
+| `revitcli inspect sheets` | Discover sheets, issues, filters, and export candidates for CLI/Codex workflows |
 | `revitcli snapshot` | Capture model semantic state as JSON |
 | `revitcli diff <from> <to>` | Diff two snapshots (table / JSON / markdown) |
 | `revitcli import <file>` | Batch-write parameters from CSV |
@@ -258,8 +258,10 @@ Architects can use Codex CLI as a conversational terminal operator that
 calls `revitcli` commands for checking, publishing, schedule export, and
 safe parameter edits. RevitCli remains deterministic and local; Codex CLI
 should run read-only or `--dry-run` commands before any write. CLI-only
-inspect commands such as `revitcli inspect sheets` help Codex CLI discover
-available sheets and export candidates before building a publish/export plan.
+inspect commands such as `revitcli inspect sheets --ready-only` and
+`revitcli inspect sheets --issues-only` help Codex CLI discover available
+sheets, review blockers, and export candidates before building a
+publish/export plan.
 
 Example prompts:
 

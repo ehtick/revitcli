@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Shared;
@@ -34,6 +35,16 @@ public static class InspectCommand
         new("ceilings", "Ceilings / 天花板"),
         new("furniture", "Furniture / 家具"),
         new("levels", "Levels / 标高")
+    };
+
+    private static readonly SheetKeyParameter[] SheetKeyParameters =
+    {
+        new("drawnBy", new[] { "Drawn By", "DrawnBy", "绘图", "制图" }),
+        new("checkedBy", new[] { "Checked By", "CheckedBy", "Checked", "审核", "校对" }),
+        new("approvedBy", new[] { "Approved By", "ApprovedBy", "Approved", "批准" }),
+        new("issueDate", new[] { "Sheet Issue Date", "Issue Date", "Date", "日期" }),
+        new("revision", new[] { "Current Revision", "Revision", "Revision Number", "修订" }),
+        new("scale", new[] { "Scale", "比例" })
     };
 
     public static Command Create(RevitClient client)
@@ -88,11 +99,29 @@ public static class InspectCommand
     private static Command CreateSheetsCommand(RevitClient client)
     {
         var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json");
-        var command = new Command("sheets", "Inspect sheets and export dry-run commands") { outputOpt };
-        command.SetHandler(async output =>
+        var sheetsOpt = new Option<string[]>(
+            "--sheets",
+            () => Array.Empty<string>(),
+            "Filter by sheet number/name patterns (e.g. A1*, \"A101\", all)");
+        var readyOnlyOpt = new Option<bool>("--ready-only", "Only show sheets that are ready export candidates");
+        var issuesOnlyOpt = new Option<bool>("--issues-only", "Only show sheets with missing info or review issues");
+        var command = new Command("sheets", "Inspect sheets and export dry-run commands")
         {
-            Environment.ExitCode = await ExecuteSheetsAsync(client, output, Console.Out);
-        }, outputOpt);
+            outputOpt,
+            sheetsOpt,
+            readyOnlyOpt,
+            issuesOnlyOpt
+        };
+        command.SetHandler(async (output, sheets, readyOnly, issuesOnly) =>
+        {
+            Environment.ExitCode = await ExecuteSheetsAsync(
+                client,
+                output,
+                sheets,
+                readyOnly,
+                issuesOnly,
+                Console.Out);
+        }, outputOpt, sheetsOpt, readyOnlyOpt, issuesOnlyOpt);
         return command;
     }
 
@@ -220,6 +249,21 @@ public static class InspectCommand
         RevitClient client,
         string outputFormat,
         TextWriter output)
+        => await ExecuteSheetsAsync(
+            client,
+            outputFormat,
+            Array.Empty<string>(),
+            readyOnly: false,
+            issuesOnly: false,
+            output);
+
+    public static async Task<int> ExecuteSheetsAsync(
+        RevitClient client,
+        string outputFormat,
+        string[] sheetPatterns,
+        bool readyOnly,
+        bool issuesOnly,
+        TextWriter output)
     {
         var result = await client.CaptureSnapshotAsync(new SnapshotRequest
         {
@@ -235,18 +279,14 @@ public static class InspectCommand
         }
 
         var sheets = result.Data?.Sheets ?? new List<SnapshotSheet>();
+        var patterns = NormalizePatterns(sheetPatterns);
         var items = sheets
             .OrderBy(sheet => sheet.Number, StringComparer.OrdinalIgnoreCase)
             .ThenBy(sheet => sheet.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(sheet => new SheetInspectItem(
-                sheet.ViewId,
-                sheet.Number,
-                sheet.Name,
-                sheet.PlacedViewIds.Count,
-                !string.IsNullOrWhiteSpace(sheet.Number),
-                sheet.PlacedViewIds.Count > 0,
-                BuildSheetExportCommand(sheet.Number, sheet.Name, dryRun: false),
-                BuildSheetExportCommand(sheet.Number, sheet.Name, dryRun: true)))
+            .Select(BuildSheetInspectItem)
+            .Where(item => patterns.Length == 0 || patterns.Any(pattern => MatchesSheetPattern(item, pattern)))
+            .Where(item => !readyOnly || item.ExportReady)
+            .Where(item => !issuesOnly || item.HasIssues)
             .ToArray();
 
         if (outputFormat.Equals("json", StringComparison.OrdinalIgnoreCase))
@@ -257,17 +297,17 @@ public static class InspectCommand
 
         if (items.Length == 0)
         {
-            await output.WriteLineAsync("No sheets found in the model.");
+            await output.WriteLineAsync("No sheets matched the inspect filters.");
             return 0;
         }
 
-        await output.WriteLineAsync($"{"Number",-14} {"Name",-28} {"Views",-7} {"Ready",-7} {"Export",-58} Dry-run export");
-        await output.WriteLineAsync(new string('-', 188));
+        await output.WriteLineAsync($"{"Number",-14} {"Name",-28} {"Views",-7} {"Ready",-7} {"Issues",-28} Commands");
+        await output.WriteLineAsync(new string('-', 172));
         foreach (var item in items)
         {
             var ready = item.ExportReady ? "yes" : "no";
             await output.WriteLineAsync(
-                $"{TrimForTable(item.Number, 14),-14} {TrimForTable(item.Name, 28),-28} {item.PlacedViewCount,-7} {ready,-7} {TrimForTable(item.ExportCommand, 58),-58} {item.DryRunCommand}");
+                $"{TrimForTable(item.Number, 14),-14} {TrimForTable(item.Name, 28),-28} {item.PlacedViewCount,-7} {ready,-7} {TrimForTable(item.IssueSummary, 28),-28} export: {item.ExportCommand} | dry-run: {item.DryRunCommand}");
         }
 
         return 0;
@@ -364,13 +404,153 @@ public static class InspectCommand
         return $"revitcli schedule export --name {QuoteArgument(scheduleName)} --output csv";
     }
 
-    private static string BuildSheetExportCommand(string sheetNumber, string sheetName, bool dryRun)
+    private static SheetInspectItem BuildSheetInspectItem(SnapshotSheet sheet)
     {
-        var selector = !string.IsNullOrWhiteSpace(sheetNumber)
-            ? sheetNumber
-            : sheetName;
+        var selector = BuildSheetSelector(sheet);
+        var issues = BuildSheetIssues(sheet).ToArray();
+        return new SheetInspectItem(
+            sheet.ViewId,
+            sheet.Number,
+            sheet.Name,
+            selector,
+            BuildSheetMatchKey(sheet),
+            sheet.PlacedViewIds.Count,
+            !string.IsNullOrWhiteSpace(sheet.Number),
+            sheet.PlacedViewIds.Count > 0,
+            BuildSheetKeyParameters(sheet.Parameters),
+            issues,
+            BuildSheetExportCommand(selector, dryRun: false),
+            BuildSheetExportCommand(selector, dryRun: true));
+    }
+
+    private static string BuildSheetSelector(SnapshotSheet sheet)
+    {
+        if (!string.IsNullOrWhiteSpace(sheet.Number))
+            return sheet.Number;
+        if (!string.IsNullOrWhiteSpace(sheet.Name))
+            return sheet.Name;
+        return "";
+    }
+
+    private static string BuildSheetMatchKey(SnapshotSheet sheet)
+    {
+        if (!string.IsNullOrWhiteSpace(sheet.Number) && !string.IsNullOrWhiteSpace(sheet.Name))
+            return $"{sheet.Number} - {sheet.Name}";
+        return BuildSheetSelector(sheet);
+    }
+
+    private static string BuildSheetExportCommand(string selector, bool dryRun)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+            return "";
+
         var command = $"revitcli export --format pdf --sheets {QuoteArgument(selector)}";
         return dryRun ? $"{command} --dry-run" : command;
+    }
+
+    private static List<SheetIssue> BuildSheetIssues(SnapshotSheet sheet)
+    {
+        var issues = new List<SheetIssue>();
+        if (string.IsNullOrWhiteSpace(sheet.Number))
+        {
+            issues.Add(new SheetIssue(
+                "error",
+                "missing-number",
+                "Sheet number is blank."));
+        }
+
+        if (string.IsNullOrWhiteSpace(sheet.Name))
+        {
+            issues.Add(new SheetIssue(
+                "warning",
+                "missing-name",
+                "Sheet name is blank."));
+        }
+
+        if (sheet.PlacedViewIds.Count == 0)
+        {
+            issues.Add(new SheetIssue(
+                "warning",
+                "no-placed-views",
+                "No placed views were found; run audit --rules sheets-missing-info to confirm schedule-only sheets."));
+        }
+
+        return issues;
+    }
+
+    private static Dictionary<string, string> BuildSheetKeyParameters(Dictionary<string, string> parameters)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var definition in SheetKeyParameters)
+        {
+            var value = FindParameterValue(parameters, definition.Aliases);
+            if (!string.IsNullOrWhiteSpace(value))
+                result[definition.Key] = value;
+        }
+
+        return result;
+    }
+
+    private static string? FindParameterValue(Dictionary<string, string> parameters, string[] aliases)
+    {
+        if (parameters.Count == 0)
+            return null;
+
+        foreach (var alias in aliases)
+        {
+            if (parameters.TryGetValue(alias, out var exact))
+                return exact;
+        }
+
+        var normalizedAliases = aliases
+            .Select(NormalizeParameterName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var parameter in parameters)
+        {
+            if (normalizedAliases.Contains(NormalizeParameterName(parameter.Key)))
+                return parameter.Value;
+        }
+
+        return null;
+    }
+
+    private static string NormalizeParameterName(string value)
+    {
+        return new string((value ?? "")
+            .Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
+    }
+
+    private static string[] NormalizePatterns(string[]? patterns)
+    {
+        return (patterns ?? Array.Empty<string>())
+            .Where(pattern => !string.IsNullOrWhiteSpace(pattern))
+            .Select(pattern => pattern.Trim())
+            .ToArray();
+    }
+
+    private static bool MatchesSheetPattern(SheetInspectItem item, string pattern)
+    {
+        if (string.Equals(pattern, "all", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return MatchesPattern(item.Number, pattern)
+               || MatchesPattern(item.Name, pattern)
+               || MatchesPattern(item.MatchKey, pattern)
+               || MatchesPattern(item.Selector, pattern);
+    }
+
+    private static bool MatchesPattern(string text, string pattern)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(pattern))
+            return false;
+
+        if (!pattern.Contains('*', StringComparison.Ordinal))
+            return string.Equals(text, pattern, StringComparison.OrdinalIgnoreCase);
+
+        var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*", StringComparison.Ordinal) + "$";
+        return Regex.IsMatch(text, regexPattern, RegexOptions.IgnoreCase);
     }
 
     private static string BuildQueryCommand(string category)
@@ -409,6 +589,8 @@ public static class InspectCommand
 
     private sealed record KnownCategory(string Alias, string Label);
 
+    private sealed record SheetKeyParameter(string Key, string[] Aliases);
+
     private sealed record CategoryInspectItem(
         string Alias,
         string Label,
@@ -440,16 +622,28 @@ public static class InspectCommand
         long ViewId,
         string Number,
         string Name,
+        string Selector,
+        string MatchKey,
         int PlacedViewCount,
         bool HasNumber,
         bool HasPlacedViews,
+        Dictionary<string, string> KeyParameters,
+        SheetIssue[] Issues,
         string ExportCommand,
         string DryRunCommand)
     {
-        public bool ExportReady => HasNumber && HasPlacedViews;
+        public bool HasIssues => Issues.Length > 0;
+
+        public bool HasBlockingIssues => Issues.Any(issue => issue.Severity.Equals("error", StringComparison.OrdinalIgnoreCase));
+
+        public bool ExportReady => HasNumber && HasPlacedViews && !HasBlockingIssues && !string.IsNullOrWhiteSpace(ExportCommand);
+
+        public string IssueSummary => HasIssues ? string.Join(", ", Issues.Select(issue => issue.Code)) : "ok";
 
         public string DryRunExportCommand => DryRunCommand;
     }
+
+    private sealed record SheetIssue(string Severity, string Code, string Message);
 
     private sealed class ParameterStats
     {

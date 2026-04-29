@@ -209,6 +209,127 @@ public class InspectCommandTests
     }
 
     [Fact]
+    public async Task Sheets_Json_PrintsIssuesAndKeyParameters()
+    {
+        var snapshot = new ModelSnapshot
+        {
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "",
+                    Name = "Cover",
+                    Parameters =
+                    {
+                        ["Drawn By"] = "AZ",
+                        ["Sheet Issue Date"] = "2026-04-29"
+                    }
+                }
+            }
+        };
+        var response = ApiResponse<ModelSnapshot>.Ok(snapshot);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteSheetsAsync(client, "json", writer);
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var item = document.RootElement[0];
+        Assert.Equal("Cover", item.GetProperty("selector").GetString());
+        Assert.False(item.GetProperty("exportReady").GetBoolean());
+        Assert.Equal("AZ", item.GetProperty("keyParameters").GetProperty("drawnBy").GetString());
+        Assert.Equal("2026-04-29", item.GetProperty("keyParameters").GetProperty("issueDate").GetString());
+        Assert.Contains("missing-number", writer.ToString());
+        Assert.Contains("no-placed-views", writer.ToString());
+    }
+
+    [Fact]
+    public async Task Sheets_FiltersByPatternAndIssuesOnly()
+    {
+        var snapshot = new ModelSnapshot
+        {
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A101",
+                    Name = "Floor Plan",
+                    PlacedViewIds = { 100 }
+                },
+                new SnapshotSheet
+                {
+                    ViewId = 11,
+                    Number = "G001",
+                    Name = "Cover"
+                }
+            }
+        };
+        var response = ApiResponse<ModelSnapshot>.Ok(snapshot);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteSheetsAsync(
+            client,
+            "json",
+            new[] { "G*" },
+            readyOnly: false,
+            issuesOnly: true,
+            writer);
+
+        var output = writer.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("\"number\": \"G001\"", output);
+        Assert.DoesNotContain("\"number\": \"A101\"", output);
+        Assert.Contains("\"issueSummary\": \"no-placed-views\"", output);
+    }
+
+    [Fact]
+    public async Task Sheets_FiltersReadyOnly()
+    {
+        var snapshot = new ModelSnapshot
+        {
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A101",
+                    Name = "Floor Plan",
+                    PlacedViewIds = { 100 }
+                },
+                new SnapshotSheet
+                {
+                    ViewId = 11,
+                    Number = "G001",
+                    Name = "Cover"
+                }
+            }
+        };
+        var response = ApiResponse<ModelSnapshot>.Ok(snapshot);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteSheetsAsync(
+            client,
+            "json",
+            new[] { "all" },
+            readyOnly: true,
+            issuesOnly: false,
+            writer);
+
+        var output = writer.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("\"number\": \"A101\"", output);
+        Assert.DoesNotContain("\"number\": \"G001\"", output);
+    }
+
+    [Fact]
     public async Task Sheets_ServerDown_PrintsError()
     {
         var handler = new FakeHttpHandler(throwException: true);

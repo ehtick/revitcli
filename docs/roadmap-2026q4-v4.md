@@ -133,8 +133,9 @@ Candidate commands:
   export readiness. First slice shipped as a CLI-side wrapper around
   existing schedule discovery.
 - `revitcli inspect sheets`: CLI-only sheet discovery for Codex CLI and
-  terminal users; summarize sheets by number, name, title block,
-  revision, and export-candidate state before publish/export planning.
+  terminal users; summarize sheets by number, name, key title-block
+  parameters, review issues, filters, and export-candidate state before
+  publish/export planning.
 - `revitcli examples <command>`: local examples for common tasks.
 
 Why this matters:
@@ -150,7 +151,8 @@ Exit gate:
   and build a safe dry-run `set` command without opening docs.
 - Codex CLI can answer "what can I export or check in this model?" using
   only read-only RevitCli commands, including sheet/export-candidate
-  discovery through `revitcli inspect sheets`.
+  discovery through `revitcli inspect sheets --ready-only` and issue
+  triage through `revitcli inspect sheets --issues-only`.
 
 ## 8. v2.4 - Safe Batch Plans
 
