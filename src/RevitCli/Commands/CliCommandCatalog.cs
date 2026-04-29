@@ -35,7 +35,8 @@ internal static class CliCommandCatalog
         ("ci", "CI integration helpers (detect provider, emit workflow templates)"),
         ("profile", "Validate, resolve, diff, and install .revitcli.yml profiles"),
         ("family", "Manage Revit families (list)"),
-        ("dashboard", "Serve or package the RevitCli web dashboard (v2.0)")
+        ("dashboard", "Serve or package the RevitCli web dashboard (v2.0)"),
+        ("journal", "Sign and verify the operation journal")
     };
 
     internal static readonly (string Command, string Description)[] InteractiveHelpEntries =
@@ -70,6 +71,8 @@ internal static class CliCommandCatalog
         ("family ls", "List families in the active document (--unused, --category, --output)"),
         ("dashboard serve [--port 8080]", "Serve the prebuilt dashboard on localhost"),
         ("dashboard build --output ./public", "Copy the prebuilt dashboard + inject history into a deploy folder"),
+        ("journal sign", "Sign .revitcli/journal.jsonl into journal.jsonl.sig"),
+        ("journal verify", "Verify journal.jsonl against journal.jsonl.sig"),
         ("init <template>", "Create .revitcli.yml from starter template"),
         ("doctor", "Check setup, server discovery, and connectivity"),
         ("batch <file>", "Execute commands from a JSON batch file"),
@@ -118,6 +121,7 @@ internal static class CliCommandCatalog
         root.AddCommand(ProfileCommand.Create());
         root.AddCommand(FamilyCommand.Create(client));
         root.AddCommand(DashboardCommand.Create());
+        root.AddCommand(JournalCommand.Create());
 
         if (includeBatchCommand)
             root.AddCommand(BatchCommand.Create(client, config));

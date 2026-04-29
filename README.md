@@ -162,6 +162,13 @@ Starter templates in `profiles/`:
 - `rollback <baseline> --yes` restores only the parameters touched by that fix journal.
 - v1.5 supports parameter-only strategies: `setParam` and `renameByPattern`.
 
+### Journal Integrity
+
+- `.revitcli/journal.jsonl` records write and publish operations.
+- `revitcli journal sign` writes `.revitcli/journal.jsonl.sig` with a SHA256 hash chain and local HMAC.
+- `revitcli journal verify` exits non-zero if a signed entry was inserted, removed, or modified.
+- See [docs/journal-signing.md](docs/journal-signing.md) for custom key and CI usage.
+
 ## Requirements
 
 - .NET 8 SDK

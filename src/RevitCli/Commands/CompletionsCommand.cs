@@ -16,6 +16,8 @@ public static class CompletionsCommand
         "--allow-inferred", "--max-changes", "--baseline-output", "--no-snapshot"
     };
     private static readonly string[] RollbackOptions = { "--dry-run", "--yes", "--max-changes" };
+    private static readonly string[] JournalSubcommands = { "sign", "verify" };
+    private static readonly string[] JournalOptions = { "--dir", "--journal", "--signature", "--key", "--until", "--output" };
     private static readonly string[] PublishOptions =
         { "--profile", "--dry-run", "--since", "--since-mode", "--update-baseline" };
     private static readonly string[] SinceModes = { "content", "meta" };
@@ -65,6 +67,7 @@ public static class CompletionsCommand
         var auditOptions = JoinWords(AuditOptions);
         var fixOptions = JoinWords(FixOptions);
         var rollbackOptions = JoinWords(RollbackOptions);
+        var journalWords = JoinWords(JournalSubcommands.Concat(JournalOptions));
         var publishOptions = JoinWords(PublishOptions);
         var sinceModes = JoinWords(SinceModes);
         var importOptions = JoinWords(ImportOptions);
@@ -213,6 +216,9 @@ public static class CompletionsCommand
             "            fi",
             $"            COMPREPLY=($(compgen -W \"{rollbackOptions}\" -- \"$cur\"))",
             "            ;;",
+            "        journal)",
+            $"            COMPREPLY=($(compgen -W \"{journalWords}\" -- \"$cur\"))",
+            "            ;;",
             "        status|doctor|interactive)",
             "            COMPREPLY=()",
             "            ;;",
@@ -232,6 +238,7 @@ public static class CompletionsCommand
         var shells = JoinWords(CliCommandCatalog.Shells);
         var auditRules = JoinWords(AuditCommand.AvailableRules);
         var fixOptions = JoinWords(FixOptions);
+        var journalSubcommands = JoinWords(JournalSubcommands);
 
         return JoinLines(
             "#compdef revitcli",
@@ -323,14 +330,24 @@ public static class CompletionsCommand
             "                        '--baseline-output[Save baseline snapshot path]:file:_files' \\",
             "                        '--no-snapshot[Skip baseline and journal support]'",
             "                    ;;",
-            "                rollback)",
-            "                    _arguments \\",
-            "                        '1:baseline file:_files' \\",
-            "                        '--dry-run[Preview rollback without applying]' \\",
-            "                        '--yes[Confirm rollback apply in non-interactive mode]' \\",
-            "                        '--max-changes[Maximum number of rollback writes]'",
-            "                    ;;",
-            "                import)",
+                "                rollback)",
+                "                    _arguments \\",
+                "                        '1:baseline file:_files' \\",
+                "                        '--dry-run[Preview rollback without applying]' \\",
+                "                        '--yes[Confirm rollback apply in non-interactive mode]' \\",
+                "                        '--max-changes[Maximum number of rollback writes]'",
+                "                    ;;",
+                "                journal)",
+                "                    _arguments \\",
+                $"                        '1:subcommand:({journalSubcommands})' \\",
+                "                        '--dir[Project directory]:dir:_directories' \\",
+                "                        '--journal[Journal JSONL file]:file:_files' \\",
+                "                        '--signature[Signature file]:file:_files' \\",
+                "                        '--key[HMAC key file]:file:_files' \\",
+                "                        '--until[Sign entries at or before timestamp]:timestamp:' \\",
+                "                        '--output[Output format]:format:(table json)'",
+                "                    ;;",
+                "                import)",
             "                    _arguments \\",
             "                        '1:file:_files' \\",
             "                        '--category[Revit category]:category:' \\",
@@ -360,6 +377,7 @@ public static class CompletionsCommand
         var auditOptions = FormatPowerShellArray(AuditOptions);
         var fixOptions = FormatPowerShellArray(FixOptions);
         var rollbackOptions = FormatPowerShellArray(RollbackOptions);
+        var journalOptions = FormatPowerShellArray(JournalSubcommands.Concat(JournalOptions));
         var publishOptions = FormatPowerShellArray(PublishOptions);
         var sinceModes = FormatPowerShellArray(SinceModes);
         var importOptions = FormatPowerShellArray(ImportOptions);
@@ -388,6 +406,7 @@ public static class CompletionsCommand
             $"        'audit' = @({auditOptions})",
             $"        'fix' = @({fixOptions})",
             $"        'rollback' = @({rollbackOptions})",
+            $"        'journal' = @({journalOptions})",
             $"        'publish' = @({publishOptions})",
             $"        'import' = @({importOptions})",
             "    }",
@@ -535,13 +554,17 @@ public static class CompletionsCommand
             "            New-RevitCliCompletionResults -Values $commandOptions['fix'] -ToolTip 'Option'",
             "            return",
             "        }",
-            "        'rollback' {",
+        "        'rollback' {",
             "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
             "                New-RevitCliFileCompletionResults -Path $wordToComplete",
             "                return",
             "            }",
             "",
             "            New-RevitCliCompletionResults -Values $commandOptions['rollback'] -ToolTip 'Option'",
+            "            return",
+            "        }",
+            "        'journal' {",
+            "            New-RevitCliCompletionResults -Values $commandOptions['journal'] -ToolTip 'Journal subcommand or option'",
             "            return",
             "        }",
             "        'import' {",

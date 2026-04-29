@@ -34,6 +34,7 @@ public class CliCommandCatalogTests
         Assert.Contains("doctor", names);
         Assert.Contains("fix", names);
         Assert.Contains("rollback", names);
+        Assert.Contains("journal", names);
     }
 
     [Fact]
@@ -68,6 +69,7 @@ public class CliCommandCatalogTests
         Assert.Contains("completions", names);
         Assert.Contains("fix", names);
         Assert.Contains("rollback", names);
+        Assert.Contains("journal", names);
     }
 
     [Fact]
@@ -78,6 +80,7 @@ public class CliCommandCatalogTests
         Assert.Contains("rollback", names);
         Assert.Contains("snapshot", names);
         Assert.Contains("diff", names);
+        Assert.Contains("journal", names);
     }
 
     [Fact]

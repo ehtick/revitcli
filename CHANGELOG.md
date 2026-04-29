@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Added the self-hosted GitHub Actions smoke matrix template at
   `docs/ci/smoke-matrix-template.yml` and version compatibility notes at
   `docs/revit-version-compatibility.md`.
+- `revitcli journal sign` and `revitcli journal verify` add a SHA256
+  hash-chain + local-HMAC integrity layer for `.revitcli/journal.jsonl`.
+  The signature is written to `.revitcli/journal.jsonl.sig`; `--until`
+  can seal entries through a specific timestamp while allowing later
+  appends.
 
 ### Added — v1.6 history (complete)
 
