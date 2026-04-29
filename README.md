@@ -2,8 +2,8 @@
 
 Command-line interface for Autodesk Revit. Query elements, batch export, modify parameters, snapshot/diff models, and write parameters back from CSV — all from your terminal.
 
-> **Status: v1.5 — Auto-fix Playbooks complete**
-> Local BIMOps runner with versioning. Standards checking, deliverable publishing, model snapshots, incremental publish, CSV writeback, and recipe-driven `fix`/`rollback`. Supports Revit 2024/2025/2026.
+> **Status: v2.1 — Configuration Confidence complete**
+> Terminal-first BIMOps runner for architects. Standards checking, deliverable publishing, model snapshots, incremental publish, CSV writeback, safe `fix`/`rollback`, multi-version smoke scaffolding, and signed journals. Supports Revit 2024/2025/2026.
 
 ```bash
 revitcli status                                              # connection check
@@ -57,7 +57,6 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli interactive` / `-i` | Interactive REPL mode |
 | `revitcli history init` / `capture` / `list` / `prune` / `diff` / `trend` | Local snapshot timeline + ASCII trend (v1.6) |
 | `revitcli score --history <duration>` | Per-day score time series (v1.6) |
-| `revitcli mcp serve` | MCP stdio server for Claude Desktop / Cursor |
 | `revitcli check --output sarif\|pr-comment` | SARIF 2.1.0 / PR-comment report (v1.7) |
 | `revitcli ci doctor` | Detect CI provider + emit workflow snippet (v1.7) |
 | `revitcli profile validate` / `show --resolve` / `diff` / `install` | Profile lint, resolve, diff, git install (v1.9) |
@@ -282,9 +281,9 @@ docs/superpowers/          # Design specs and implementation plans
 - [x] v1.5-v2.0 BIMOps foundation: fix/rollback, history, CI, family, profile governance, dashboard
 - [x] v2.1 configuration confidence: profile simulation, multi-version smoke scaffolding, journal signing
 - [ ] v2.2 release integrity: installer hardening, real multi-version smoke, release checklist
-- [ ] v2.3+ agent-native roadmap: `--output agent`, workflows, sessions, visual context, v4 protocol layer
+- [ ] v2.3+ architect terminal roadmap: inspect/discover, safe batch plans, delivery workflows, standards packs, v4 terminal workbench
 
-See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 future blueprint.
+See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.
 
 ## Publishing
 
