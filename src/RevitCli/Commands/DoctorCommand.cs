@@ -257,14 +257,14 @@ public static class DoctorCommand
             case VersionCompatibility.Compatible:
                 return true;
             case VersionCompatibility.MetadataMismatch:
-                await WriteWarn(
+                await WriteInfo(
                     output,
-                    $"{componentName} version metadata does not match CLI: actual={actualVersionText}, CLI={expectedVersion}");
+                    $"{componentName} build metadata differs from CLI but protocol version is compatible: actual={actualVersionText}, CLI={expectedVersion}. CLI-only updates do not require restarting Revit.");
                 return true;
             case VersionCompatibility.PatchMismatch:
                 await WriteWarn(
                     output,
-                    $"{componentName} version differs by patch only: actual={actualVersionText}, CLI={expectedVersion}");
+                    $"{componentName} patch version differs from CLI: actual={actualVersionText}, CLI={expectedVersion}. Restart Revit only if this update changed add-in or Revit API behavior.");
                 return true;
             case VersionCompatibility.MajorMinorMismatch:
                 await WriteFail(
@@ -284,6 +284,11 @@ public static class DoctorCommand
     private static Task WriteWarn(TextWriter output, string message)
     {
         return output.WriteLineAsync($"WARN: {message}");
+    }
+
+    private static Task WriteInfo(TextWriter output, string message)
+    {
+        return output.WriteLineAsync($"INFO: {message}");
     }
 
     private static Task WriteFail(TextWriter output, string message)

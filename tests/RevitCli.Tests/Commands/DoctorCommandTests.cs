@@ -215,7 +215,33 @@ public class DoctorCommandTests
         var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment);
 
         Assert.Equal(0, exitCode);
-        Assert.Contains("WARN: Live Add-in version differs by patch only", writer.ToString());
+        Assert.Contains("WARN: Live Add-in patch version differs from CLI", writer.ToString());
+        Assert.Contains("Restart Revit only if this update changed add-in", writer.ToString());
+    }
+
+    [Fact]
+    public async Task Execute_LiveAddinMetadataMismatch_InformsButDoesNotWarn()
+    {
+        var environment = WithCliVersion(CreateDoctorEnvironment(), "1.3.0+newcli");
+        WriteAddinManifest(environment, CurrentCliAssemblyPath());
+        var status = new StatusInfo
+        {
+            RevitVersion = "2026",
+            RevitYear = 2026,
+            AddinVersion = "1.3.0+oldaddin",
+            DocumentName = "Test.rvt"
+        };
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(status)));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment);
+
+        var output = writer.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("INFO: Live Add-in build metadata differs from CLI", output);
+        Assert.Contains("CLI-only updates do not require restarting Revit", output);
+        Assert.DoesNotContain("WARN: Live Add-in version metadata", output);
     }
 
     [Fact]
