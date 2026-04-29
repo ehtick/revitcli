@@ -271,6 +271,38 @@ public class ProtocolTests : IDisposable
         Assert.NotNull(result.Data);
     }
 
+    [Fact]
+    public async Task PurgeFamilies_PostEndpoint_ReturnsStructuredResult()
+    {
+        var result = await _client.PurgeFamiliesAsync(new FamilyPurgeRequest
+        {
+            Ids = new List<long> { 5003 }
+        });
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.Single(result.Data!.Skipped);
+        Assert.Equal(5003, result.Data.Skipped[0].Id);
+    }
+
+    [Fact]
+    public async Task ExportFamilies_PostEndpoint_ReturnsStructuredResult()
+    {
+        var outputDir = Path.Combine(_tempDir, "families");
+        var result = await _client.ExportFamiliesAsync(new FamilyExportRequest
+        {
+            Ids = new List<long> { 5001 },
+            OutputDir = outputDir,
+            Overwrite = true
+        });
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.Equal(Path.GetFullPath(outputDir), result.Data!.OutputDir);
+        Assert.Single(result.Data.Exported);
+        Assert.Equal(5001, result.Data.Exported[0].Id);
+    }
+
     private ServerInfo ReadServerInfo()
     {
         var info = JsonSerializer.Deserialize<ServerInfo>(File.ReadAllText(_serverInfoPath));

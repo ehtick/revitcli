@@ -2360,51 +2360,12 @@ public sealed class RealRevitOperations : IRevitOperations
         return _bridge.InvokeAsync(app =>
         {
             var doc = RequireActiveDocument(app);
-
-            // All non-type FamilyInstances in the document.
-            var allInstances = new FilteredElementCollector(doc)
-                .OfClass(typeof(FamilyInstance))
-                .WhereElementIsNotElementType()
-                .Cast<FamilyInstance>()
-                .ToList();
+            var placedFamilyIds = CollectPlacedFamilyIds(doc);
 
             var families = new FilteredElementCollector(doc)
                 .OfClass(typeof(Family))
                 .Cast<Family>()
-                .Select(family =>
-                {
-                    var categoryName = family.FamilyCategory?.Name ?? "";
-                    var familyId = family.Id;
-
-                    // Determine placement: check each FamilyInstance whose symbol
-                    // belongs to this family. Spec: use ElementId.Compare(), not ==.
-                    // GetFamilySymbolIds() is the canonical entry point on Family;
-                    // we use it as the join key by matching FamilyInstance.Symbol.Id.
-                    var symbolIds = family.GetFamilySymbolIds();
-                    var hasPlaced = false;
-                    foreach (var fi in allInstances)
-                    {
-                        var symId = fi.Symbol?.Id;
-                        if (symId == null) continue;
-                        var match = false;
-                        foreach (var sId in symbolIds)
-                        {
-                            if (symId.Compare(sId) == 0) { match = true; break; }
-                        }
-                        if (match) { hasPlaced = true; break; }
-                    }
-
-                    return new FamilyInfo
-                    {
-                        Id = ToCliElementId(familyId),
-                        Name = family.Name ?? "",
-                        Category = categoryName,
-                        IsInPlace = family.IsInPlace,
-                        IsLoadable = !family.IsInPlace,
-                        FilePath = null,
-                        IsPlaced = hasPlaced
-                    };
-                })
+                .Select(family => MapFamilyInfo(family, placedFamilyIds))
                 .Where(fi =>
                 {
                     if (!string.IsNullOrWhiteSpace(req.Category)
@@ -2420,5 +2381,285 @@ public sealed class RealRevitOperations : IRevitOperations
 
             return families;
         });
+    }
+
+    public Task<FamilyPurgeResult> PurgeFamiliesAsync(FamilyPurgeRequest request)
+    {
+        if (request == null)
+            throw new ArgumentNullException(nameof(request));
+
+        var ids = NormalizeFamilyIds(request.Ids);
+        if (ids.Count == 0)
+            throw new ArgumentException("At least one family id is required.", nameof(request));
+
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+            var placedFamilyIds = CollectPlacedFamilyIds(doc);
+            var result = new FamilyPurgeResult { DryRun = request.DryRun };
+            Transaction? tx = null;
+
+            try
+            {
+                if (!request.DryRun)
+                {
+                    tx = new Transaction(doc, "RevitCli family purge");
+                    tx.Start();
+                }
+
+                foreach (var id in ids)
+                {
+                    var family = doc.GetElement(new ElementId(id)) as Family;
+                    if (family == null)
+                    {
+                        result.Skipped.Add(new FamilyPurgeSkipped
+                        {
+                            Id = id,
+                            Name = "",
+                            Reason = "Family not found"
+                        });
+                        continue;
+                    }
+
+                    var info = MapFamilyInfo(family, placedFamilyIds);
+                    if (family.IsInPlace)
+                    {
+                        result.Skipped.Add(new FamilyPurgeSkipped
+                        {
+                            Id = id,
+                            Name = info.Name,
+                            Reason = "In-place families cannot be purged as loadable families"
+                        });
+                        continue;
+                    }
+
+                    if (placedFamilyIds.Contains(id))
+                    {
+                        result.Skipped.Add(new FamilyPurgeSkipped
+                        {
+                            Id = id,
+                            Name = info.Name,
+                            Reason = "Family has placed instances"
+                        });
+                        continue;
+                    }
+
+                    if (request.DryRun)
+                    {
+                        result.Purged.Add(new FamilyPurgedItem
+                        {
+                            Id = info.Id,
+                            Name = info.Name,
+                            Category = info.Category
+                        });
+                        continue;
+                    }
+
+                    try
+                    {
+                        doc.Delete(family.Id);
+                        result.Purged.Add(new FamilyPurgedItem
+                        {
+                            Id = info.Id,
+                            Name = info.Name,
+                            Category = info.Category
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Skipped.Add(new FamilyPurgeSkipped
+                        {
+                            Id = id,
+                            Name = info.Name,
+                            Reason = $"Revit refused delete: {ex.Message}"
+                        });
+                    }
+                }
+
+                tx?.Commit();
+                return result;
+            }
+            catch
+            {
+                if (tx?.GetStatus() == TransactionStatus.Started)
+                    tx.RollBack();
+                throw;
+            }
+        });
+    }
+
+    public Task<FamilyExportResult> ExportFamiliesAsync(FamilyExportRequest request)
+    {
+        if (request == null)
+            throw new ArgumentNullException(nameof(request));
+
+        var ids = NormalizeFamilyIds(request.Ids);
+        if (ids.Count == 0)
+            throw new ArgumentException("At least one family id is required.", nameof(request));
+        if (string.IsNullOrWhiteSpace(request.OutputDir))
+            throw new ArgumentException("OutputDir is required.", nameof(request));
+
+        string outputDir;
+        try
+        {
+            outputDir = Path.GetFullPath(request.OutputDir);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ArgumentException($"OutputDir is invalid: {ex.Message}", nameof(request));
+        }
+
+        if (!request.DryRun)
+            Directory.CreateDirectory(outputDir);
+
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+            var placedFamilyIds = CollectPlacedFamilyIds(doc);
+            var result = new FamilyExportResult
+            {
+                DryRun = request.DryRun,
+                OutputDir = outputDir
+            };
+
+            foreach (var id in ids)
+            {
+                var family = doc.GetElement(new ElementId(id)) as Family;
+                if (family == null)
+                {
+                    result.Failed.Add(new FamilyExportFailure
+                    {
+                        Id = id,
+                        Name = "",
+                        Reason = "Family not found"
+                    });
+                    continue;
+                }
+
+                var info = MapFamilyInfo(family, placedFamilyIds);
+                if (family.IsInPlace)
+                {
+                    result.Failed.Add(new FamilyExportFailure
+                    {
+                        Id = id,
+                        Name = info.Name,
+                        Reason = "In-place families cannot be exported as standalone .rfa files"
+                    });
+                    continue;
+                }
+
+                var filePath = Path.Combine(outputDir, MakeFamilyFileName(info.Name, id));
+                if (File.Exists(filePath) && !request.Overwrite)
+                {
+                    result.Failed.Add(new FamilyExportFailure
+                    {
+                        Id = id,
+                        Name = info.Name,
+                        Reason = $"File already exists: {filePath}"
+                    });
+                    continue;
+                }
+
+                if (request.DryRun)
+                {
+                    result.Exported.Add(new FamilyExportedItem
+                    {
+                        Id = info.Id,
+                        Name = info.Name,
+                        Category = info.Category,
+                        FilePath = filePath,
+                        SizeBytes = 0
+                    });
+                    continue;
+                }
+
+                Document? familyDoc = null;
+                try
+                {
+                    familyDoc = doc.EditFamily(family);
+                    var options = new SaveAsOptions
+                    {
+                        OverwriteExistingFile = request.Overwrite
+                    };
+                    familyDoc.SaveAs(filePath, options);
+
+                    var size = File.Exists(filePath) ? new FileInfo(filePath).Length : 0;
+                    result.Exported.Add(new FamilyExportedItem
+                    {
+                        Id = info.Id,
+                        Name = info.Name,
+                        Category = info.Category,
+                        FilePath = filePath,
+                        SizeBytes = size
+                    });
+                }
+                catch (Exception ex)
+                {
+                    result.Failed.Add(new FamilyExportFailure
+                    {
+                        Id = id,
+                        Name = info.Name,
+                        Reason = $"Revit export failed: {ex.Message}"
+                    });
+                }
+                finally
+                {
+                    try { familyDoc?.Close(false); }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[RevitCli] Family export close failed for {info.Name}: {ex.Message}");
+                    }
+                }
+            }
+
+            return result;
+        });
+    }
+
+    private static List<long> NormalizeFamilyIds(IEnumerable<long>? ids)
+    {
+        if (ids == null) return new List<long>();
+        return ids.Where(id => id > 0).Distinct().ToList();
+    }
+
+    private static HashSet<long> CollectPlacedFamilyIds(Document doc)
+    {
+        var result = new HashSet<long>();
+        foreach (var instance in new FilteredElementCollector(doc)
+            .OfClass(typeof(FamilyInstance))
+            .WhereElementIsNotElementType()
+            .Cast<FamilyInstance>())
+        {
+            var family = instance.Symbol?.Family;
+            if (family != null)
+                result.Add(ToCliElementId(family.Id));
+        }
+        return result;
+    }
+
+    private static FamilyInfo MapFamilyInfo(Family family, HashSet<long> placedFamilyIds)
+    {
+        var id = ToCliElementId(family.Id);
+        return new FamilyInfo
+        {
+            Id = id,
+            Name = family.Name ?? "",
+            Category = family.FamilyCategory?.Name ?? "",
+            IsInPlace = family.IsInPlace,
+            IsLoadable = !family.IsInPlace,
+            FilePath = null,
+            IsPlaced = placedFamilyIds.Contains(id)
+        };
+    }
+
+    private static string MakeFamilyFileName(string familyName, long id)
+    {
+        var baseName = string.IsNullOrWhiteSpace(familyName) ? $"family-{id}" : familyName.Trim();
+        foreach (var c in Path.GetInvalidFileNameChars())
+            baseName = baseName.Replace(c, '_');
+        if (string.IsNullOrWhiteSpace(baseName))
+            baseName = $"family-{id}";
+        return $"{baseName}.rfa";
     }
 }

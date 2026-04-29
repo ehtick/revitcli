@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using RevitCli.Addin.Services;
 using RevitCli.Shared;
@@ -207,5 +208,37 @@ public class PlaceholderOperationsTests
 
         Assert.Single(result);
         Assert.Equal("Doors", result[0].Category);
+    }
+
+    [Fact]
+    public async Task PurgeFamiliesAsync_SkipsFamiliesThatAreNotSafeToDelete()
+    {
+        var result = await _operations.PurgeFamiliesAsync(new FamilyPurgeRequest
+        {
+            Ids = new List<long> { 5001, 5003, 9999 }
+        });
+
+        Assert.Empty(result.Purged);
+        Assert.Contains(result.Skipped, s => s.Id == 5001 && s.Reason.Contains("placed"));
+        Assert.Contains(result.Skipped, s => s.Id == 5003 && s.Reason.Contains("In-place"));
+        Assert.Contains(result.Skipped, s => s.Id == 9999 && s.Reason.Contains("not found"));
+    }
+
+    [Fact]
+    public async Task ExportFamiliesAsync_ExportsLoadableAndFailsInPlaceFamilies()
+    {
+        var outputDir = Path.Combine(Path.GetTempPath(), "revitcli-placeholder-family-export");
+        var result = await _operations.ExportFamiliesAsync(new FamilyExportRequest
+        {
+            Ids = new List<long> { 5001, 5003 },
+            OutputDir = outputDir,
+            Overwrite = true
+        });
+
+        Assert.Equal(Path.GetFullPath(outputDir), result.OutputDir);
+        Assert.Single(result.Exported);
+        Assert.Equal(5001, result.Exported[0].Id);
+        Assert.Single(result.Failed);
+        Assert.Equal(5003, result.Failed[0].Id);
     }
 }

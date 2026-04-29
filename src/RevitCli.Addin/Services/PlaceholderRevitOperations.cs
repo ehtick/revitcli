@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using RevitCli.Shared;
@@ -199,6 +200,113 @@ public class PlaceholderRevitOperations : IRevitOperations
         }
 
         return Task.FromResult(filtered.ToArray());
+    }
+
+    public Task<FamilyPurgeResult> PurgeFamiliesAsync(FamilyPurgeRequest request)
+    {
+        var ids = request?.Ids ?? new List<long>();
+        var families = ListFamiliesAsync(new FamilyListRequest()).GetAwaiter().GetResult()
+            .ToDictionary(f => f.Id);
+        var result = new FamilyPurgeResult { DryRun = request?.DryRun ?? false };
+
+        foreach (var id in ids.Distinct())
+        {
+            if (!families.TryGetValue(id, out var family))
+            {
+                result.Skipped.Add(new FamilyPurgeSkipped
+                {
+                    Id = id,
+                    Name = "",
+                    Reason = "Family not found"
+                });
+                continue;
+            }
+
+            if (family.IsInPlace)
+            {
+                result.Skipped.Add(new FamilyPurgeSkipped
+                {
+                    Id = id,
+                    Name = family.Name,
+                    Reason = "In-place families cannot be purged as loadable families"
+                });
+                continue;
+            }
+
+            if (family.IsPlaced)
+            {
+                result.Skipped.Add(new FamilyPurgeSkipped
+                {
+                    Id = id,
+                    Name = family.Name,
+                    Reason = "Family has placed instances"
+                });
+                continue;
+            }
+
+            result.Purged.Add(new FamilyPurgedItem
+            {
+                Id = family.Id,
+                Name = family.Name,
+                Category = family.Category
+            });
+        }
+
+        return Task.FromResult(result);
+    }
+
+    public Task<FamilyExportResult> ExportFamiliesAsync(FamilyExportRequest request)
+    {
+        if (request == null)
+            throw new ArgumentNullException(nameof(request));
+
+        var families = ListFamiliesAsync(new FamilyListRequest()).GetAwaiter().GetResult()
+            .ToDictionary(f => f.Id);
+        var outputDir = string.IsNullOrWhiteSpace(request.OutputDir)
+            ? Path.GetFullPath(".")
+            : Path.GetFullPath(request.OutputDir);
+        var result = new FamilyExportResult
+        {
+            DryRun = request.DryRun,
+            OutputDir = outputDir
+        };
+
+        foreach (var id in request.Ids.Distinct())
+        {
+            if (!families.TryGetValue(id, out var family))
+            {
+                result.Failed.Add(new FamilyExportFailure
+                {
+                    Id = id,
+                    Name = "",
+                    Reason = "Family not found"
+                });
+                continue;
+            }
+
+            if (family.IsInPlace || !family.IsLoadable)
+            {
+                result.Failed.Add(new FamilyExportFailure
+                {
+                    Id = id,
+                    Name = family.Name,
+                    Reason = "Family is not loadable"
+                });
+                continue;
+            }
+
+            var filePath = Path.Combine(outputDir, $"{family.Name}.rfa");
+            result.Exported.Add(new FamilyExportedItem
+            {
+                Id = family.Id,
+                Name = family.Name,
+                Category = family.Category,
+                FilePath = filePath,
+                SizeBytes = request.DryRun ? 0 : 1024
+            });
+        }
+
+        return Task.FromResult(result);
     }
 
     public Task<ModelSnapshot> CaptureSnapshotAsync(SnapshotRequest request)

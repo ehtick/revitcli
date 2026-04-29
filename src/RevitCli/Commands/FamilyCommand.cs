@@ -334,9 +334,9 @@ public static class FamilyCommand
             return 0;
         }
 
-        if (!yes && ConsoleHelper.IsInteractive)
+        if (!yes)
         {
-            await output.WriteLineAsync($"Refusing to purge {candidates.Count} family(ies) without --yes in an interactive shell.");
+            await output.WriteLineAsync($"Refusing to purge {candidates.Count} family(ies) without --yes.");
             return 1;
         }
 

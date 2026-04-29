@@ -180,6 +180,21 @@ public class FamilyV18CommandTests
     }
 
     [Fact]
+    public async Task Purge_ApplyWithoutYes_IsRejectedBeforePurgeEndpoint()
+    {
+        var handler = new FamilyHttpHandler();
+        handler.Enqueue("/api/families", HttpStatusCode.OK,
+            ApiResponse<FamilyInfo[]>.Ok(SampleFamilies()));
+        var (client, writer) = MakeClientAndWriter(handler);
+
+        var exit = await FamilyCommand.ExecutePurgeAsync(client, null, null, dryRun: false, apply: true, yes: false, writer);
+
+        Assert.Equal(1, exit);
+        Assert.Contains("without --yes", writer.ToString());
+        Assert.DoesNotContain(handler.Requests, r => r.Path.EndsWith("/api/families/purge"));
+    }
+
+    [Fact]
     public async Task Purge_KeepPattern_SafelistsMatchingNames()
     {
         var handler = new FamilyHttpHandler();
