@@ -169,6 +169,13 @@ public static class FamilyCommand
     public static async Task<int> ExecuteValidateAsync(
         RevitClient client, string? category, string? rulesCsv, string outputFormat, string? failOn, TextWriter output)
     {
+        var normalizedOutput = (outputFormat ?? "table").Trim().ToLowerInvariant();
+        if (normalizedOutput is not ("table" or "json" or "csv" or "sarif"))
+        {
+            await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, csv, sarif.");
+            return 1;
+        }
+
         var listResult = await client.ListFamiliesAsync(new FamilyListRequest
         {
             // Validate against ALL families (placed and unplaced) — corrupted
@@ -195,7 +202,7 @@ public static class FamilyCommand
         var families = listResult.Data ?? Array.Empty<FamilyInfo>();
         var issues = FamilyValidator.Validate(families, enabled);
 
-        switch ((outputFormat ?? "table").ToLowerInvariant())
+        switch (normalizedOutput)
         {
             case "json":
                 await output.WriteLineAsync(JsonSerializer.Serialize(issues, PrettyJson));

@@ -120,6 +120,19 @@ public class FamilyV18CommandTests
     }
 
     [Fact]
+    public async Task Validate_UnknownOutputFormat_ExitsOneBeforeHttp()
+    {
+        var handler = new FamilyHttpHandler();
+        var (client, writer) = MakeClientAndWriter(handler);
+
+        var exit = await FamilyCommand.ExecuteValidateAsync(client, null, null, "sari", null, writer);
+
+        Assert.Equal(1, exit);
+        Assert.Contains("unknown output format", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task Validate_JsonOutput_IsParseable()
     {
         var handler = new FamilyHttpHandler();
