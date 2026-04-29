@@ -55,6 +55,7 @@ internal static class CliCommandCatalog
         ("coverage", "Show parameter fill rates by category"),
         ("inspect categories", "List common categories and next discovery commands"),
         ("inspect params <category>", "List parameters seen in a category"),
+        ("inspect sheets", "List sheets with export dry-run commands"),
         ("inspect schedules", "List schedules with ready-to-run export commands"),
         ("schedule list", "List existing schedules in the model"),
         ("schedule export", "Export schedule data (--category, --name, --fields, --output)"),

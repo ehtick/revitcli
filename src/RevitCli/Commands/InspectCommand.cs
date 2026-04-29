@@ -42,6 +42,7 @@ public static class InspectCommand
         command.AddCommand(CreateCategoriesCommand(client));
         command.AddCommand(CreateParamsCommand(client));
         command.AddCommand(CreateSchedulesCommand(client));
+        command.AddCommand(CreateSheetsCommand(client));
         return command;
     }
 
@@ -80,6 +81,17 @@ public static class InspectCommand
         command.SetHandler(async output =>
         {
             Environment.ExitCode = await ExecuteSchedulesAsync(client, output, Console.Out);
+        }, outputOpt);
+        return command;
+    }
+
+    private static Command CreateSheetsCommand(RevitClient client)
+    {
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json");
+        var command = new Command("sheets", "Inspect sheets and export dry-run commands") { outputOpt };
+        command.SetHandler(async output =>
+        {
+            Environment.ExitCode = await ExecuteSheetsAsync(client, output, Console.Out);
         }, outputOpt);
         return command;
     }
@@ -204,6 +216,63 @@ public static class InspectCommand
         return 0;
     }
 
+    public static async Task<int> ExecuteSheetsAsync(
+        RevitClient client,
+        string outputFormat,
+        TextWriter output)
+    {
+        var result = await client.CaptureSnapshotAsync(new SnapshotRequest
+        {
+            IncludeCategories = new List<string>(),
+            IncludeSheets = true,
+            IncludeSchedules = false,
+            SummaryOnly = false
+        });
+        if (!result.Success)
+        {
+            await output.WriteLineAsync($"Error: {result.Error}");
+            return 1;
+        }
+
+        var sheets = result.Data?.Sheets ?? new List<SnapshotSheet>();
+        var items = sheets
+            .OrderBy(sheet => sheet.Number, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(sheet => sheet.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(sheet => new SheetInspectItem(
+                sheet.ViewId,
+                sheet.Number,
+                sheet.Name,
+                sheet.PlacedViewIds.Count,
+                !string.IsNullOrWhiteSpace(sheet.Number),
+                sheet.PlacedViewIds.Count > 0,
+                BuildSheetExportCommand(sheet.Number, sheet.Name, dryRun: false),
+                BuildSheetExportCommand(sheet.Number, sheet.Name, dryRun: true)))
+            .ToArray();
+
+        if (outputFormat.Equals("json", StringComparison.OrdinalIgnoreCase))
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(items, PrettyJson));
+            return 0;
+        }
+
+        if (items.Length == 0)
+        {
+            await output.WriteLineAsync("No sheets found in the model.");
+            return 0;
+        }
+
+        await output.WriteLineAsync($"{"Number",-14} {"Name",-28} {"Views",-7} {"Ready",-7} {"Export",-58} Dry-run export");
+        await output.WriteLineAsync(new string('-', 188));
+        foreach (var item in items)
+        {
+            var ready = item.ExportReady ? "yes" : "no";
+            await output.WriteLineAsync(
+                $"{TrimForTable(item.Number, 14),-14} {TrimForTable(item.Name, 28),-28} {item.PlacedViewCount,-7} {ready,-7} {TrimForTable(item.ExportCommand, 58),-58} {item.DryRunCommand}");
+        }
+
+        return 0;
+    }
+
     public static async Task<int> ExecuteParamsAsync(
         RevitClient client,
         string category,
@@ -295,6 +364,15 @@ public static class InspectCommand
         return $"revitcli schedule export --name {QuoteArgument(scheduleName)} --output csv";
     }
 
+    private static string BuildSheetExportCommand(string sheetNumber, string sheetName, bool dryRun)
+    {
+        var selector = !string.IsNullOrWhiteSpace(sheetNumber)
+            ? sheetNumber
+            : sheetName;
+        var command = $"revitcli export --format pdf --sheets {QuoteArgument(selector)}";
+        return dryRun ? $"{command} --dry-run" : command;
+    }
+
     private static string BuildQueryCommand(string category)
     {
         return $"revitcli query {category} --output table";
@@ -357,6 +435,21 @@ public static class InspectCommand
         int RowCount,
         bool ExportReady,
         string ExportCommand);
+
+    private sealed record SheetInspectItem(
+        long ViewId,
+        string Number,
+        string Name,
+        int PlacedViewCount,
+        bool HasNumber,
+        bool HasPlacedViews,
+        string ExportCommand,
+        string DryRunCommand)
+    {
+        public bool ExportReady => HasNumber && HasPlacedViews;
+
+        public string DryRunExportCommand => DryRunCommand;
+    }
 
     private sealed class ParameterStats
     {

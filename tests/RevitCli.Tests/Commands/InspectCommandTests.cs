@@ -121,6 +121,107 @@ public class InspectCommandTests
     }
 
     [Fact]
+    public async Task Sheets_Table_PrintsDryRunExportCommands()
+    {
+        var snapshot = new ModelSnapshot
+        {
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A101",
+                    Name = "Floor Plan",
+                    PlacedViewIds = { 100, 101 }
+                },
+                new SnapshotSheet
+                {
+                    ViewId = 11,
+                    Number = "G001",
+                    Name = "Cover",
+                    PlacedViewIds = { 102 }
+                }
+            }
+        };
+        var response = ApiResponse<ModelSnapshot>.Ok(snapshot);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteSheetsAsync(client, "table", writer);
+
+        var output = writer.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Equal(1, handler.CallCount);
+        Assert.Contains("/api/snapshot", handler.LastRequestUri);
+        Assert.Contains("A101", output);
+        Assert.Contains("Floor Plan", output);
+        Assert.Contains("revitcli export --format pdf --sheets \"A101\"", output);
+        Assert.Contains("revitcli export --format pdf --sheets \"A101\" --dry-run", output);
+        Assert.True(
+            CountOccurrences(output, "revitcli export --format pdf --sheets \"A101\"") >= 2,
+            "Table output should include separate export and dry-run commands for each sheet.");
+        AssertSnapshotRequestCapturesOnlySheets(handler.LastRequestBody);
+    }
+
+    [Fact]
+    public async Task Sheets_Json_PrintsCodexFriendlyFields()
+    {
+        var snapshot = new ModelSnapshot
+        {
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A101",
+                    Name = "Floor Plan",
+                    PlacedViewIds = { 100, 101 }
+                }
+            }
+        };
+        var response = ApiResponse<ModelSnapshot>.Ok(snapshot);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteSheetsAsync(client, "json", writer);
+
+        var output = writer.ToString();
+        Assert.Equal(0, exitCode);
+        AssertSnapshotRequestCapturesOnlySheets(handler.LastRequestBody);
+        Assert.Contains("\"number\": \"A101\"", output);
+        Assert.Contains("\"placedViewCount\": 2", output);
+        Assert.Contains("\"exportReady\": true", output);
+        Assert.Contains("\"exportCommand\"", output);
+        Assert.Contains("\"dryRunCommand\"", output);
+        Assert.Contains("\"dryRunExportCommand\"", output);
+
+        using var document = JsonDocument.Parse(output);
+        var item = document.RootElement[0];
+        Assert.Equal("revitcli export --format pdf --sheets \"A101\"", item.GetProperty("exportCommand").GetString());
+        Assert.Equal(
+            "revitcli export --format pdf --sheets \"A101\" --dry-run",
+            item.GetProperty("dryRunCommand").GetString());
+        Assert.Equal(
+            item.GetProperty("dryRunCommand").GetString(),
+            item.GetProperty("dryRunExportCommand").GetString());
+    }
+
+    [Fact]
+    public async Task Sheets_ServerDown_PrintsError()
+    {
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteSheetsAsync(client, "table", writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("not running", writer.ToString().ToLowerInvariant());
+    }
+
+    [Fact]
     public async Task Schedules_Table_PrintsExportCommands()
     {
         var schedules = new[]
@@ -174,5 +275,34 @@ public class InspectCommandTests
 
         Assert.Equal(1, exitCode);
         Assert.Contains("not running", writer.ToString().ToLowerInvariant());
+    }
+
+    private static void AssertSnapshotRequestCapturesOnlySheets(string? requestBody)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(requestBody));
+
+        using var document = JsonDocument.Parse(requestBody);
+        var root = document.RootElement;
+
+        Assert.True(root.GetProperty("includeSheets").GetBoolean());
+        Assert.False(root.GetProperty("includeSchedules").GetBoolean());
+
+        var includeCategories = root.GetProperty("includeCategories");
+        Assert.Equal(JsonValueKind.Array, includeCategories.ValueKind);
+        Assert.Equal(0, includeCategories.GetArrayLength());
+    }
+
+    private static int CountOccurrences(string value, string substring)
+    {
+        var count = 0;
+        var index = 0;
+
+        while ((index = value.IndexOf(substring, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += substring.Length;
+        }
+
+        return count;
     }
 }

@@ -55,6 +55,16 @@ revitcli schedule export --name "Door Schedule" --output csv |
 ```
 
 ```text
+帮我看这个模型有哪些图纸可以导出,先只列候选,不要导出。
+```
+
+Expected command path:
+
+```powershell
+revitcli inspect sheets
+```
+
+```text
 帮我查一下为什么 publish 失败,先看最近 journal 和模型健康检查。
 ```
 
@@ -81,8 +91,9 @@ revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "
 
 - More `inspect` commands so Codex CLI can discover categories,
   parameters, schedules, and command paths without guessing.
-- Future `inspect sheets` support so Codex CLI can discover printable and
-  exportable sheet sets.
+- `inspect sheets` as a CLI-only discovery surface so Codex CLI can
+  identify sheets and export candidates before it builds a publish/export
+  plan.
 - Stable JSON/table outputs with useful exit codes for `doctor`,
   `status`, `check`, `publish --dry-run`, `schedule list`, and `journal`.
 - Plan files for risky writes: generate, show, apply, receipt, rollback.
