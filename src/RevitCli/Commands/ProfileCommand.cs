@@ -727,14 +727,19 @@ public static class ProfileCommand
             await stdout.WriteLineAsync(RenderSimulateTable(report, resolvedPath));
         }
 
-        return DecideSimulateExitCode(report.WorstSeverity, failOn);
+        return DecideSimulateExitCode(report, failOn);
     }
 
-    private static int DecideSimulateExitCode(ProfileSimulator.Severity worst, string failOn)
+    private static int DecideSimulateExitCode(ProfileSimulator.PipelineReport report, string failOn)
     {
         // Exit-code policy mirrors `audit` / `family validate`: caller
         // picks the threshold; default 'error' so info/warning don't
         // break a CI gate. Empty / unknown failOn reverts to 'error'.
+        // A clean report has no findings and must always pass, even when
+        // the caller selects the strictest `--fail-on=info` gate.
+        if (report.Findings.Count == 0)
+            return 0;
+
         var threshold = (failOn ?? "error").Trim().ToLowerInvariant();
         var thresholdSeverity = threshold switch
         {
@@ -742,7 +747,7 @@ public static class ProfileCommand
             "warning" => ProfileSimulator.Severity.Warning,
             _ => ProfileSimulator.Severity.Error,
         };
-        return worst >= thresholdSeverity ? 1 : 0;
+        return report.WorstSeverity >= thresholdSeverity ? 1 : 0;
     }
 
     private static string RenderSimulateTable(ProfileSimulator.PipelineReport r, string profilePath)

@@ -71,6 +71,30 @@ exports:
     }
 
     [Fact]
+    public async Task Simulate_CleanPipeline_FailOnInfo_StillExitsZero()
+    {
+        var path = WriteProfile("""
+version: 1
+publish:
+  client-A:
+    presets: [pdf]
+exports:
+  pdf:
+    format: pdf
+    sheets: [A101]
+""");
+
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+        var exit = await ProfileCommand.ExecuteSimulateAsync(
+            "client-A", path, "table", "info", stdout, stderr);
+
+        Assert.Equal(0, exit);
+        Assert.Empty(stderr.ToString());
+        Assert.Contains("Findings: (clean)", stdout.ToString());
+    }
+
+    [Fact]
     public async Task Simulate_UnknownPipeline_ExitsOneWithDiagnostic()
     {
         var path = WriteProfile("""
