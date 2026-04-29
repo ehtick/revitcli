@@ -279,11 +279,12 @@ docs/superpowers/          # Design specs and implementation plans
 
 ## Roadmap
 
-- [ ] README + docs site refresh per release
-- [ ] Web dashboard for snapshot/diff history
-- [ ] Auto-fix playbooks (rule-driven batch param fixes)
-- [ ] Family management (`family ls / purge / validate`)
-- [ ] BIM 360 / ACC integration for cloud workshare
+- [x] v1.5-v2.0 BIMOps foundation: fix/rollback, history, CI, family, profile governance, dashboard
+- [x] v2.1 configuration confidence: profile simulation, multi-version smoke scaffolding, journal signing
+- [ ] v2.2 release integrity: installer hardening, real multi-version smoke, release checklist
+- [ ] v2.3+ agent-native roadmap: `--output agent`, workflows, sessions, visual context, v4 protocol layer
+
+See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 future blueprint.
 
 ## Publishing
 

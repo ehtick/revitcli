@@ -4,6 +4,7 @@
 > 起点:v1.4 候选(install/doctor/smoke 版本一致性,刚 merge 进 main)
 > 受众:执行此路线图的 AI 工程代理(codex 或同类)
 > 工作流约定:遵循项目既有的 superpowers 流程(brainstorm → spec → plan → execute)
+> 后续蓝图:完成 v2.1 后进入 [`roadmap-2026q4-v4.md`](./roadmap-2026q4-v4.md)
 
 ---
 
