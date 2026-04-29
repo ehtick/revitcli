@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { TooltipItem } from 'chart.js';
   import { onMount } from 'svelte';
   import { Bar } from 'svelte-chartjs';
   import { registerCharts } from './registerCharts';
@@ -40,8 +41,8 @@
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: { parsed: { x: number } }) =>
-            `${ctx.parsed.x.toLocaleString()} elements`,
+          label: (ctx: TooltipItem<'bar'>) =>
+            `${(ctx.parsed.x ?? 0).toLocaleString()} elements`,
         },
       },
     },

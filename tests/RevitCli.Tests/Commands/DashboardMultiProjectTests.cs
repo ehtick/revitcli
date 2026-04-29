@@ -197,12 +197,10 @@ public class DashboardMultiProjectTests : IDisposable
     }
 
     [Fact]
-    public async Task Inject_HistoryDirIsRecordedAsAbsolutePath()
+    public async Task Inject_AbsoluteHistoryDirIsNotWrittenToDeployArtifact()
     {
-        // The /projects card displays the history path under each name
-        // for operator orientation. Storing the absolute form means a
-        // dashboard served from a different cwd still shows a
-        // resolvable, copy-pasteable path.
+        // projects.json is a static deploy artifact. Do not leak the
+        // builder's local filesystem path into GitHub Pages output.
         var dir = Path.Combine(_tempRoot, "abs-test");
         Directory.CreateDirectory(dir);
 
@@ -210,11 +208,19 @@ public class DashboardMultiProjectTests : IDisposable
         await DashboardCommand.InjectProjectsAsync(new[] { ("X", dir) }, target);
 
         using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(target));
+        Assert.False(doc.RootElement.GetProperty("projects")[0].TryGetProperty("historyDir", out _));
+    }
+
+    [Fact]
+    public async Task Inject_RelativeHistoryDirIsKeptAsDisplayLabel()
+    {
+        var target = Path.Combine(_tempRoot, "projects.json");
+        await DashboardCommand.InjectProjectsAsync(new[] { ("X", @".revitcli\history") }, target);
+
+        using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(target));
         var historyDirOut = doc.RootElement.GetProperty("projects")[0]
             .GetProperty("historyDir").GetString();
-        Assert.NotNull(historyDirOut);
-        Assert.True(Path.IsPathRooted(historyDirOut!));
-        Assert.Equal(Path.GetFullPath(dir), historyDirOut);
+        Assert.Equal(".revitcli/history", historyDirOut);
     }
 
     [Fact]

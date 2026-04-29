@@ -14,14 +14,15 @@
  * routes already consume, so chart components can be reused as-is.
  */
 
-import type { HistoryDocument } from "./loadHistory";
+import { base } from "$app/paths";
+import { parseHistoryDocument, type HistoryDocument } from "./loadHistory";
 import type { ModelSnapshot } from "./score";
 
 export interface ProjectEntry {
   name: string;
   /**
-   * Server-side resolved absolute path to the source `.revitcli/history/`
-   * directory. Display-only — the dashboard never reads from it directly.
+   * Optional display label for the source `.revitcli/history/` directory.
+   * It must not contain machine-local absolute paths in static deploys.
    */
   historyDir?: string;
   history: HistoryDocument;
@@ -103,22 +104,56 @@ function resolveProjectsUrl(): string {
     const param = new URLSearchParams(window.location.search).get("projects");
     if (param) return param;
   }
-  return "/data/projects.json";
+  return withBasePath("/data/projects.json");
 }
 
 function parseProjects(raw: unknown): MultiProjectDocument {
   if (!raw || typeof raw !== "object") return STUB_PROJECTS;
   // Allow either the documented shape or a bare array of projects
   // (some hand-curated mirrors of projects.json drop the wrapper).
-  if (Array.isArray(raw)) {
-    return { version: 1, projects: raw as ProjectEntry[] };
-  }
+  const rawProjects = Array.isArray(raw) ? raw : null;
+  if (rawProjects) return projectDocumentFrom(rawProjects, 1);
+
   const obj = raw as { version?: number; projects?: unknown };
   if (!Array.isArray(obj.projects)) return STUB_PROJECTS;
+  return projectDocumentFrom(
+    obj.projects,
+    typeof obj.version === "number" ? obj.version : 1,
+  );
+}
+
+function projectDocumentFrom(rawProjects: unknown[], version: number): MultiProjectDocument {
+  const projects = rawProjects
+    .map(parseProjectEntry)
+    .filter((project): project is ProjectEntry => project !== null);
+  if (rawProjects.length > 0 && projects.length === 0) return STUB_PROJECTS;
   return {
-    version: typeof obj.version === "number" ? obj.version : 1,
-    projects: obj.projects as ProjectEntry[],
+    version,
+    projects,
   };
+}
+
+function parseProjectEntry(raw: unknown): ProjectEntry | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.name !== "string" || obj.name.trim().length === 0) return null;
+
+  const history = parseHistoryDocument(obj.history);
+  if (!history) return null;
+
+  const project: ProjectEntry = {
+    name: obj.name,
+    history,
+  };
+  if (typeof obj.historyDir === "string" && obj.historyDir.trim().length > 0) {
+    project.historyDir = obj.historyDir;
+  }
+  return project;
+}
+
+function withBasePath(path: string): string {
+  if (!base || !path.startsWith("/")) return path;
+  return `${base}${path}`;
 }
 
 /**

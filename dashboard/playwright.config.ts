@@ -32,9 +32,6 @@ export default defineConfig({
   reporter: process.env.CI ? [["github"], ["list"]] : "list",
 
   use: {
-    // The dev server binds to 5173 by default; --host 127.0.0.1 keeps
-    // it off the LAN.
-    baseURL: "http://127.0.0.1:5173",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -42,18 +39,36 @@ export default defineConfig({
 
   projects: [
     {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      name: "chromium-dev",
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL: "http://127.0.0.1:5173/",
+      },
+    },
+    {
+      name: "chromium-pages-base",
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL: "http://127.0.0.1:4174/revitcli/",
+      },
     },
   ],
 
   // Reuse an already-running server when present (useful for `npm run
   // dev` in one terminal + `npm run test:e2e` in another). On CI the
   // server is started fresh per run.
-  webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 5173",
-    url: "http://127.0.0.1:5173",
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-  },
+  webServer: [
+    {
+      command: "npm run dev -- --host 127.0.0.1 --port 5173",
+      url: "http://127.0.0.1:5173",
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
+    {
+      command: "npm run preview:pages",
+      url: "http://127.0.0.1:4174/revitcli/",
+      reuseExistingServer: !process.env.CI,
+      timeout: 90_000,
+    },
+  ],
 });

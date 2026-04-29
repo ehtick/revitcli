@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { TooltipItem } from 'chart.js';
   import { onMount } from 'svelte';
   import { Line } from 'svelte-chartjs';
   import { registerCharts } from './registerCharts';
@@ -49,7 +50,7 @@
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: { parsed: { y: number } }) => `score: ${ctx.parsed.y}`,
+          label: (ctx: TooltipItem<'line'>) => `score: ${ctx.parsed.y ?? 0}`,
         },
       },
     },

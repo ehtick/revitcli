@@ -12,7 +12,7 @@ import { test, expect } from "@playwright/test";
  */
 test.describe("History", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/history");
+    await page.goto("history");
   });
 
   test("renders heading + capture count from STUB_HISTORY", async ({

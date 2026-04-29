@@ -13,7 +13,7 @@ import { test, expect } from "@playwright/test";
  */
 test.describe("Overview", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto(".");
   });
 
   test("renders header and demo-data badge from STUB_HISTORY", async ({

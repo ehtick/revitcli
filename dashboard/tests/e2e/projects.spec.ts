@@ -11,7 +11,7 @@ import { test, expect } from "@playwright/test";
  */
 test.describe("Multi-project", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/projects");
+    await page.goto("projects");
   });
 
   test("renders heading + demo-data badge from STUB_PROJECTS", async ({
@@ -60,8 +60,8 @@ test.describe("Multi-project", () => {
     const firstCard = page
       .locator('[data-test-id="project-cards"] article')
       .first();
-    await expect(firstCard.getByText("Score")).toBeVisible();
-    await expect(firstCard.getByText("Elements")).toBeVisible();
-    await expect(firstCard.getByText("Captures")).toBeVisible();
+    await expect(firstCard.getByText(/^Score$/)).toBeVisible();
+    await expect(firstCard.getByText(/^Elements$/)).toBeVisible();
+    await expect(firstCard.getByText(/^Captures$/)).toBeVisible();
   });
 });

@@ -660,12 +660,16 @@ public static class DashboardCommand
                 ["entries"] = new JsonArray(),
             };
 
-            projects.Add(new JsonObject
+            var project = new JsonObject
             {
                 ["name"] = name,
-                ["historyDir"] = Path.GetFullPath(dir),
                 ["history"] = historyNode,
-            });
+            };
+            var historyDirLabel = ToDashboardHistoryDirLabel(dir);
+            if (!string.IsNullOrWhiteSpace(historyDirLabel))
+                project["historyDir"] = historyDirLabel;
+
+            projects.Add(project);
         }
 
         var doc = new JsonObject
@@ -684,6 +688,17 @@ public static class DashboardCommand
         await File.WriteAllTextAsync(targetFile, doc.ToJsonString(serializerOptions), Encoding.UTF8);
 
         return injectedReal;
+    }
+
+    private static string? ToDashboardHistoryDirLabel(string dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir))
+            return null;
+
+        if (Path.IsPathRooted(dir))
+            return null;
+
+        return dir.Replace('\\', '/');
     }
 
     /// <summary>

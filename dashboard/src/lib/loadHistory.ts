@@ -18,6 +18,7 @@
  * `HistoryStore`. We only consume a tiny subset of fields here.
  */
 
+import { base } from '$app/paths';
 import type { ModelSnapshot } from './score';
 
 export interface HistoryEntry {
@@ -103,7 +104,7 @@ function stubEntries(): HistoryEntry[] {
  *                 path (e.g. `/data/history.json`) so it works under both
  *                 `file://` previews and `http://` deployments.
  */
-export function resolveHistoryUrl(search: string, fallback = '/data/history.json'): string {
+export function resolveHistoryUrl(search: string, fallback = withBasePath('/data/history.json')): string {
   if (typeof search === 'string' && search.length > 1) {
     const params = new URLSearchParams(search);
     const override = params.get('history');
@@ -130,10 +131,15 @@ export async function loadHistory(
     const res = await fetchImpl(url, { headers: { Accept: 'application/json' } });
     if (!res.ok) return STUB_HISTORY;
     const raw = (await res.json()) as unknown;
-    return normalise(raw);
+    return parseHistoryDocument(raw) ?? STUB_HISTORY;
   } catch {
     return STUB_HISTORY;
   }
+}
+
+function withBasePath(path: string): string {
+  if (!base || !path.startsWith('/')) return path;
+  return `${base}${path}`;
 }
 
 /**
@@ -143,18 +149,49 @@ export async function loadHistory(
  *
  * Anything else collapses to the stub document so the page renders.
  */
-function normalise(raw: unknown): HistoryDocument {
-  if (Array.isArray(raw)) {
-    return { version: 1, entries: raw as HistoryEntry[] };
+export function parseHistoryDocument(raw: unknown): HistoryDocument | null {
+  const entriesRaw = Array.isArray(raw)
+    ? raw
+    : isObject(raw) && Array.isArray(raw.entries)
+      ? raw.entries
+      : null;
+  if (!entriesRaw) return null;
+
+  const entries = entriesRaw
+    .map(normaliseEntry)
+    .filter((entry): entry is HistoryEntry => entry !== null);
+  if (entriesRaw.length > 0 && entries.length === 0) return null;
+
+  const version = isObject(raw) && typeof raw.version === 'number'
+    ? raw.version
+    : 1;
+  return { version, entries };
+}
+
+function normaliseEntry(raw: unknown): HistoryEntry | null {
+  if (!isObject(raw)) return null;
+  if (!isNonEmptyString(raw.id) || !isNonEmptyString(raw.capturedAt) || !isNonEmptyString(raw.source)) {
+    return null;
   }
-  if (raw && typeof raw === 'object') {
-    const candidate = raw as Partial<HistoryDocument>;
-    if (Array.isArray(candidate.entries)) {
-      return {
-        version: candidate.version ?? 1,
-        entries: candidate.entries
-      };
-    }
+
+  const entry: HistoryEntry = {
+    id: raw.id,
+    capturedAt: raw.capturedAt,
+    source: raw.source
+  };
+  if (typeof raw.size === 'number' && Number.isFinite(raw.size)) entry.size = raw.size;
+  if (typeof raw.elementCount === 'number' && Number.isFinite(raw.elementCount)) {
+    entry.elementCount = raw.elementCount;
   }
-  return STUB_HISTORY;
+  if (typeof raw.score === 'number' && Number.isFinite(raw.score)) entry.score = raw.score;
+  if (isObject(raw.snapshot)) entry.snapshot = raw.snapshot as unknown as ModelSnapshot;
+  return entry;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
