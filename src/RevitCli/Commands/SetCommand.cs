@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Output;
+using RevitCli.Plans;
 using RevitCli.Shared;
 using Spectre.Console;
 
@@ -22,19 +23,41 @@ public static class SetCommand
         var paramOpt = new Option<string>("--param", "Parameter name to modify") { IsRequired = true };
         var valueOpt = new Option<string>("--value", "New parameter value") { IsRequired = true };
         var dryRunOpt = new Option<bool>("--dry-run", "Preview changes without applying");
+        var planOutputOpt = new Option<string?>("--plan-output", "Write a saved set plan JSON file without applying");
         var stdinOpt = new Option<bool>("--stdin", "Read element IDs from stdin (JSON array or query output)");
         var idsFromOpt = new Option<string?>("--ids-from", "Read element IDs from a JSON file");
 
         var command = new Command("set", "Modify element parameters in the Revit model")
         {
-            categoryArg, filterOpt, idOpt, paramOpt, valueOpt, dryRunOpt, stdinOpt, idsFromOpt
+            categoryArg, filterOpt, idOpt, paramOpt, valueOpt, dryRunOpt, planOutputOpt, stdinOpt, idsFromOpt
         };
 
-        command.SetHandler(async (category, filter, id, param, value, dryRun, fromStdin, idsFromFile) =>
+        command.SetHandler(async ctx =>
         {
-            if (!ConsoleHelper.IsInteractive)
+            var category = ctx.ParseResult.GetValueForArgument(categoryArg);
+            var filter = ctx.ParseResult.GetValueForOption(filterOpt);
+            var id = ctx.ParseResult.GetValueForOption(idOpt);
+            var param = ctx.ParseResult.GetValueForOption(paramOpt)!;
+            var value = ctx.ParseResult.GetValueForOption(valueOpt)!;
+            var dryRun = ctx.ParseResult.GetValueForOption(dryRunOpt);
+            var planOutput = ctx.ParseResult.GetValueForOption(planOutputOpt);
+            var fromStdin = ctx.ParseResult.GetValueForOption(stdinOpt);
+            var idsFromFile = ctx.ParseResult.GetValueForOption(idsFromOpt);
+
+            if (!ConsoleHelper.IsInteractive || !string.IsNullOrWhiteSpace(planOutput))
             {
-                Environment.ExitCode = await ExecuteAsync(client, category, filter, id, param, value, dryRun, fromStdin, idsFromFile, Console.Out);
+                Environment.ExitCode = await ExecuteAsync(
+                    client,
+                    category,
+                    filter,
+                    id,
+                    param,
+                    value,
+                    dryRun,
+                    fromStdin,
+                    idsFromFile,
+                    Console.Out,
+                    planOutput);
                 return;
             }
 
@@ -104,12 +127,23 @@ public static class SetCommand
 
             // Journal log (interactive path)
             LogSetOperation(param, value, category, filter, id, fromStdin, data.Affected);
-        }, categoryArg, filterOpt, idOpt, paramOpt, valueOpt, dryRunOpt, stdinOpt, idsFromOpt);
+        });
 
         return command;
     }
 
-    public static async Task<int> ExecuteAsync(RevitClient client, string? category, string? filter, long? id, string param, string value, bool dryRun, bool fromStdin, string? idsFromFile, TextWriter output)
+    public static async Task<int> ExecuteAsync(
+        RevitClient client,
+        string? category,
+        string? filter,
+        long? id,
+        string param,
+        string value,
+        bool dryRun,
+        bool fromStdin,
+        string? idsFromFile,
+        TextWriter output,
+        string? planOutputPath = null)
     {
         if (string.IsNullOrEmpty(param))
         {
@@ -138,7 +172,7 @@ public static class SetCommand
             Filter = filter,
             Param = param,
             Value = value,
-            DryRun = dryRun
+            DryRun = dryRun || !string.IsNullOrWhiteSpace(planOutputPath)
         };
 
         try
@@ -163,6 +197,24 @@ public static class SetCommand
         }
 
         var data = result.Data!;
+
+        if (!string.IsNullOrWhiteSpace(planOutputPath))
+        {
+            if (data.Preview.Count != data.Affected)
+            {
+                await output.WriteLineAsync(
+                    $"Error: dry-run returned {data.Affected} affected element(s) but only {data.Preview.Count} preview row(s); refusing to write an unstable plan.");
+                return 1;
+            }
+
+            var plan = SetPlanFile.Create(request, data, planOutputPath);
+            SetPlanFileStore.Save(planOutputPath, plan);
+            await output.WriteLineAsync($"Plan written to {Path.GetFullPath(planOutputPath)}");
+            await output.WriteLineAsync($"Review: {plan.Commands.Show}");
+            await output.WriteLineAsync($"Dry-run apply: {plan.Commands.DryRunApply}");
+            await output.WriteLineAsync($"Apply: {plan.Commands.Apply}");
+            return 0;
+        }
 
         if (dryRun)
         {

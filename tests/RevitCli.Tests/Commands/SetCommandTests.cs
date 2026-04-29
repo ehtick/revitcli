@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Commands;
+using RevitCli.Plans;
 using RevitCli.Shared;
 using RevitCli.Tests.Client;
 using Xunit;
@@ -38,6 +39,62 @@ public class SetCommandTests
         Assert.Contains("30min", output);
         Assert.Contains("60min", output);
         Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task Execute_PlanOutput_WritesFrozenSetPlan()
+    {
+        var tmpFile = Path.Combine(Path.GetTempPath(), $"set_plan_{Guid.NewGuid():N}.json");
+        try
+        {
+            var setResult = new SetResult
+            {
+                Affected = 2,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 200, Name = "Door 2", OldValue = "30min", NewValue = "60min" },
+                    new() { Id = 100, Name = "Door 1", OldValue = "30min", NewValue = "60min" }
+                }
+            };
+            var response = ApiResponse<SetResult>.Ok(setResult);
+            var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+            var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+            var writer = new StringWriter();
+
+            var exitCode = await SetCommand.ExecuteAsync(
+                client,
+                "doors",
+                "name contains Fire",
+                null,
+                "Fire Rating",
+                "60min",
+                dryRun: false,
+                fromStdin: false,
+                idsFromFile: null,
+                writer,
+                planOutputPath: tmpFile);
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(tmpFile));
+            Assert.Contains("\"dryRun\":true", handler.LastRequestBody);
+            Assert.Contains("Plan written", writer.ToString());
+            Assert.Contains("revitcli plan apply", writer.ToString());
+
+            var plan = SetPlanFileStore.Load(tmpFile);
+            Assert.Equal("set", plan.Type);
+            Assert.Equal(2, plan.Summary.Affected);
+            Assert.Equal("category=doors, filter=name contains Fire", plan.Summary.OriginalTarget);
+            Assert.Equal(new[] { 100L, 200L }, plan.ApplyRequest.ElementIds);
+            Assert.Null(plan.ApplyRequest.Category);
+            Assert.Null(plan.ApplyRequest.Filter);
+            Assert.Equal("Fire Rating", plan.ApplyRequest.Param);
+            Assert.False(plan.ApplyRequest.DryRun);
+        }
+        finally
+        {
+            if (File.Exists(tmpFile))
+                File.Delete(tmpFile);
+        }
     }
 
     [Fact]

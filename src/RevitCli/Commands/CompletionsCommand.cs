@@ -8,7 +8,9 @@ public static class CompletionsCommand
 {
     private static readonly string[] QueryOptions = { "--filter", "--id", "--output" };
     private static readonly string[] ExportOptions = { "--format", "--sheets", "--output-dir", "--dry-run" };
-    private static readonly string[] SetOptions = { "--filter", "--id", "--param", "--value", "--dry-run" };
+    private static readonly string[] SetOptions = { "--filter", "--id", "--param", "--value", "--dry-run", "--plan-output" };
+    private static readonly string[] PlanSubcommands = { "show", "apply" };
+    private static readonly string[] PlanOptions = { "--output", "--yes", "--dry-run", "--max-changes" };
     private static readonly string[] AuditOptions = { "--rules", "--list" };
     private static readonly string[] FixOptions =
     {
@@ -64,6 +66,7 @@ public static class CompletionsCommand
         var queryOptions = JoinWords(QueryOptions);
         var exportOptions = JoinWords(ExportOptions);
         var setOptions = JoinWords(SetOptions);
+        var planWords = JoinWords(PlanSubcommands.Concat(PlanOptions));
         var auditOptions = JoinWords(AuditOptions);
         var fixOptions = JoinWords(FixOptions);
         var rollbackOptions = JoinWords(RollbackOptions);
@@ -120,8 +123,11 @@ public static class CompletionsCommand
             "            esac",
             $"            COMPREPLY=($(compgen -W \"{exportOptions}\" -- \"$cur\"))",
             "            ;;",
-            "        set)",
-            $"            COMPREPLY=($(compgen -W \"{setOptions}\" -- \"$cur\"))",
+        "        set)",
+        $"            COMPREPLY=($(compgen -W \"{setOptions}\" -- \"$cur\"))",
+        "            ;;",
+            "        plan)",
+            $"            COMPREPLY=($(compgen -W \"{planWords}\" -- \"$cur\"))",
             "            ;;",
             "        audit)",
             "            case \"$prev\" in",
@@ -233,6 +239,7 @@ public static class CompletionsCommand
             .Select(command => $"        '{command.Name}:{command.Description}'");
         var outputFormats = JoinWords(QueryCommand.ValidOutputFormats);
         var exportFormats = JoinWords(ExportCommand.ValidFormats);
+        var planSubcommands = JoinWords(PlanSubcommands);
         var configSubcommands = JoinWords(CliCommandCatalog.ConfigSubcommands);
         var configKeys = JoinWords(ConfigCommand.ValidKeys);
         var shells = JoinWords(CliCommandCatalog.Shells);
@@ -272,14 +279,27 @@ public static class CompletionsCommand
             "                        '--output-dir[Output directory]:dir:_directories' \\",
             "                        '--dry-run[Validate without writing files]'",
             "                    ;;",
-            "                set)",
-            "                    _arguments \\",
-            "                        '--filter[Filter expression]:filter:' \\",
-            "                        '--id[Element ID]:id:' \\",
-            "                        '--param[Parameter name]:param:' \\",
-            "                        '--value[New value]:value:' \\",
-            "                        '--dry-run[Preview changes]'",
-            "                    ;;",
+                "                set)",
+                "                    _arguments \\",
+                "                        '--filter[Filter expression]:filter:' \\",
+                "                        '--id[Element ID]:id:' \\",
+                "                        '--param[Parameter name]:param:' \\",
+                "                        '--value[New value]:value:' \\",
+                "                        '--dry-run[Preview changes]' \\",
+                "                        '--plan-output[Write saved plan JSON]:file:_files'",
+                "                    ;;",
+                "                plan)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {planSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '2:plan file:_files' \\",
+                "                            '--output[Output format]:format:(table json)' \\",
+                "                            '--yes[Confirm apply]' \\",
+                "                            '--dry-run[Preview apply]' \\",
+                "                            '--max-changes[Maximum writes]:n:'",
+                "                    fi",
+                "                    ;;",
             "                audit)",
             "                    _arguments \\",
             $"                        '--rules[Comma-separated rules]:rules:({auditRules})' \\",
@@ -374,6 +394,7 @@ public static class CompletionsCommand
         var queryOptions = FormatPowerShellArray(QueryOptions);
         var exportOptions = FormatPowerShellArray(ExportOptions);
         var setOptions = FormatPowerShellArray(SetOptions);
+        var planOptions = FormatPowerShellArray(PlanSubcommands.Concat(PlanOptions));
         var auditOptions = FormatPowerShellArray(AuditOptions);
         var fixOptions = FormatPowerShellArray(FixOptions);
         var rollbackOptions = FormatPowerShellArray(RollbackOptions);
@@ -403,6 +424,7 @@ public static class CompletionsCommand
             $"        'query' = @({queryOptions})",
             $"        'export' = @({exportOptions})",
             $"        'set' = @({setOptions})",
+            $"        'plan' = @({planOptions})",
             $"        'audit' = @({auditOptions})",
             $"        'fix' = @({fixOptions})",
             $"        'rollback' = @({rollbackOptions})",
@@ -499,8 +521,16 @@ public static class CompletionsCommand
             "            New-RevitCliCompletionResults -Values $commandOptions['export'] -ToolTip 'Option'",
             "            return",
             "        }",
-            "        'set' {",
-            "            New-RevitCliCompletionResults -Values $commandOptions['set'] -ToolTip 'Option'",
+        "        'set' {",
+        "            New-RevitCliCompletionResults -Values $commandOptions['set'] -ToolTip 'Option'",
+        "            return",
+        "        }",
+            "        'plan' {",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('show', 'apply') -ToolTip 'Plan subcommand'",
+            "                return",
+            "            }",
+            "            New-RevitCliCompletionResults -Values $commandOptions['plan'] -ToolTip 'Plan option'",
             "            return",
             "        }",
             "        'audit' {",

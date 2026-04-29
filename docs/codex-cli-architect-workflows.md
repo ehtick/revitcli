@@ -87,6 +87,9 @@ Expected command path:
 ```powershell
 revitcli query doors --filter "name contains Fire" --output table
 revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "60min" --dry-run
+revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "60min" --plan-output .revitcli/plans/fire-rating.json
+revitcli plan show .revitcli/plans/fire-rating.json
+revitcli plan apply .revitcli/plans/fire-rating.json --dry-run
 ```
 
 ## Required RevitCli Improvements
@@ -99,6 +102,8 @@ revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "
 - Stable JSON/table outputs with useful exit codes for `doctor`,
   `status`, `check`, `publish --dry-run`, `schedule list`, and `journal`.
 - Plan files for risky writes: generate, show, apply, receipt, rollback.
+- First safe-plan slice: `set --plan-output`, `plan show`, and
+  `plan apply` with frozen element IDs and receipts.
 - Workflow commands for common architect tasks: `pre-issue`,
   `export-package`, `weekly-health`, and `family-cleanup`.
 - Clear examples in docs so Codex CLI can map user intent to commands.

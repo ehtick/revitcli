@@ -13,6 +13,7 @@ internal static class CliCommandCatalog
         ("query", "Query elements from the Revit model"),
         ("export", "Export sheets or views from the Revit model"),
         ("set", "Modify element parameters in the Revit model"),
+        ("plan", "Review and apply saved mutation plans"),
         ("config", "View or modify CLI configuration"),
         ("audit", "Run model checking rules against the Revit model"),
         ("completions", "Generate shell completion script"),
@@ -46,6 +47,7 @@ internal static class CliCommandCatalog
         ("query <category>", "Query elements (--filter, --id, --output)"),
         ("export --format <fmt>", "Export sheets (--sheets, --output-dir)"),
         ("set <category>", "Modify parameters (--param, --value, --dry-run)"),
+        ("plan show/apply", "Review or apply saved mutation plans"),
         ("config show/set", "View or modify configuration"),
         ("audit", "Run model checking rules (--rules, --list)"),
         ("check [name]", "Run project checks from .revitcli.yml profile"),
@@ -104,6 +106,7 @@ internal static class CliCommandCatalog
         root.AddCommand(QueryCommand.Create(client, config));
         root.AddCommand(ExportCommand.Create(client, config));
         root.AddCommand(SetCommand.Create(client));
+        root.AddCommand(PlanCommand.Create(client));
         root.AddCommand(ConfigCommand.Create());
         root.AddCommand(AuditCommand.Create(client));
         root.AddCommand(CompletionsCommand.Create());

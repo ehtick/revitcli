@@ -37,7 +37,8 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli status` | Show Revit version, addin version, active document |
 | `revitcli doctor` | Diagnose setup and connection issues |
 | `revitcli query <category>` | Query elements with filters; output table/JSON/CSV |
-| `revitcli set <category>` | Modify parameters with `--dry-run` preview |
+| `revitcli set <category>` | Modify parameters with `--dry-run` or `--plan-output` preview |
+| `revitcli plan show` / `apply` | Review and apply saved mutation plans |
 | `revitcli fix [checkName]` | Preview or apply profile-driven parameter fixes |
 | `revitcli rollback <baseline>` | Restore parameters changed by a fix baseline |
 | `revitcli export --format <fmt>` | Export DWG / PDF / IFC |
@@ -77,6 +78,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - Duplicate parameter disambiguation via `[N]` suffix
 - Output formats: table (Spectre.Console), JSON (scriptable), CSV
 - `set` supports category+filter, `--id`, `--ids-from FILE`, or stdin pipe; all-or-nothing Transaction; `--dry-run` previews
+- `set --plan-output .revitcli/plans/fire-rating.json` writes a frozen-ID plan; review with `revitcli plan show`, then apply with `revitcli plan apply <file> --yes`
 
 ### Export
 
@@ -164,6 +166,12 @@ Starter templates in `profiles/`:
 - `fix --apply --yes` writes a snapshot baseline and fix journal before modifying the model.
 - `rollback <baseline> --yes` restores only the parameters touched by that fix journal.
 - v1.5 supports parameter-only strategies: `setParam` and `renameByPattern`.
+
+### Safe Plans
+
+- `set --plan-output FILE` validates through dry-run and stores frozen element IDs plus old/new preview values.
+- `plan show FILE` prints a reviewable summary for humans or Codex CLI.
+- `plan apply FILE --dry-run` revalidates the saved plan; `plan apply FILE --yes` writes and creates `FILE.receipt.json`.
 
 ### Journal Integrity
 
