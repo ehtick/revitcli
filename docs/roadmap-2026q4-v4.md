@@ -127,10 +127,11 @@ Candidate commands:
   whether they are writable.
 - `revitcli inspect params <category>`: show common parameters, sample
   values, read-only/writeable status, and duplicate names.
+- `revitcli inspect schedules`: list schedules, fields, categories, and
+  export readiness. First slice shipped as a CLI-side wrapper around
+  existing schedule discovery.
 - `revitcli inspect sheets`: summarize sheets by number, name, title
   block, revision, and printable/exportable state.
-- `revitcli inspect schedules`: list schedules, fields, categories, and
-  export readiness.
 - `revitcli examples <command>`: local examples for common tasks.
 
 Why this matters:
@@ -361,7 +362,7 @@ RevitCli into a hidden AI/MCP platform instead of a dependable CLI.
    deprecated, or removed before the next release.
 3. Continue v2.2 with installer hardening, live smoke evidence, release
    checklist cleanup, and Codex CLI workflow docs.
-4. Write `inspect categories` / `inspect params` / `inspect schedules`
-   spec for v2.3.
+4. Write `inspect categories` / `inspect params` spec for v2.3 and use
+   `inspect schedules` as the first implementation pattern.
 5. Collect three real repetitive architect prompts and turn them into
    v2.5 workflow acceptance examples.

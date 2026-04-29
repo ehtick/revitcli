@@ -49,7 +49,7 @@ revitcli publish issue --dry-run
 Expected command path:
 
 ```powershell
-revitcli schedule list
+revitcli inspect schedules
 revitcli schedule export --name "Door Schedule" --output csv |
   Set-Content -Encoding utf8 deliverables/tables/doors.csv
 ```
@@ -79,8 +79,8 @@ revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "
 
 ## Required RevitCli Improvements
 
-- `inspect` commands so Codex CLI can discover categories, parameters,
-  sheets, schedules, and writable fields without guessing.
+- More `inspect` commands so Codex CLI can discover categories,
+  parameters, sheets, and writable fields without guessing.
 - Stable JSON/table outputs with useful exit codes for `doctor`,
   `status`, `check`, `publish --dry-run`, `schedule list`, and `journal`.
 - Plan files for risky writes: generate, show, apply, receipt, rollback.

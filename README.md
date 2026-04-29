@@ -48,6 +48,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli init <template>` | Bootstrap a `.revitcli.yml` profile |
 | `revitcli score` | Model health score from `check` results |
 | `revitcli coverage` | Profile coverage report (which checks ran) |
+| `revitcli inspect schedules` | Discover schedules and ready-to-run export commands |
 | `revitcli snapshot` | Capture model semantic state as JSON |
 | `revitcli diff <from> <to>` | Diff two snapshots (table / JSON / markdown) |
 | `revitcli import <file>` | Batch-write parameters from CSV |

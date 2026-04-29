@@ -25,6 +25,7 @@ internal static class CliCommandCatalog
         ("init", "Create a .revitcli.yml profile from a template"),
         ("score", "Calculate model health score (0-100)"),
         ("coverage", "Show parameter fill rates by category"),
+        ("inspect", "Discover model data for safe terminal workflows"),
         ("schedule", "Manage and export Revit schedules"),
         ("diff", "Diff two snapshot JSON files"),
         ("snapshot", "Capture model's semantic state as JSON"),
@@ -52,6 +53,7 @@ internal static class CliCommandCatalog
         ("rollback <baseline>", "Restore parameters changed by a fix baseline"),
         ("score", "Calculate model health score (0-100)"),
         ("coverage", "Show parameter fill rates by category"),
+        ("inspect schedules", "List schedules with ready-to-run export commands"),
         ("schedule list", "List existing schedules in the model"),
         ("schedule export", "Export schedule data (--category, --name, --fields, --output)"),
         ("schedule create", "Create a ViewSchedule (--category, --fields, --name)"),
@@ -110,6 +112,7 @@ internal static class CliCommandCatalog
         root.AddCommand(InitCommand.Create());
         root.AddCommand(ScoreCommand.Create(client));
         root.AddCommand(CoverageCommand.Create(client));
+        root.AddCommand(InspectCommand.Create(client));
         root.AddCommand(ScheduleCommand.Create(client));
         root.AddCommand(DiffCommand.Create());
         root.AddCommand(SnapshotCommand.Create(client));
