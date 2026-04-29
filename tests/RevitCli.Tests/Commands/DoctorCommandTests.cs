@@ -400,6 +400,17 @@ public class DoctorCommandTests
     }
 
     [Fact]
+    public void RevitInstallDirResolver_UsesConfiguredPathWhenEnvVarsUnset()
+    {
+        var configuredDir = Path.Combine("D:", "revit2026", "Revit 2026");
+
+        using var revitCli = new EnvVarScope("REVITCLI_REVIT2026_INSTALL_DIR", null);
+        using var autodesk = new EnvVarScope("Revit2026InstallDir", null);
+
+        Assert.Equal(configuredDir, RevitInstallDirResolver.Resolve(2026, configuredDir));
+    }
+
+    [Fact]
     public void RevitInstallDirResolver_FallsBackToProgramFilesDefault()
     {
         using var revitCli = new EnvVarScope("REVITCLI_REVIT2026_INSTALL_DIR", null);

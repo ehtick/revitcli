@@ -111,7 +111,9 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'rollback' = 'Restore parameters changed by a fix baseline'", script);
         Assert.Contains("Test-Path -LiteralPath $parent", script);
         Assert.Contains("-ErrorAction SilentlyContinue", script);
-        Assert.Contains("$configKeys = @('serverUrl', 'defaultOutput', 'exportDir')", script);
+        Assert.Contains(
+            "$configKeys = @('serverUrl', 'defaultOutput', 'exportDir', 'Revit2024InstallDir', 'Revit2025InstallDir', 'Revit2026InstallDir')",
+            script);
         Assert.Contains("New-RevitCliCompletionResults -Values $shells -ToolTip 'Shell'", script);
         var rollbackOptionsBlock = ExtractBlock(
             script,

@@ -217,6 +217,7 @@ revitcli config show
 revitcli config set serverUrl http://localhost:9999
 revitcli config set defaultOutput json
 revitcli config set exportDir ./my-exports
+revitcli config set Revit2026InstallDir "D:\revit2026\Revit 2026"
 ```
 
 ## Shell Completions

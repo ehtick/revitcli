@@ -17,6 +17,26 @@ public class CliConfig
     [JsonPropertyName("exportDir")]
     public string ExportDir { get; set; } = ".";
 
+    [JsonPropertyName("revit2024InstallDir")]
+    public string? Revit2024InstallDir { get; set; }
+
+    [JsonPropertyName("revit2025InstallDir")]
+    public string? Revit2025InstallDir { get; set; }
+
+    [JsonPropertyName("revit2026InstallDir")]
+    public string? Revit2026InstallDir { get; set; }
+
+    public string? GetRevitInstallDir(int year)
+    {
+        return year switch
+        {
+            2024 => Revit2024InstallDir,
+            2025 => Revit2025InstallDir,
+            2026 => Revit2026InstallDir,
+            _ => null
+        };
+    }
+
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".revitcli");

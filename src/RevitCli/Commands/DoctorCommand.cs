@@ -36,7 +36,7 @@ public static class DoctorCommand
 
     public static Task<int> ExecuteAsync(RevitClient client, CliConfig config, TextWriter output, int checkVersion = 2026)
     {
-        return ExecuteAsync(client, config, output, DoctorEnvironment.Current(checkVersion));
+        return ExecuteAsync(client, config, output, DoctorEnvironment.Current(checkVersion, config));
     }
 
     internal static async Task<int> ExecuteAsync(
@@ -168,7 +168,7 @@ public static class DoctorCommand
         await output.WriteLineAsync(
             $"FAIL: Revit {year} API DLLs missing at {installDir}: {string.Join(", ", missing)}");
         await output.WriteLineAsync(
-            $"HINT: Install Revit {year} or set REVITCLI_REVIT{year}_INSTALL_DIR / Revit{year}InstallDir to the Revit {year} install directory.");
+            $"HINT: Install Revit {year} or set REVITCLI_REVIT{year}_INSTALL_DIR / Revit{year}InstallDir / config key Revit{year}InstallDir to the Revit {year} install directory.");
         return false;
     }
 
@@ -474,7 +474,7 @@ internal sealed class DoctorEnvironment
 
     public string ResolvedRevit2026InstallDir => ResolvedRevitInstallDir;
 
-    public static DoctorEnvironment Current(int targetRevitYear = 2026)
+    public static DoctorEnvironment Current(int targetRevitYear = 2026, CliConfig? config = null)
     {
         return new DoctorEnvironment
         {
@@ -483,8 +483,11 @@ internal sealed class DoctorEnvironment
             // doctor reports the same path RevitCli.Addin.Tests.csproj reads at
             // build time. REVITCLI_REVIT<year>_INSTALL_DIR is a RevitCli-only
             // superset (no csproj consults it) and can override doctor without
-            // touching MSBuild.
-            RevitInstallDir = RevitInstallDirResolver.Resolve(targetRevitYear)
+            // touching MSBuild. If neither env var is set, fall back to
+            // config.json before the Program Files default.
+            RevitInstallDir = RevitInstallDirResolver.Resolve(
+                targetRevitYear,
+                config?.GetRevitInstallDir(targetRevitYear))
         };
     }
 }

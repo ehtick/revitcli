@@ -7,7 +7,15 @@ namespace RevitCli.Commands;
 
 public static class ConfigCommand
 {
-    internal static readonly string[] ValidKeys = { "serverUrl", "defaultOutput", "exportDir" };
+    internal static readonly string[] ValidKeys =
+    {
+        "serverUrl",
+        "defaultOutput",
+        "exportDir",
+        "Revit2024InstallDir",
+        "Revit2025InstallDir",
+        "Revit2026InstallDir"
+    };
 
     public static Command Create()
     {
@@ -23,6 +31,9 @@ public static class ConfigCommand
             table.AddRow("serverUrl", $"[cyan]{Markup.Escape(config.ServerUrl)}[/]");
             table.AddRow("defaultOutput", $"[green]{Markup.Escape(config.DefaultOutput)}[/]");
             table.AddRow("exportDir", Markup.Escape(config.ExportDir));
+            table.AddRow("Revit2024InstallDir", Markup.Escape(config.Revit2024InstallDir ?? ""));
+            table.AddRow("Revit2025InstallDir", Markup.Escape(config.Revit2025InstallDir ?? ""));
+            table.AddRow("Revit2026InstallDir", Markup.Escape(config.Revit2026InstallDir ?? ""));
             AnsiConsole.Write(table);
         });
 
@@ -61,6 +72,18 @@ public static class ConfigCommand
                     }
                     config.ExportDir = value;
                     break;
+                case "revit2024installdir":
+                    if (!SetRevitInstallDir(config, 2024, value))
+                        return;
+                    break;
+                case "revit2025installdir":
+                    if (!SetRevitInstallDir(config, 2025, value))
+                        return;
+                    break;
+                case "revit2026installdir":
+                    if (!SetRevitInstallDir(config, 2026, value))
+                        return;
+                    break;
                 default:
                     AnsiConsole.MarkupLine($"[red]Unknown setting:[/] {Markup.Escape(key)}");
                     return;
@@ -72,5 +95,29 @@ public static class ConfigCommand
         command.AddCommand(showCommand);
         command.AddCommand(setCommand);
         return command;
+    }
+
+    private static bool SetRevitInstallDir(CliConfig config, int year, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            AnsiConsole.MarkupLine("[red]Invalid directory:[/] cannot be empty");
+            return false;
+        }
+
+        switch (year)
+        {
+            case 2024:
+                config.Revit2024InstallDir = value;
+                break;
+            case 2025:
+                config.Revit2025InstallDir = value;
+                break;
+            case 2026:
+                config.Revit2026InstallDir = value;
+                break;
+        }
+
+        return true;
     }
 }
