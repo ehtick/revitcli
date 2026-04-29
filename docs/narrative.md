@@ -1,5 +1,12 @@
 # RevitCli Narrative
 
+> 2026-04-29 复审:本文已归档,不再作为对外叙事来源。
+> 当前叙事是:RevitCli 是建筑师的本地终端 BIMOps 工具,可被
+> Codex CLI 作为外部终端操作者调用;它不是 MCP server、不是
+> agent-native 协议层、也不内置 LLM。见
+> [`docs/roadmap-2026q4-v4.md`](./roadmap-2026q4-v4.md) 和
+> [`docs/codex-cli-architect-workflows.md`](./codex-cli-architect-workflows.md)。
+
 > 用途:对外叙事的统一来源(README / 博客 / 路演 / 用户对话都从这里拿素材)
 > 创建:2026-04-26
 > 配套:[ideation-agent-native.md](./ideation-agent-native.md)(创新点详细脑暴) · [roadmap-2026q2-q3.md](./roadmap-2026q2-q3.md)(技术路线)

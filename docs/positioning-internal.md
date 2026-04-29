@@ -1,5 +1,12 @@
 # RevitCli Positioning — Internal
 
+> 2026-04-29 复审:本文已归档,不再代表当前定位。
+> 当前定位是:建筑师通过终端或 Codex CLI 调用 RevitCli,完成出图、
+> 导表、查错、批量参数修改等繁琐 Revit 工作。RevitCli 不做 MCP,
+> 不做内置 LLM,不做 agent-native 协议层。见
+> [`docs/roadmap-2026q4-v4.md`](./roadmap-2026q4-v4.md) 和
+> [`docs/codex-cli-architect-workflows.md`](./codex-cli-architect-workflows.md)。
+
 > 用途:对内的定位决策记录、反派叙事(明确不讲什么)、自我决策树
 > 不对外发布:这份是工作底稿,不是 marketing 内容
 > 创建:2026-04-26

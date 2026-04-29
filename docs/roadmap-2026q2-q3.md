@@ -39,6 +39,7 @@ Revit API
 
 > RevitCli 是**建筑师终端 BIMOps 运行器**:用 CLI 完成 Revit 里繁琐、重复、需要留痕的工作。
 > **不是**通用 AI-to-Revit 桥梁,也不继续推进 MCP。MCP 相关 PR 已关闭,未来路线图以 terminal-first 为准。
+> Codex CLI 可以作为外部终端操作者调用 RevitCli,但 RevitCli 自身保持确定性 CLI。
 
 执行此路线图时,所有功能取舍都按这个标尺判断:**它是否让建筑师在终端里更快、更安全、更可重复地完成 Revit 繁琐工作?**
 

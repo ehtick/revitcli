@@ -1,5 +1,11 @@
 # RevitCli Agent-Native 创新脑暴
 
+> 2026-04-29 复审:本文已归档,不再代表当前路线图。
+> 当前方向见 [`docs/roadmap-2026q4-v4.md`](./roadmap-2026q4-v4.md)
+> 和 [`docs/codex-cli-architect-workflows.md`](./codex-cli-architect-workflows.md)。
+> 可保留其中"Codex CLI 调普通 shell 命令"的启发,但 MCP server、
+> agent-native 协议层、`--output agent` 主线化都不是当前计划。
+
 > 创建:2026-04-26
 > 定位:针对"会用 agent 的 BIM 工程师让 agent 帮忙做繁琐工作"场景的创新点探索
 > 状态:**脑暴稿**,不是 spec,不是 plan;成熟的方向单独走 superpowers brainstorm → spec → plan

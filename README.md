@@ -247,6 +247,26 @@ revitcli publish
 revitcli snapshot --output .revitcli/baseline.json
 ```
 
+## Using With Codex CLI
+
+Architects can use Codex CLI as a conversational terminal operator that
+calls `revitcli` commands for checking, publishing, schedule export, and
+safe parameter edits. RevitCli remains deterministic and local; Codex CLI
+should run read-only or `--dry-run` commands before any write.
+
+Example prompts:
+
+```text
+帮我检查这个模型今天能不能出图,只 dry-run,不要写入。
+把门表导成 CSV,放到 deliverables/tables。
+帮我查一下为什么 publish 失败,先看 journal 和 check 结果。
+```
+
+See [docs/codex-cli-architect-workflows.md](docs/codex-cli-architect-workflows.md)
+for the operating model, guardrails, and command paths.
+See [docs/architect-terminal-vision.md](docs/architect-terminal-vision.md)
+for the product intent and non-goals.
+
 ## Revit Real Smoke
 
 Before review or release, validate the real Revit vertical slice with the internal smoke gate:
@@ -281,7 +301,7 @@ docs/superpowers/          # Design specs and implementation plans
 - [x] v1.5-v2.0 BIMOps foundation: fix/rollback, history, CI, family, profile governance, dashboard
 - [x] v2.1 configuration confidence: profile simulation, multi-version smoke scaffolding, journal signing
 - [ ] v2.2 release integrity: installer hardening, real multi-version smoke, release checklist
-- [ ] v2.3+ architect terminal roadmap: inspect/discover, safe batch plans, delivery workflows, standards packs, v4 terminal workbench
+- [ ] v2.3+ Codex CLI-assisted architect workflow: inspect/discover, safe batch plans, delivery workflows, standards packs, v4 terminal workbench
 
 See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.
 

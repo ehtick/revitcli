@@ -1,5 +1,11 @@
 # RevitCli 创新点深度展开:B 级 + C 级
 
+> 2026-04-29 复审:本文已归档,不再代表当前路线图。
+> 当前方向见 [`docs/roadmap-2026q4-v4.md`](./roadmap-2026q4-v4.md)
+> 和 [`docs/codex-cli-architect-workflows.md`](./codex-cli-architect-workflows.md)。
+> 可保留"让 Codex CLI 更容易调用普通 RevitCli 命令"的部分启发,
+> 但 MCP 主线化、agent-native 协议栈、`--output agent` 默认化都不再推进。
+
 > 用途:为 codex 后续执行准备的详细设计入口;每个 B 级条目都达到"可直接做 spec"的细度,C 级保持战略级(可决策但不立即落地)
 > 创建:2026-04-26
 > 配套:[ideation-agent-native.md](./ideation-agent-native.md)(A 级 + 总览) · [narrative.md](./narrative.md)(对外叙事) · [roadmap-2026q2-q3.md](./roadmap-2026q2-q3.md)(技术路线)
