@@ -18,6 +18,8 @@ The goal is to prove that the CLI, installed add-in, live add-in HTTP server, Re
   - `RevitAPI.dll`
   - `RevitAPIUI.dll`
 - RevitCli CLI and add-in installed from the same build.
+- If Revit is running during `scripts/install.ps1`, CLI files update
+  immediately and add-in files are staged for the next Revit restart.
 - Revit 2026 restarted after installing the add-in.
 - A project document is open before running `status`, `query`, or `set`.
 - The test model contains at least one wall or door that can be queried by a stable filter.
@@ -52,9 +54,12 @@ Use this when validating a local branch before review:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 `
   -RevitYears 2026 `
-  -RevitInstallDir "D:\revit2026\Revit 2026" `
+  -Revit2026InstallDir "D:\revit2026\Revit 2026" `
   -Force
 ```
+
+`-RevitInstallDir` is still accepted as a legacy alias for 2026, but new
+scripts should use `-Revit2026InstallDir`.
 
 Expected result:
 
