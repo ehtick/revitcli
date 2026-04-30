@@ -51,6 +51,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("score", script);
         Assert.Contains("coverage", script);
         Assert.Contains("schedule", script);
+        Assert.Contains("examples", script);
         Assert.Contains("diff", script);
         Assert.Contains("snapshot", script);
         Assert.Contains("interactive", script);
@@ -84,6 +85,7 @@ public class CompletionsCommandTests : IDisposable
 
         Assert.Equal(0, exitCode);
         Assert.Contains("'doctor:Check RevitCli setup and diagnose issues'", script);
+        Assert.Contains("'examples:Show copy-paste examples for common architect workflows'", script);
         Assert.Contains("'interactive:Enter interactive REPL mode'", script);
         Assert.Contains("_arguments '1:file:_files'", script);
         var rollbackBlock = ExtractBlock(
@@ -107,6 +109,7 @@ public class CompletionsCommandTests : IDisposable
 
         Assert.Equal(0, exitCode);
         Assert.Contains("'doctor' = 'Check RevitCli setup and diagnose issues'", script);
+        Assert.Contains("'examples' = 'Show copy-paste examples for common architect workflows'", script);
         Assert.Contains("'interactive' = 'Enter interactive REPL mode'", script);
         Assert.Contains("'rollback' = 'Restore parameters changed by a fix baseline'", script);
         Assert.Contains("Test-Path -LiteralPath $parent", script);
@@ -115,6 +118,11 @@ public class CompletionsCommandTests : IDisposable
             "$configKeys = @('serverUrl', 'defaultOutput', 'exportDir', 'Revit2024InstallDir', 'Revit2025InstallDir', 'Revit2026InstallDir')",
             script);
         Assert.Contains("New-RevitCliCompletionResults -Values $shells -ToolTip 'Shell'", script);
+        var examplesOptionsBlock = ExtractBlock(
+            script,
+            "        'examples' = @(",
+            "        'publish' = @(");
+        Assert.Contains("'inspect', 'sheets', 'schedule'", examplesOptionsBlock);
         var rollbackOptionsBlock = ExtractBlock(
             script,
             "        'rollback' = @(",

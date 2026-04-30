@@ -100,8 +100,10 @@ Scope:
   Revit 2024 / 2025 / 2026.
 - Run and record Revit 2026 live smoke; document 2024/2025 gaps until
   those machines are available.
-- Keep MCP out of README and future roadmap. Keep or remove existing MCP
-  code only after a compatibility decision; do not add new MCP features.
+- Keep MCP out of README and future roadmap. Decision on 2026-04-30:
+  keep `revitcli mcp serve` only as a hidden, deprecated compatibility
+  command; do not expose it in help, completions, or new docs, and do not add
+  new MCP features.
 - Add release checklist: CLI tests, dashboard checks, smoke script,
   journal verify, changelog, version bump, tag.
 - Add `docs/architect-terminal-vision.md`: one-page project intent and
@@ -136,7 +138,9 @@ Candidate commands:
   terminal users; summarize sheets by number, name, key title-block
   parameters, review issues, filters, and export-candidate state before
   publish/export planning.
-- `revitcli examples <command>`: local examples for common tasks.
+- `revitcli examples <topic>`: local examples for common tasks. First slice
+  shipped for inspect, sheets, schedule, set, import, publish, doctor, and
+  journal workflows.
 
 Why this matters:
 
@@ -368,8 +372,8 @@ RevitCli into a hidden AI/MCP platform instead of a dependable CLI.
 ## 16. Immediate Next Actions
 
 1. Keep MCP PRs closed; do not open new MCP work.
-2. Decide whether existing `revitcli mcp serve` should be hidden,
-   deprecated, or removed before the next release.
+2. Keep existing `revitcli mcp serve` hidden and deprecated; remove it only
+   with a future breaking-change notice.
 3. Continue v2.2 with installer hardening, live smoke evidence, release
    checklist cleanup, and Codex CLI workflow docs.
 4. Extend inspect/discover with `inspect sheets` and richer writable

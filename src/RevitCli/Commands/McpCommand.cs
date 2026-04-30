@@ -7,35 +7,35 @@ using RevitCli.Mcp;
 namespace RevitCli.Commands;
 
 /// <summary>
-/// `revitcli mcp serve` — start a Model Context Protocol server on stdio.
+/// Hidden legacy MCP compatibility entry point.
 ///
-/// Side track per docs/roadmap-2026q2-q3.md §8. Phase 1 shipped read-only
-/// `status` / `query` / `audit` tools. Phase 2 adds:
-///
-/// <list type="bullet">
-///   <item>Resources: <c>revitcli://snapshot/latest</c>,
-///         <c>revitcli://history/</c>, <c>revitcli://profile/effective</c>.</item>
-///   <item>Read-only <c>snapshot</c> tool.</item>
-///   <item><c>set</c> tool gated behind <c>--allow-writes</c> + per-call
-///         <c>confirm: true</c>.</item>
-/// </list>
+/// MCP is retired from the product roadmap. Keep this command callable for
+/// existing local scripts, but do not expose it in help, completions, or new
+/// docs.
 /// </summary>
 public static class McpCommand
 {
     public static Command Create(RevitClient client)
     {
-        var mcp = new Command("mcp", "Model Context Protocol adapter (stdio).");
+        var mcp = new Command("mcp", "Deprecated legacy MCP adapter (hidden).")
+        {
+            IsHidden = true
+        };
 
-        var serve = new Command("serve", "Run the MCP server on stdio (newline-delimited JSON-RPC 2.0).");
+        var serve = new Command("serve", "Run the deprecated MCP server on stdio (newline-delimited JSON-RPC 2.0).")
+        {
+            IsHidden = true
+        };
         var allowWrites = new Option<bool>(
             "--allow-writes",
-            description: "Enable mutating tools (e.g. `set`). Each call still needs `confirm: true`.",
+            description: "Legacy compatibility only. Enable mutating tools (e.g. `set`). Each call still needs `confirm: true`.",
             getDefaultValue: () => false);
         serve.AddOption(allowWrites);
 
         serve.SetHandler(async (bool writes) =>
         {
             // stderr is the only safe channel: stdout is reserved for protocol bytes.
+            Console.Error.WriteLine("[deprecated] `revitcli mcp serve` is hidden and retired from the roadmap. Prefer Codex CLI calling visible `revitcli` commands.");
             var server = McpServer.CreateDefault(client, Console.In, Console.Out, Console.Error, writes);
             using var cts = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) =>

@@ -34,8 +34,10 @@ public class CliCommandCatalogTests
         Assert.Contains("doctor", names);
         Assert.Contains("fix", names);
         Assert.Contains("inspect", names);
+        Assert.Contains("examples", names);
         Assert.Contains("rollback", names);
         Assert.Contains("journal", names);
+        Assert.Contains("mcp", names);
     }
 
     [Fact]
@@ -82,7 +84,34 @@ public class CliCommandCatalogTests
         Assert.Contains("snapshot", names);
         Assert.Contains("diff", names);
         Assert.Contains("inspect", names);
+        Assert.Contains("examples", names);
         Assert.Contains("journal", names);
+        Assert.DoesNotContain("mcp", names);
+    }
+
+    [Fact]
+    public void RootCommand_KeepsMcpAsHiddenCompatibilityCommand()
+    {
+        var root = CliCommandCatalog.CreateRootCommand(
+            CreateClient(),
+            new CliConfig(),
+            includeInteractiveCommand: true,
+            includeBatchCommand: true);
+
+        var mcp = root.Subcommands.Single(command => command.Name == "mcp");
+        Assert.True(mcp.IsHidden);
+        var serve = Assert.Single(mcp.Subcommands);
+        Assert.Equal("serve", serve.Name);
+        Assert.True(serve.IsHidden);
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeExamples()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "examples <topic>" &&
+                     entry.Description == "Show copy-paste commands for common workflows");
     }
 
     [Fact]

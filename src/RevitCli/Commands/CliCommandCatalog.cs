@@ -27,13 +27,13 @@ internal static class CliCommandCatalog
         ("score", "Calculate model health score (0-100)"),
         ("coverage", "Show parameter fill rates by category"),
         ("inspect", "Discover model data for safe terminal workflows"),
+        ("examples", "Show copy-paste examples for common architect workflows"),
         ("schedule", "Manage and export Revit schedules"),
         ("diff", "Diff two snapshot JSON files"),
         ("snapshot", "Capture model's semantic state as JSON"),
         ("interactive", "Enter interactive REPL mode"),
         ("import", "Batch-write Revit element parameters from a CSV file"),
         ("history", "Manage local snapshot history (init/capture/list/prune/diff/trend)"),
-        ("mcp", "Run RevitCli as a Model Context Protocol server"),
         ("ci", "CI integration helpers (detect provider, emit workflow templates)"),
         ("profile", "Validate, resolve, diff, and install .revitcli.yml profiles"),
         ("family", "Manage Revit families (list)"),
@@ -59,6 +59,7 @@ internal static class CliCommandCatalog
         ("inspect params <category>", "List parameters seen in a category"),
         ("inspect sheets", "List sheets with export dry-run commands"),
         ("inspect schedules", "List schedules with ready-to-run export commands"),
+        ("examples <topic>", "Show copy-paste commands for common workflows"),
         ("schedule list", "List existing schedules in the model"),
         ("schedule export", "Export schedule data (--category, --name, --fields, --output)"),
         ("schedule create", "Create a ViewSchedule (--category, --fields, --name)"),
@@ -69,7 +70,6 @@ internal static class CliCommandCatalog
         ("history diff <fromRef> <toRef>", "Diff two history snapshots (--output table|json|markdown)"),
         ("history trend [--metric <name>]", "ASCII sparkline of a metric over time (--window, --width)"),
         ("score --history <duration>", "Per-day score time series across the history window"),
-        ("mcp serve", "Start MCP stdio server (for Claude Desktop / Cursor)"),
         ("ci doctor", "Detect CI provider and print a workflow template"),
         ("profile validate", "Schema/reference checker for .revitcli.yml"),
         ("profile show --resolve", "Print merged effective profile (yaml|json)"),
@@ -119,6 +119,7 @@ internal static class CliCommandCatalog
         root.AddCommand(ScoreCommand.Create(client));
         root.AddCommand(CoverageCommand.Create(client));
         root.AddCommand(InspectCommand.Create(client));
+        root.AddCommand(ExamplesCommand.Create());
         root.AddCommand(ScheduleCommand.Create(client));
         root.AddCommand(DiffCommand.Create());
         root.AddCommand(SnapshotCommand.Create(client));

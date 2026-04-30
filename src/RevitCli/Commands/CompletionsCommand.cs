@@ -20,6 +20,7 @@ public static class CompletionsCommand
     private static readonly string[] RollbackOptions = { "--dry-run", "--yes", "--max-changes" };
     private static readonly string[] JournalSubcommands = { "sign", "verify" };
     private static readonly string[] JournalOptions = { "--dir", "--journal", "--signature", "--key", "--until", "--output" };
+    private static readonly string[] ExampleTopics = ExamplesCommand.TopicNames;
     private static readonly string[] PublishOptions =
         { "--profile", "--dry-run", "--since", "--since-mode", "--update-baseline" };
     private static readonly string[] SinceModes = { "content", "meta" };
@@ -71,6 +72,7 @@ public static class CompletionsCommand
         var fixOptions = JoinWords(FixOptions);
         var rollbackOptions = JoinWords(RollbackOptions);
         var journalWords = JoinWords(JournalSubcommands.Concat(JournalOptions));
+        var exampleTopics = JoinWords(ExampleTopics);
         var publishOptions = JoinWords(PublishOptions);
         var sinceModes = JoinWords(SinceModes);
         var importOptions = JoinWords(ImportOptions);
@@ -225,6 +227,9 @@ public static class CompletionsCommand
             "        journal)",
             $"            COMPREPLY=($(compgen -W \"{journalWords}\" -- \"$cur\"))",
             "            ;;",
+            "        examples)",
+            $"            COMPREPLY=($(compgen -W \"{exampleTopics}\" -- \"$cur\"))",
+            "            ;;",
             "        status|doctor|interactive)",
             "            COMPREPLY=()",
             "            ;;",
@@ -246,6 +251,7 @@ public static class CompletionsCommand
         var auditRules = JoinWords(AuditCommand.AvailableRules);
         var fixOptions = JoinWords(FixOptions);
         var journalSubcommands = JoinWords(JournalSubcommands);
+        var exampleTopics = JoinWords(ExampleTopics);
 
         return JoinLines(
             "#compdef revitcli",
@@ -367,6 +373,9 @@ public static class CompletionsCommand
                 "                        '--until[Sign entries at or before timestamp]:timestamp:' \\",
                 "                        '--output[Output format]:format:(table json)'",
                 "                    ;;",
+                "                examples)",
+                $"                    _arguments '1:topic:({exampleTopics})'",
+                "                    ;;",
                 "                import)",
             "                    _arguments \\",
             "                        '1:file:_files' \\",
@@ -400,6 +409,7 @@ public static class CompletionsCommand
         var fixOptions = FormatPowerShellArray(FixOptions);
         var rollbackOptions = FormatPowerShellArray(RollbackOptions);
         var journalOptions = FormatPowerShellArray(JournalSubcommands.Concat(JournalOptions));
+        var exampleTopics = FormatPowerShellArray(ExampleTopics);
         var publishOptions = FormatPowerShellArray(PublishOptions);
         var sinceModes = FormatPowerShellArray(SinceModes);
         var importOptions = FormatPowerShellArray(ImportOptions);
@@ -430,6 +440,7 @@ public static class CompletionsCommand
             $"        'fix' = @({fixOptions})",
             $"        'rollback' = @({rollbackOptions})",
             $"        'journal' = @({journalOptions})",
+            $"        'examples' = @({exampleTopics})",
             $"        'publish' = @({publishOptions})",
             $"        'import' = @({importOptions})",
             "    }",
@@ -596,6 +607,10 @@ public static class CompletionsCommand
             "        }",
             "        'journal' {",
             "            New-RevitCliCompletionResults -Values $commandOptions['journal'] -ToolTip 'Journal subcommand or option'",
+            "            return",
+            "        }",
+            "        'examples' {",
+            "            New-RevitCliCompletionResults -Values $commandOptions['examples'] -ToolTip 'Example topic'",
             "            return",
             "        }",
             "        'import' {",

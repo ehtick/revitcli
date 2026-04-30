@@ -1,13 +1,22 @@
 # RevitCli
 
-Command-line interface for Autodesk Revit. Query elements, batch export, modify parameters, snapshot/diff models, and write parameters back from CSV — all from your terminal.
+Terminal-first Autodesk Revit automation for architects. RevitCli lets a
+human operator or Codex CLI inspect models, find drawing blockers, export
+sheets and schedules, diagnose publish failures, snapshot/diff model state,
+and make reviewed parameter changes without clicking through repetitive
+Revit UI.
 
-> **Status: v2.1 — Configuration Confidence complete**
-> Terminal-first BIMOps runner for architects. Standards checking, deliverable publishing, model snapshots, incremental publish, CSV writeback, safe `fix`/`rollback`, multi-version smoke scaffolding, and signed journals. Supports Revit 2024/2025/2026.
+> **Status: v2.1 - Configuration Confidence complete**
+> Windows/Revit-first BIMOps runner for Revit 2024/2025/2026. Current focus:
+> reliable inspect/discover commands, standards checking, deliverable
+> publishing, schedule export, CSV writeback, safe dry-run plans,
+> `fix`/`rollback`, model snapshots, and signed journals.
 
 ```bash
 revitcli status                                              # connection check
+revitcli inspect sheets --issues-only                        # find sheet blockers
 revitcli query walls --filter "height > 3000" --output json  # query
+revitcli schedule export --name "Door Schedule" --output csv # export a schedule
 revitcli export --format dwg --sheets "A1*" --output-dir .   # batch export
 revitcli set doors --param "Fire Rating" --value "60min"     # bulk set
 revitcli snapshot --output snap.json                         # capture model state
@@ -53,6 +62,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli inspect params <category>` | Discover parameters seen on a category |
 | `revitcli inspect schedules` | Discover schedules and ready-to-run export commands |
 | `revitcli inspect sheets` | Discover sheets, issues, filters, and export candidates for CLI/Codex workflows |
+| `revitcli examples <topic>` | Show copy-paste examples for common architect workflows |
 | `revitcli snapshot` | Capture model semantic state as JSON |
 | `revitcli diff <from> <to>` | Diff two snapshots (table / JSON / markdown) |
 | `revitcli import <file>` | Batch-write parameters from CSV, with `--plan-output` support |
@@ -222,6 +232,21 @@ dotnet publish src/RevitCli -c Release -o ./publish
 5. Verify: `revitcli doctor`
 
 Or run `scripts/install.ps1` for end-user install (auto-detects installed Revit years, generates per-year manifests, adds CLI to PATH).
+If Revit is running, the installer updates the CLI immediately and stages
+add-in files for the next Revit restart instead of overwriting locked DLLs.
+
+For source-tree installs with Revit outside `C:\Program Files`, pass per-year
+install directories:
+
+```powershell
+.\scripts\install.ps1 -RevitYears 2024,2025,2026 `
+  -Revit2024InstallDir "D:\Autodesk\Revit 2024" `
+  -Revit2025InstallDir "D:\Autodesk\Revit 2025" `
+  -Revit2026InstallDir "D:\Autodesk\Revit 2026" `
+  -Force
+```
+
+`-RevitInstallDir` is still accepted as a legacy alias for Revit 2026.
 
 ## Configuration
 
@@ -325,6 +350,8 @@ docs/superpowers/          # Design specs and implementation plans
 See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.
 
 ## Publishing
+
+Follow [docs/release-checklist.md](docs/release-checklist.md) before pushing a tag.
 
 1. Update `RevitCliVersion` in `Directory.Build.props` (single source of truth for both the CLI and add-in projects).
 2. Update `CHANGELOG.md`.

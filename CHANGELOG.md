@@ -22,6 +22,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   can seal entries through a specific timestamp while allowing later
   appends.
 
+### Changed — v2.2 terminal trust
+
+- `scripts/install.ps1` now accepts per-year source-tree install directory
+  overrides: `-Revit2024InstallDir`, `-Revit2025InstallDir`, and
+  `-Revit2026InstallDir`. The legacy `-RevitInstallDir` option remains a
+  Revit 2026 alias.
+- Installer year parsing now accepts both `"2024,2025,2026"` and the native
+  PowerShell list form `2024,2025,2026`.
+- Installer PATH updates now use exact path-list matching instead of substring
+  matching, and Revit add-in manifests are generated through XML APIs.
+- Installer now uses layered updates when Revit is running: CLI files update
+  immediately, add-ins are staged under `%LOCALAPPDATA%\RevitCli\staged`, and
+  the Revit manifest points to the staged DLL for the next Revit restart.
+  `-AllowRunningRevit` is available only for explicit locked-file risk testing.
+- Added `docs/release-checklist.md` for Windows/Revit release gates, dashboard
+  checks, live smoke evidence, journal verification, changelog, version bump,
+  and tag flow.
+- Recorded 2026-04-30 Revit 2026 local smoke evidence in
+  `docs/revit-version-compatibility.md`, including layered installer, dry-run,
+  set apply/restore, and journal verification results.
+- `revitcli mcp serve` is now hidden and deprecated as a compatibility-only
+  entry point. It is removed from command discovery surfaces while remaining
+  callable for existing local scripts.
+- `revitcli examples <topic>` adds local copy-paste command examples for
+  architect workflows such as inspect, sheets, schedule export, safe set/import
+  plans, publish, doctor/smoke, and journal verification.
+
 ### Added — v1.6 history (complete)
 
 - `revitcli history` command cluster — local snapshot timeline under
