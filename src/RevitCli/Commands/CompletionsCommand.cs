@@ -24,7 +24,7 @@ public static class CompletionsCommand
         { "--profile", "--dry-run", "--since", "--since-mode", "--update-baseline" };
     private static readonly string[] SinceModes = { "content", "meta" };
     private static readonly string[] ImportOptions =
-        { "--category", "--match-by", "--map", "--dry-run", "--on-missing", "--on-duplicate", "--encoding", "--batch-size" };
+        { "--category", "--match-by", "--map", "--dry-run", "--plan-output", "--on-missing", "--on-duplicate", "--encoding", "--batch-size" };
     private static readonly string[] OnMissingValues = { "error", "warn", "skip" };
     private static readonly string[] OnDuplicateValues = { "error", "first", "all" };
     private static readonly string[] EncodingValues = { "auto", "utf-8", "gbk" };
@@ -374,6 +374,7 @@ public static class CompletionsCommand
             "                        '--match-by[Match-by parameter]:param:' \\",
             "                        '--map[Explicit col:Param mapping]:mapping:' \\",
             "                        '--dry-run[Preview only]' \\",
+            "                        '--plan-output[Write saved plan JSON]:file:_files' \\",
             "                        '--on-missing[Behavior on missing match]:mode:(error warn skip)' \\",
             "                        '--on-duplicate[Behavior on duplicate match]:mode:(error first all)' \\",
             "                        '--encoding[CSV encoding]:enc:(auto utf-8 gbk)' \\",

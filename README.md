@@ -55,7 +55,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli inspect sheets` | Discover sheets, issues, filters, and export candidates for CLI/Codex workflows |
 | `revitcli snapshot` | Capture model semantic state as JSON |
 | `revitcli diff <from> <to>` | Diff two snapshots (table / JSON / markdown) |
-| `revitcli import <file>` | Batch-write parameters from CSV |
+| `revitcli import <file>` | Batch-write parameters from CSV, with `--plan-output` support |
 | `revitcli config show` / `set` | View or modify CLI configuration |
 | `revitcli batch <file>` | Execute commands from a JSON file |
 | `revitcli completions <shell>` | Generate shell completions (bash/zsh/PowerShell) |
@@ -79,6 +79,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - Output formats: table (Spectre.Console), JSON (scriptable), CSV
 - `set` supports category+filter, `--id`, `--ids-from FILE`, or stdin pipe; all-or-nothing Transaction; `--dry-run` previews
 - `set --plan-output .revitcli/plans/fire-rating.json` writes a frozen-ID plan; review with `revitcli plan show`, then apply with `revitcli plan apply <file> --yes`
+- `import --plan-output .revitcli/plans/door-hardware.json` validates CSV writes through dry-run groups before writing a saved plan
 
 ### Export
 
@@ -170,6 +171,7 @@ Starter templates in `profiles/`:
 ### Safe Plans
 
 - `set --plan-output FILE` validates through dry-run and stores frozen element IDs plus old/new preview values.
+- `import --plan-output FILE` parses the CSV, freezes matched element IDs, dry-runs each write group, and stores group previews.
 - `plan show FILE` prints a reviewable summary for humans or Codex CLI.
 - `plan apply FILE --dry-run` revalidates the saved plan; `plan apply FILE --yes` writes and creates `FILE.receipt.json`.
 

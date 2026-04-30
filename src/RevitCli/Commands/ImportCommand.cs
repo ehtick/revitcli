@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Output;
+using RevitCli.Plans;
 using RevitCli.Shared;
 
 namespace RevitCli.Commands;
@@ -23,14 +24,15 @@ public static class ImportCommand
         var onDuplicateOpt = new Option<string>("--on-duplicate", () => "error", "error|first|all — when Revit has multiple matches");
         var encodingOpt = new Option<string>("--encoding", () => "auto", "utf-8|gbk|auto");
         var batchSizeOpt = new Option<int>("--batch-size", () => 100, "Max ElementIds per SetRequest (1..1000)");
+        var planOutputOpt = new Option<string?>("--plan-output", "Write a saved import plan JSON file without applying");
 
         var command = new Command("import", "Batch-write Revit element parameters from a CSV file")
         {
             fileArg, categoryOpt, matchByOpt, mapOpt, dryRunOpt,
-            onMissingOpt, onDuplicateOpt, encodingOpt, batchSizeOpt
+            onMissingOpt, onDuplicateOpt, encodingOpt, batchSizeOpt, planOutputOpt
         };
 
-        // 9 bindings (1 arg + 8 options) exceed the typed SetHandler<T1..T8> overload cap; use InvocationContext form.
+        // Bindings exceed the typed SetHandler<T1..T8> overload cap; use InvocationContext form.
         command.SetHandler(async ctx =>
         {
             var file      = ctx.ParseResult.GetValueForArgument(fileArg);
@@ -42,8 +44,9 @@ public static class ImportCommand
             var onDup     = ctx.ParseResult.GetValueForOption(onDuplicateOpt)!;
             var encoding  = ctx.ParseResult.GetValueForOption(encodingOpt)!;
             var batchSize = ctx.ParseResult.GetValueForOption(batchSizeOpt);
+            var planOutput = ctx.ParseResult.GetValueForOption(planOutputOpt);
             Environment.ExitCode = await ExecuteAsync(
-                client, file, category, matchBy, map, dryRun, onMissing, onDup, encoding, batchSize, Console.Out);
+                client, file, category, matchBy, map, dryRun, onMissing, onDup, encoding, batchSize, Console.Out, planOutput);
         });
 
         return command;
@@ -60,7 +63,8 @@ public static class ImportCommand
         string onDuplicate,
         string encodingHint,
         int batchSize,
-        TextWriter output)
+        TextWriter output,
+        string? planOutputPath = null)
     {
         if (!ValidatePolicies(onMissing, onDuplicate, batchSize, output))
             return 1;
@@ -116,10 +120,43 @@ public static class ImportCommand
 
         var plan = ImportPlanner.Plan(csv, query.Data!, mapping, matchBy, onMissing, onDuplicate);
 
-        await EmitPlanSummary(plan, csv, mapping, matchBy, dryRun, output);
+        var writesPlan = !string.IsNullOrWhiteSpace(planOutputPath);
+        await EmitPlanSummary(plan, csv, mapping, matchBy, dryRun || writesPlan, output);
 
         if (HasFatalPlanIssue(plan, onMissing, onDuplicate))
             return 1;
+
+        if (writesPlan)
+        {
+            var (previewGroups, previewFailures) = await PreviewPlan(client, plan, batchSize);
+            if (previewFailures.Count > 0)
+            {
+                await output.WriteLineAsync($"Error: import plan preview failed for {previewFailures.Count} group(s):");
+                foreach (var failure in previewFailures)
+                    await output.WriteLineAsync(
+                        $"  - {failure.Param}={failure.Value} (ids={string.Join(",", failure.ElementIds)}): {failure.Message}");
+                return 1;
+            }
+
+            var planFile = ImportPlanFile.Create(
+                file,
+                csv,
+                mapping,
+                category,
+                matchBy,
+                onMissing,
+                onDuplicate,
+                batchSize,
+                plan,
+                previewGroups,
+                planOutputPath!);
+            SetPlanFileStore.SaveImport(planOutputPath!, planFile);
+            await output.WriteLineAsync($"Plan written to {Path.GetFullPath(planOutputPath!)}");
+            await output.WriteLineAsync($"Review: {planFile.Commands.Show}");
+            await output.WriteLineAsync($"Dry-run apply: {planFile.Commands.DryRunApply}");
+            await output.WriteLineAsync($"Apply: {planFile.Commands.Apply}");
+            return 0;
+        }
 
         if (dryRun || plan.Groups.Count == 0)
             return 0;
@@ -135,6 +172,70 @@ public static class ImportCommand
             return 2;
         }
         return 0;
+    }
+
+    internal static async Task<(List<ImportPlanPreviewGroup> PreviewGroups, List<PlanApplyFailure> Failures)> PreviewPlan(
+        RevitClient client,
+        ImportPlan plan,
+        int batchSize)
+    {
+        var previewGroups = new List<ImportPlanPreviewGroup>();
+        var failures = new List<PlanApplyFailure>();
+
+        foreach (var group in plan.Groups)
+        {
+            var previewGroup = new ImportPlanPreviewGroup
+            {
+                Param = group.Param,
+                Value = group.Value,
+                ElementIds = new List<long>(group.ElementIds)
+            };
+
+            for (var off = 0; off < group.ElementIds.Count; off += batchSize)
+            {
+                var slice = group.ElementIds.GetRange(off, Math.Min(batchSize, group.ElementIds.Count - off));
+                var resp = await client.SetParameterAsync(new SetRequest
+                {
+                    ElementIds = slice,
+                    Param = group.Param,
+                    Value = group.Value,
+                    DryRun = true
+                });
+
+                if (!resp.Success)
+                {
+                    failures.Add(new PlanApplyFailure
+                    {
+                        Param = group.Param,
+                        Value = group.Value,
+                        ElementIds = slice,
+                        Message = resp.Error ?? "unknown"
+                    });
+                    break;
+                }
+
+                var data = resp.Data;
+                if (data == null || data.Preview.Count != data.Affected)
+                {
+                    failures.Add(new PlanApplyFailure
+                    {
+                        Param = group.Param,
+                        Value = group.Value,
+                        ElementIds = slice,
+                        Message = data == null
+                            ? "dry-run returned no data"
+                            : $"dry-run returned {data.Affected} affected element(s) but {data.Preview.Count} preview row(s)"
+                    });
+                    break;
+                }
+
+                previewGroup.Preview.AddRange(data.Preview);
+            }
+
+            previewGroups.Add(previewGroup);
+        }
+
+        return (previewGroups, failures);
     }
 
     private static bool ValidatePolicies(string onMissing, string onDuplicate, int batchSize, TextWriter output)

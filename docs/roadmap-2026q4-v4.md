@@ -162,10 +162,11 @@ Scope:
 
 - Add explicit plan files for mutating commands:
   `set --plan-output`, `import --plan-output`, `fix --plan-output`.
-  First slice shipped for `set --plan-output` with frozen element IDs.
+  First slices shipped for `set --plan-output` and `import --plan-output`
+  with frozen element IDs.
 - Add `revitcli plan show <file>` and `revitcli plan apply <file> --yes`.
-  First slice shipped for set plans, including `--dry-run`, `--max-changes`,
-  and sidecar receipt files.
+  First slices shipped for set/import plans, including `--dry-run`,
+  `--max-changes`, and sidecar receipt files.
 - Add `--plan-output json` for Codex CLI summaries and approval prompts.
 - Standardize receipts: command, model path, document version, affected
   ids, old/new values, timestamp, operator, baseline path, journal path.

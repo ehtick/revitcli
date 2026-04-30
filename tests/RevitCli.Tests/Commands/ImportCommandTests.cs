@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -9,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Commands;
+using RevitCli.Plans;
 using RevitCli.Shared;
 using Xunit;
 
@@ -132,6 +134,99 @@ public class ImportCommandTests : IDisposable
         Assert.Equal(0, handler.SetCalls);
         Assert.Contains("Dry run:", sw.ToString());
         Assert.Contains("[Lock] = 'YALE-500'", sw.ToString());
+    }
+
+    [Fact]
+    public async Task Execute_PlanOutput_WritesPreviewedImportPlan()
+    {
+        var path = WriteCsv("a.csv", "Mark,Lock\nW01,YALE-500\nW02,YALE-500\n");
+        var planPath = Path.Combine(_tempDir, "import.plan.json");
+        var elements = new[]
+        {
+            new ElementInfo { Id = 101, Name = "Door 1", Parameters = new() { ["Mark"] = "W01" } },
+            new ElementInfo { Id = 102, Name = "Door 2", Parameters = new() { ["Mark"] = "W02" } }
+        };
+        var captured = new List<SetRequest>();
+        var (client, handler) = MakeClient(elements, req =>
+        {
+            captured.Add(req);
+            return new SetResult
+            {
+                Affected = req.ElementIds!.Count,
+                Preview = req.ElementIds.Select(id => new SetPreviewItem
+                {
+                    Id = id,
+                    Name = $"Door {id}",
+                    OldValue = "OLD",
+                    NewValue = req.Value
+                }).ToList()
+            };
+        });
+        var sw = new StringWriter();
+
+        var code = await ImportCommand.ExecuteAsync(
+            client,
+            path,
+            "doors",
+            "Mark",
+            null,
+            dryRun: false,
+            onMissing: "warn",
+            onDuplicate: "error",
+            encodingHint: "auto",
+            batchSize: 100,
+            output: sw,
+            planOutputPath: planPath);
+
+        Assert.Equal(0, code);
+        Assert.Equal(1, handler.SetCalls);
+        Assert.True(captured[0].DryRun);
+        Assert.True(File.Exists(planPath));
+        Assert.Contains("Plan written", sw.ToString());
+        Assert.Contains("revitcli plan show", sw.ToString());
+
+        var plan = SetPlanFileStore.LoadImport(planPath);
+        Assert.Equal("import", plan.Type);
+        Assert.Equal(1, plan.Summary.GroupCount);
+        Assert.Equal(2, plan.Summary.ElementWrites);
+        Assert.Equal("doors", plan.Summary.Category);
+        Assert.Equal("Mark", plan.Summary.MatchBy);
+        Assert.Equal("Lock", plan.Groups[0].Param);
+        Assert.Equal("YALE-500", plan.Groups[0].Value);
+        Assert.Equal(new List<long> { 101, 102 }, plan.Groups[0].ElementIds);
+        Assert.Equal(2, plan.PreviewGroups[0].Preview.Count);
+    }
+
+    [Fact]
+    public async Task Execute_PlanOutput_PreviewFailure_Returns1WithoutPlan()
+    {
+        var path = WriteCsv("a.csv", "Mark,Lock\nW01,YALE-500\n");
+        var planPath = Path.Combine(_tempDir, "import.plan.json");
+        var elements = new[]
+        {
+            new ElementInfo { Id = 101, Name = "Door 1", Parameters = new() { ["Mark"] = "W01" } }
+        };
+        var (client, _) = MakeClient(elements, _ => throw new InvalidOperationException("parameter is read-only"));
+        var sw = new StringWriter();
+
+        var code = await ImportCommand.ExecuteAsync(
+            client,
+            path,
+            "doors",
+            "Mark",
+            null,
+            dryRun: false,
+            onMissing: "warn",
+            onDuplicate: "error",
+            encodingHint: "auto",
+            batchSize: 100,
+            output: sw,
+            planOutputPath: planPath);
+
+        Assert.Equal(1, code);
+        Assert.False(File.Exists(planPath));
+        Assert.Contains("preview failed", sw.ToString());
+        Assert.Contains("parameter is read-only", sw.ToString());
     }
 
     [Fact]
