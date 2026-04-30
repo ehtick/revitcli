@@ -6,3 +6,5 @@ obj/
 *.DotSettings.user
 nupkg/
 .DS_Store
+.artifacts/
+.revitcli/
