@@ -87,7 +87,8 @@ public class InspectCommandTests
         Assert.Contains("Mark", output);
         Assert.Contains("100", output);
         Assert.Contains("Fire Rating", output);
-        Assert.Contains("revitcli set doors --param \"Fire Rating\" --value \"<value>\" --dry-run", output);
+        Assert.Contains("unknown", output);
+        Assert.DoesNotContain("revitcli set doors --param \"Fire Rating\"", output);
         Assert.Contains("Dry-run probe", output);
     }
 
@@ -119,7 +120,7 @@ public class InspectCommandTests
         Assert.Contains("\"name\": \"Mark\"", output);
         Assert.Contains("\"coveragePercent\": 100", output);
         Assert.Contains("\"writeStatus\": \"unknown\"", output);
-        Assert.Contains("\"dryRunProbeCommand\"", output);
+        Assert.Contains("\"dryRunProbeCommand\": \"\"", output);
     }
 
     [Fact]

@@ -433,7 +433,7 @@ public static class InspectCommand
                     writeStatus,
                     stat.StorageTypes.OrderBy(type => type, StringComparer.OrdinalIgnoreCase).ToArray(),
                     stat.SampleValues.ToArray(),
-                    canWrite == false ? "" : BuildDryRunProbeCommand(category, stat.Name));
+                    canWrite == true ? BuildDryRunProbeCommand(category, stat.Name) : "");
             })
             .ToArray();
     }
