@@ -85,6 +85,7 @@ revitcli history trend --window 14d
 Expected command path:
 
 ```powershell
+revitcli inspect params doors
 revitcli query doors --filter "name contains Fire" --output table
 revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "60min" --dry-run
 revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "60min" --plan-output .revitcli/plans/fire-rating.json
@@ -95,7 +96,7 @@ revitcli plan apply .revitcli/plans/fire-rating.json --dry-run
 ## Required RevitCli Improvements
 
 - More `inspect` commands so Codex CLI can discover categories,
-  parameters, schedules, and command paths without guessing.
+  writable parameters, schedules, and command paths without guessing.
 - `inspect sheets` as a CLI-only discovery surface so Codex CLI can
   identify sheets, review issues, key title-block parameters, and export
   candidates before it builds a publish/export plan.

@@ -15,6 +15,7 @@ Revit UI.
 ```bash
 revitcli status                                              # connection check
 revitcli inspect sheets --issues-only                        # find sheet blockers
+revitcli inspect params doors                                # find writable parameters
 revitcli query walls --filter "height > 3000" --output json  # query
 revitcli schedule export --name "Door Schedule" --output csv # export a schedule
 revitcli export --format dwg --sheets "A1*" --output-dir .   # batch export
@@ -59,7 +60,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli score` | Model health score from `check` results |
 | `revitcli coverage` | Profile coverage report (which checks ran) |
 | `revitcli inspect categories` | Discover common categories and next commands |
-| `revitcli inspect params <category>` | Discover parameters seen on a category |
+| `revitcli inspect params <category>` | Discover parameter coverage, write status, storage type, and dry-run probes |
 | `revitcli inspect schedules` | Discover schedules and ready-to-run export commands |
 | `revitcli inspect sheets` | Discover sheets, issues, filters, and export candidates for CLI/Codex workflows |
 | `revitcli examples <topic>` | Show copy-paste examples for common architect workflows |
@@ -87,6 +88,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - Pseudo fields: `id`, `name`, `category`, `type` + parameter fields with numeric unit conversion
 - Duplicate parameter disambiguation via `[N]` suffix
 - Output formats: table (Spectre.Console), JSON (scriptable), CSV
+- `inspect params <category>` shows value coverage, writable/read-only status, storage types, and ready-to-copy `set --dry-run` probes
 - `set` supports category+filter, `--id`, `--ids-from FILE`, or stdin pipe; all-or-nothing Transaction; `--dry-run` previews
 - `set --plan-output .revitcli/plans/fire-rating.json` writes a frozen-ID plan; review with `revitcli plan show`, then apply with `revitcli plan apply <file> --yes`
 - `import --plan-output .revitcli/plans/door-hardware.json` validates CSV writes through dry-run groups before writing a saved plan

@@ -130,7 +130,10 @@ Candidate commands:
   query endpoint.
 - `revitcli inspect params <category>`: show common parameters, sample
   values, coverage, and dry-run probe command examples. First CLI-only
-  slice shipped via the existing query endpoint.
+  slice shipped via the existing query endpoint. Second slice adds
+  query-side `parameterMetadata` so the command can surface writable
+  status, read-only fields, storage types, and safer `set --dry-run`
+  probes.
 - `revitcli inspect schedules`: list schedules, fields, categories, and
   export readiness. First slice shipped as a CLI-side wrapper around
   existing schedule discovery.
@@ -374,9 +377,10 @@ RevitCli into a hidden AI/MCP platform instead of a dependable CLI.
 1. Keep MCP PRs closed; do not open new MCP work.
 2. Keep existing `revitcli mcp serve` hidden and deprecated; remove it only
    with a future breaking-change notice.
-3. Continue v2.2 with installer hardening, live smoke evidence, release
-   checklist cleanup, and Codex CLI workflow docs.
-4. Extend inspect/discover with `inspect sheets` and richer writable
-   metadata when an add-in restart is acceptable.
+3. Continue v2.2 release packaging with version bump, tag flow, and any
+   remaining CI cleanup.
+4. Extend inspect/discover beyond the shipped sheets and writable parameter
+   metadata into schedule/parameter workflows that directly support
+   delivery-day tasks.
 5. Collect three real repetitive architect prompts and turn them into
    v2.5 workflow acceptance examples.

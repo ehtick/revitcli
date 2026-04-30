@@ -51,7 +51,8 @@ public sealed class RealRevitOperations : IRevitOperations
             Name = !string.IsNullOrWhiteSpace(element.Name) ? element.Name : element.GetType().Name,
             Category = element.Category?.Name ?? "",
             TypeName = ResolveTypeName(doc, element),
-            Parameters = ReadVisibleParameters(doc, element)
+            Parameters = ReadVisibleParameters(doc, element),
+            ParameterMetadata = ReadParameterMetadata(doc, element)
         };
     }
 
@@ -98,6 +99,51 @@ public sealed class RealRevitOperations : IRevitOperations
 
         return result;
     }
+
+    private static List<ElementParameterInfo> ReadParameterMetadata(Document doc, Element element)
+    {
+        var result = new List<ElementParameterInfo>();
+        var nameCounts = new Dictionary<string, int>();
+
+        foreach (var param in element.GetOrderedParameters())
+        {
+            var definitionName = param.Definition?.Name ?? "";
+            if (string.IsNullOrWhiteSpace(definitionName))
+                continue;
+
+            if (!nameCounts.TryGetValue(definitionName, out var count))
+            {
+                count = 1;
+                nameCounts[definitionName] = count;
+            }
+            else
+            {
+                count++;
+                nameCounts[definitionName] = count;
+            }
+
+            var commandName = count == 1
+                ? definitionName
+                : $"{definitionName} [{count}]";
+            var value = param.HasValue ? FormatParameterValue(doc, param) : null;
+
+            result.Add(new ElementParameterInfo
+            {
+                Name = commandName,
+                DefinitionName = definitionName,
+                Value = value,
+                StorageType = param.StorageType.ToString(),
+                HasValue = !string.IsNullOrWhiteSpace(value),
+                IsReadOnly = param.IsReadOnly,
+                CanWrite = !param.IsReadOnly && IsSupportedWritableStorageType(param.StorageType)
+            });
+        }
+
+        return result;
+    }
+
+    private static bool IsSupportedWritableStorageType(StorageType storageType) =>
+        storageType is StorageType.String or StorageType.Integer or StorageType.Double or StorageType.ElementId;
 
     private static string? FormatParameterValue(Document doc, Parameter parameter)
     {

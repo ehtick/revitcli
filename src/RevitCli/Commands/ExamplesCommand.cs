@@ -54,6 +54,7 @@ public static class ExamplesCommand
             "Preview and save a reviewed parameter-write plan before applying.",
             new[]
             {
+                "revitcli inspect params doors",
                 "revitcli set doors --filter \"id = 12345\" --param \"Fire Rating\" --value \"60min\" --dry-run",
                 "revitcli set doors --filter \"Mark = D-01\" --param \"Fire Rating\" --value \"60min\" --plan-output .revitcli/plans/fire-rating.json",
                 "revitcli plan show .revitcli/plans/fire-rating.json",

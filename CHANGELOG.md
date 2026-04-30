@@ -49,6 +49,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   architect workflows such as inspect, sheets, schedule export, safe set/import
   plans, publish, doctor/smoke, and journal verification.
 
+### Added — v2.3 inspect/discover
+
+- Element query responses now include `parameterMetadata` with command-ready
+  parameter names, values, storage type, read-only state, and write-candidate
+  status while keeping the existing `parameters` dictionary for compatibility.
+- `revitcli inspect params <category>` now aggregates writable status, storage
+  types, value coverage, and dry-run `set` probes so Codex CLI can choose safer
+  parameter write candidates before planning a batch edit.
+
 ### Added — v1.6 history (complete)
 
 - `revitcli history` command cluster — local snapshot timeline under

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -117,7 +118,138 @@ public class InspectCommandTests
         Assert.Equal(0, exitCode);
         Assert.Contains("\"name\": \"Mark\"", output);
         Assert.Contains("\"coveragePercent\": 100", output);
+        Assert.Contains("\"writeStatus\": \"unknown\"", output);
         Assert.Contains("\"dryRunProbeCommand\"", output);
+    }
+
+    [Fact]
+    public async Task Params_Json_UsesParameterMetadataForWritableDiscovery()
+    {
+        var elements = new[]
+        {
+            new ElementInfo
+            {
+                Id = 1,
+                Name = "Door 1",
+                Category = "Doors",
+                ParameterMetadata =
+                {
+                    new ElementParameterInfo
+                    {
+                        Name = "Mark",
+                        DefinitionName = "Mark",
+                        Value = "D-01",
+                        StorageType = "String",
+                        HasValue = true,
+                        CanWrite = true
+                    },
+                    new ElementParameterInfo
+                    {
+                        Name = "Area",
+                        DefinitionName = "Area",
+                        Value = "12 sqm",
+                        StorageType = "Double",
+                        HasValue = true,
+                        IsReadOnly = true,
+                        CanWrite = false
+                    }
+                }
+            },
+            new ElementInfo
+            {
+                Id = 2,
+                Name = "Door 2",
+                Category = "Doors",
+                ParameterMetadata =
+                {
+                    new ElementParameterInfo
+                    {
+                        Name = "Mark",
+                        DefinitionName = "Mark",
+                        StorageType = "String",
+                        HasValue = false,
+                        CanWrite = true
+                    },
+                    new ElementParameterInfo
+                    {
+                        Name = "Area",
+                        DefinitionName = "Area",
+                        Value = "14 sqm",
+                        StorageType = "Double",
+                        HasValue = true,
+                        IsReadOnly = true,
+                        CanWrite = false
+                    }
+                }
+            }
+        };
+        var response = ApiResponse<ElementInfo[]>.Ok(elements);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteParamsAsync(client, "doors", "json", writer);
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var items = document.RootElement
+            .EnumerateArray()
+            .ToDictionary(item => item.GetProperty("name").GetString()!);
+        var mark = items["Mark"];
+        var area = items["Area"];
+
+        Assert.Equal("Mark", mark.GetProperty("name").GetString());
+        Assert.True(mark.GetProperty("canWrite").GetBoolean());
+        Assert.Equal("writable", mark.GetProperty("writeStatus").GetString());
+        Assert.Equal(50, mark.GetProperty("valueCoveragePercent").GetDouble());
+        Assert.Equal(2, mark.GetProperty("writableOn").GetInt32());
+        Assert.Equal("String", mark.GetProperty("storageTypes")[0].GetString());
+        Assert.Contains("--param \"Mark\"", mark.GetProperty("dryRunProbeCommand").GetString());
+
+        Assert.Equal("Area", area.GetProperty("name").GetString());
+        Assert.False(area.GetProperty("canWrite").GetBoolean());
+        Assert.Equal("read-only", area.GetProperty("writeStatus").GetString());
+        Assert.Equal("", area.GetProperty("dryRunProbeCommand").GetString());
+    }
+
+    [Fact]
+    public async Task Params_Table_PrintsWritableAndTypeColumns()
+    {
+        var elements = new[]
+        {
+            new ElementInfo
+            {
+                Id = 1,
+                Name = "Door 1",
+                Category = "Doors",
+                ParameterMetadata =
+                {
+                    new ElementParameterInfo
+                    {
+                        Name = "Fire Rating",
+                        DefinitionName = "Fire Rating",
+                        Value = "60min",
+                        StorageType = "String",
+                        HasValue = true,
+                        CanWrite = true
+                    }
+                }
+            }
+        };
+        var response = ApiResponse<ElementInfo[]>.Ok(elements);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteParamsAsync(client, "doors", "table", writer);
+
+        var output = writer.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Write", output);
+        Assert.Contains("Type", output);
+        Assert.Contains("writable", output);
+        Assert.Contains("String", output);
+        Assert.Contains("revitcli set doors --param \"Fire Rating\" --value \"<value>\" --dry-run", output);
     }
 
     [Fact]

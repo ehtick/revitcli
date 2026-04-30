@@ -353,12 +353,18 @@ public static class InspectCommand
             return 0;
         }
 
-        await output.WriteLineAsync($"{"Parameter",-28} {"Seen",-8} {"Coverage",-10} {"Samples",-30} Dry-run probe");
-        await output.WriteLineAsync(new string('-', 130));
+        await output.WriteLineAsync($"{"Parameter",-28} {"Seen",-8} {"Values",-8} {"Write",-12} {"Type",-12} {"Samples",-30} Dry-run probe");
+        await output.WriteLineAsync(new string('-', 154));
         foreach (var item in items)
         {
+            var storageTypes = item.StorageTypes.Length == 0
+                ? "unknown"
+                : string.Join("/", item.StorageTypes);
+            var dryRunProbe = string.IsNullOrWhiteSpace(item.DryRunProbeCommand)
+                ? "-"
+                : item.DryRunProbeCommand;
             await output.WriteLineAsync(
-                $"{TrimForTable(item.Name, 28),-28} {item.SeenOn,-8} {item.CoveragePercent,8:0.#}%  {TrimForTable(string.Join(" | ", item.SampleValues), 30),-30} {item.DryRunProbeCommand}");
+                $"{TrimForTable(item.Name, 28),-28} {item.SeenOn,-8} {item.ValueCoveragePercent,6:0.#}%  {item.WriteStatus,-12} {TrimForTable(storageTypes, 12),-12} {TrimForTable(string.Join(" | ", item.SampleValues), 30),-30} {dryRunProbe}");
         }
 
         return 0;
@@ -369,19 +375,38 @@ public static class InspectCommand
         var stats = new Dictionary<string, ParameterStats>(StringComparer.OrdinalIgnoreCase);
         foreach (var element in elements)
         {
-            foreach (var (name, value) in element.Parameters)
+            if (element.ParameterMetadata.Count > 0)
             {
-                if (!stats.TryGetValue(name, out var stat))
+                foreach (var parameter in element.ParameterMetadata.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Name)))
                 {
-                    stat = new ParameterStats(name);
-                    stats[name] = stat;
+                    var stat = GetParameterStats(stats, parameter.Name);
+                    stat.SeenOn++;
+                    stat.HasWriteMetadata = true;
+                    if (parameter.CanWrite)
+                        stat.WritableOn++;
+                    if (parameter.IsReadOnly)
+                        stat.ReadOnlyOn++;
+                    if (!string.IsNullOrWhiteSpace(parameter.StorageType))
+                        stat.StorageTypes.Add(parameter.StorageType);
+
+                    if (!string.IsNullOrWhiteSpace(parameter.Value))
+                    {
+                        stat.ValueSeenOn++;
+                        AddSampleValue(stat, parameter.Value);
+                    }
                 }
 
+                continue;
+            }
+
+            foreach (var (name, value) in element.Parameters)
+            {
+                var stat = GetParameterStats(stats, name);
                 stat.SeenOn++;
-                if (!string.IsNullOrWhiteSpace(value) && stat.SampleValues.Count < 3
-                    && !stat.SampleValues.Contains(value, StringComparer.OrdinalIgnoreCase))
+                if (!string.IsNullOrWhiteSpace(value))
                 {
-                    stat.SampleValues.Add(value);
+                    stat.ValueSeenOn++;
+                    AddSampleValue(stat, value);
                 }
             }
         }
@@ -390,13 +415,60 @@ public static class InspectCommand
         return stats.Values
             .OrderByDescending(stat => stat.SeenOn)
             .ThenBy(stat => stat.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(stat => new ParameterInspectItem(
-                stat.Name,
-                stat.SeenOn,
-                Math.Round(stat.SeenOn * 100.0 / denominator, 1),
-                stat.SampleValues.ToArray(),
-                BuildDryRunProbeCommand(category, stat.Name)))
+            .Select(stat =>
+            {
+                var writeStatus = BuildWriteStatus(stat);
+                var canWrite = stat.HasWriteMetadata
+                    ? stat.WritableOn > 0
+                    : (bool?)null;
+                return new ParameterInspectItem(
+                    stat.Name,
+                    stat.SeenOn,
+                    Math.Round(stat.SeenOn * 100.0 / denominator, 1),
+                    stat.ValueSeenOn,
+                    Math.Round(stat.ValueSeenOn * 100.0 / denominator, 1),
+                    stat.HasWriteMetadata ? stat.WritableOn : null,
+                    stat.HasWriteMetadata ? Math.Round(stat.WritableOn * 100.0 / denominator, 1) : null,
+                    canWrite,
+                    writeStatus,
+                    stat.StorageTypes.OrderBy(type => type, StringComparer.OrdinalIgnoreCase).ToArray(),
+                    stat.SampleValues.ToArray(),
+                    canWrite == false ? "" : BuildDryRunProbeCommand(category, stat.Name));
+            })
             .ToArray();
+    }
+
+    private static ParameterStats GetParameterStats(Dictionary<string, ParameterStats> stats, string name)
+    {
+        if (!stats.TryGetValue(name, out var stat))
+        {
+            stat = new ParameterStats(name);
+            stats[name] = stat;
+        }
+
+        return stat;
+    }
+
+    private static void AddSampleValue(ParameterStats stat, string value)
+    {
+        if (stat.SampleValues.Count < 3
+            && !stat.SampleValues.Contains(value, StringComparer.OrdinalIgnoreCase))
+        {
+            stat.SampleValues.Add(value);
+        }
+    }
+
+    private static string BuildWriteStatus(ParameterStats stat)
+    {
+        if (!stat.HasWriteMetadata)
+            return "unknown";
+        if (stat.WritableOn == stat.SeenOn)
+            return "writable";
+        if (stat.WritableOn > 0)
+            return "mixed";
+        if (stat.ReadOnlyOn == stat.SeenOn)
+            return "read-only";
+        return "not-writable";
     }
 
     private static string BuildExportCommand(string scheduleName)
@@ -606,6 +678,13 @@ public static class InspectCommand
         string Name,
         int SeenOn,
         double CoveragePercent,
+        int ValueSeenOn,
+        double ValueCoveragePercent,
+        int? WritableOn,
+        double? WritableCoveragePercent,
+        bool? CanWrite,
+        string WriteStatus,
+        string[] StorageTypes,
         string[] SampleValues,
         string DryRunProbeCommand);
 
@@ -654,6 +733,11 @@ public static class InspectCommand
 
         public string Name { get; }
         public int SeenOn { get; set; }
+        public int ValueSeenOn { get; set; }
+        public int WritableOn { get; set; }
+        public int ReadOnlyOn { get; set; }
+        public bool HasWriteMetadata { get; set; }
         public List<string> SampleValues { get; } = new();
+        public HashSet<string> StorageTypes { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }
