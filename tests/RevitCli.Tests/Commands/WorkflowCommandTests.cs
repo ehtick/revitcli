@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RevitCli.Commands;
+using RevitCli.Workflows;
 
 namespace RevitCli.Tests.Commands;
 
@@ -688,11 +689,64 @@ steps:
             step => step.GetProperty("status").GetString() == "failed");
     }
 
+    [Fact]
+    public async Task RunProcess_DrainsStdoutAndStderrConcurrently()
+    {
+        var command = CreateStdioPressureCommand();
+        var step = new WorkflowStepSimulation(
+            1,
+            "stdio pressure",
+            "read-only",
+            command,
+            RequiresApproval: false);
+        var output = new StringWriter();
+
+        var runTask = WorkflowCommand.RunProcessAsync(step, output);
+        var completed = await Task.WhenAny(runTask, Task.Delay(TimeSpan.FromSeconds(10)));
+
+        Assert.Same(runTask, completed);
+        Assert.Equal(0, await runTask);
+        var text = output.ToString();
+        Assert.Contains("stdout-ready", text);
+        Assert.Contains("stderr-ready", text);
+    }
+
     private static void WriteWorkflow(string path, string yaml)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, yaml);
     }
+
+    private string CreateStdioPressureCommand()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var path = Path.Combine(_root, "stdio-pressure.cmd");
+            File.WriteAllText(path, """
+@echo off
+echo stdout-ready
+for /L %%i in (1,1,12000) do echo stderr-line-%%i 1>&2
+echo stderr-ready 1>&2
+""");
+            return $"cmd /d /c {QuoteCommandArgument(path)}";
+        }
+
+        var scriptPath = Path.Combine(_root, "stdio-pressure.sh");
+        File.WriteAllText(scriptPath, """
+#!/bin/sh
+printf '%s\n' stdout-ready
+i=0
+while [ "$i" -lt 12000 ]; do
+  i=$((i + 1))
+  printf 'stderr-line-%s\n' "$i" >&2
+done
+printf '%s\n' stderr-ready >&2
+""");
+        return $"/bin/sh {QuoteCommandArgument(scriptPath)}";
+    }
+
+    private static string QuoteCommandArgument(string value) =>
+        $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
     private void WriteJournal(params string[] lines)
     {

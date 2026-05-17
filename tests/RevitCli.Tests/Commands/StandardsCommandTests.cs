@@ -143,6 +143,126 @@ required:
     }
 
     [Fact]
+    public async Task Validate_ProfileOutsideProject_ReturnsFailure()
+    {
+        var externalDir = Path.Combine(Path.GetTempPath(), "revitcli-standards-external-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalDir);
+        var externalProfile = Path.Combine(externalDir, ".revitcli.yml");
+        File.Copy(Path.Combine(_root, ".revitcli.yml"), externalProfile);
+        try
+        {
+            WriteStandards($$"""
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+required:
+  profiles: [{{YamlSingleQuoted(externalProfile)}}]
+  workflows: [pre-issue]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  familyRules: [name-non-empty]
+""");
+            var output = new StringWriter();
+
+            var exitCode = await StandardsCommand.ExecuteValidateAsync(null, _root, "json", output);
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            var issues = document.RootElement.GetProperty("issues").EnumerateArray().ToArray();
+            Assert.Contains(issues, issue =>
+                issue.GetProperty("path").GetString() == "required.profiles[0]" &&
+                issue.GetProperty("message").GetString()!.Contains("inside project directory"));
+        }
+        finally
+        {
+            Directory.Delete(externalDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Validate_OutputPathOutsideProject_ReturnsFailure()
+    {
+        var externalDir = Path.Combine(Path.GetTempPath(), "revitcli-standards-output-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalDir);
+        try
+        {
+            WriteStandards($$"""
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+required:
+  profiles: [.revitcli.yml]
+  workflows: [pre-issue]
+  outputPaths: [{{YamlSingleQuoted(externalDir)}}]
+  scheduleTemplates: [doors]
+  familyRules: [name-non-empty]
+""");
+            var output = new StringWriter();
+
+            var exitCode = await StandardsCommand.ExecuteValidateAsync(null, _root, "json", output);
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            var issues = document.RootElement.GetProperty("issues").EnumerateArray().ToArray();
+            Assert.Contains(issues, issue =>
+                issue.GetProperty("path").GetString() == "required.outputPaths[0]" &&
+                issue.GetProperty("message").GetString()!.Contains("inside project directory"));
+        }
+        finally
+        {
+            Directory.Delete(externalDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Validate_WorkflowOutsideProject_ReturnsFailureWithoutNotFoundNoise()
+    {
+        var externalDir = Path.Combine(Path.GetTempPath(), "revitcli-standards-workflow-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalDir);
+        var workflowPath = Path.Combine(externalDir, "pre-issue.yml");
+        File.Copy(Path.Combine(_root, ".revitcli", "workflows", "pre-issue.yml"), workflowPath);
+        try
+        {
+            WriteStandards($$"""
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+required:
+  profiles: [.revitcli.yml]
+  workflows: [{{YamlSingleQuoted(workflowPath)}}]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  familyRules: [name-non-empty]
+""");
+            var output = new StringWriter();
+
+            var exitCode = await StandardsCommand.ExecuteValidateAsync(null, _root, "json", output);
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            var issues = document.RootElement.GetProperty("issues").EnumerateArray().ToArray();
+            Assert.Contains(issues, issue =>
+                issue.GetProperty("path").GetString() == "required.workflows[0]" &&
+                issue.GetProperty("message").GetString()!.Contains("inside project directory"));
+            Assert.DoesNotContain(issues, issue =>
+                issue.GetProperty("message").GetString()!.Contains("workflow not found"));
+        }
+        finally
+        {
+            Directory.Delete(externalDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Validate_UnknownFamilyRule_ReturnsFailure()
     {
         WriteStandards("""
@@ -395,6 +515,9 @@ steps:
 
     private void WriteStandards(string yaml) =>
         File.WriteAllText(Path.Combine(_root, ".revitcli", "standards.yml"), yaml);
+
+    private static string YamlSingleQuoted(string value) =>
+        $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
 
     private static void WriteDefaultStandards(string root) =>
         File.WriteAllText(Path.Combine(root, ".revitcli", "standards.yml"), """

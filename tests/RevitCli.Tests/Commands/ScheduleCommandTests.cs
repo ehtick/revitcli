@@ -202,6 +202,51 @@ public class ScheduleCommandTests
     }
 
     [Fact]
+    public async Task Export_OutputJson_EmptyRows_PrintsScheduleDataJson()
+    {
+        var data = new ScheduleData
+        {
+            Columns = new List<string> { "Name", "Width" },
+            Rows = new List<Dictionary<string, string>>(),
+            TotalRows = 0
+        };
+        var response = ApiResponse<ScheduleData>.Ok(data);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteExportAsync(
+            client, null, "Door Schedule", null, null, null, false, "json", null, writer);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        Assert.Equal(2, json.RootElement.GetProperty("columns").GetArrayLength());
+        Assert.Empty(json.RootElement.GetProperty("rows").EnumerateArray());
+        Assert.Equal(0, json.RootElement.GetProperty("totalRows").GetInt32());
+    }
+
+    [Fact]
+    public async Task Export_OutputCsv_EmptyRows_PrintsHeader()
+    {
+        var data = new ScheduleData
+        {
+            Columns = new List<string> { "Name", "Width" },
+            Rows = new List<Dictionary<string, string>>(),
+            TotalRows = 0
+        };
+        var response = ApiResponse<ScheduleData>.Ok(data);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteExportAsync(
+            client, null, "Door Schedule", null, null, null, false, "csv", null, writer);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("Name,Width", writer.ToString().Trim());
+    }
+
+    [Fact]
     public async Task Export_OutputMarkdown_PrintsRows()
     {
         var data = new ScheduleData

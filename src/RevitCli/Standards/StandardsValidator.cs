@@ -248,7 +248,9 @@ public static class StandardsValidator
                 continue;
             }
 
-            var fullPath = ResolveUnderProject(projectRoot, path);
+            if (!TryResolveUnderProject(projectRoot, path, $"required.profiles[{i}]", issues, out var fullPath))
+                continue;
+
             if (!File.Exists(fullPath))
             {
                 issues.Add(new StandardsValidationIssue(
@@ -289,13 +291,22 @@ public static class StandardsValidator
                 continue;
             }
 
-            var path = ResolveWorkflowPath(projectRoot, name);
+            var path = ResolveWorkflowPath(
+                projectRoot,
+                name,
+                $"required.workflows[{i}]",
+                issues,
+                out var pathInvalid);
             if (path == null)
             {
-                issues.Add(new StandardsValidationIssue(
-                    StandardsValidationSeverity.Error,
-                    $"required.workflows[{i}]",
-                    $"workflow not found: {name}"));
+                if (!pathInvalid)
+                {
+                    issues.Add(new StandardsValidationIssue(
+                        StandardsValidationSeverity.Error,
+                        $"required.workflows[{i}]",
+                        $"workflow not found: {name}"));
+                }
+
                 continue;
             }
 
@@ -340,7 +351,10 @@ public static class StandardsValidator
                 continue;
             }
 
-            if (!Directory.Exists(ResolveUnderProject(projectRoot, path)))
+            if (!TryResolveUnderProject(projectRoot, path, $"required.outputPaths[{i}]", issues, out var fullPath))
+                continue;
+
+            if (!Directory.Exists(fullPath))
             {
                 issues.Add(new StandardsValidationIssue(
                     StandardsValidationSeverity.Error,
@@ -417,25 +431,88 @@ public static class StandardsValidator
         }
     }
 
-    private static string? ResolveWorkflowPath(string projectRoot, string name)
+    private static string? ResolveWorkflowPath(
+        string projectRoot,
+        string name,
+        string issuePath,
+        List<StandardsValidationIssue> issues,
+        out bool pathInvalid)
     {
+        pathInvalid = false;
         var candidates = new List<string>();
         if (Path.HasExtension(name))
         {
-            candidates.Add(ResolveUnderProject(projectRoot, name));
-            candidates.Add(ResolveUnderProject(projectRoot, Path.Combine(WorkflowLoader.DefaultDirectory, name)));
+            candidates.Add(name);
+            if (!Path.IsPathFullyQualified(name))
+                candidates.Add(Path.Combine(WorkflowLoader.DefaultDirectory, name));
         }
         else
         {
-            candidates.Add(ResolveUnderProject(projectRoot, Path.Combine(WorkflowLoader.DefaultDirectory, name + ".yml")));
-            candidates.Add(ResolveUnderProject(projectRoot, Path.Combine(WorkflowLoader.DefaultDirectory, name + ".yaml")));
+            candidates.Add(Path.Combine(WorkflowLoader.DefaultDirectory, name + ".yml"));
+            candidates.Add(Path.Combine(WorkflowLoader.DefaultDirectory, name + ".yaml"));
         }
 
-        return candidates.FirstOrDefault(File.Exists);
+        foreach (var candidate in candidates)
+        {
+            if (!TryResolveUnderProject(projectRoot, candidate, issuePath, issues, out var fullPath))
+            {
+                pathInvalid = true;
+                continue;
+            }
+
+            if (File.Exists(fullPath))
+            {
+                return fullPath;
+            }
+        }
+
+        return null;
     }
 
-    private static string ResolveUnderProject(string projectRoot, string path) =>
-        Path.IsPathFullyQualified(path)
-            ? Path.GetFullPath(path)
-            : Path.GetFullPath(Path.Combine(projectRoot, path));
+    private static bool TryResolveUnderProject(
+        string projectRoot,
+        string path,
+        string issuePath,
+        List<StandardsValidationIssue> issues,
+        out string fullPath)
+    {
+        try
+        {
+            fullPath = Path.IsPathFullyQualified(path)
+                ? Path.GetFullPath(path)
+                : Path.GetFullPath(Path.Combine(projectRoot, path));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            fullPath = "";
+            issues.Add(new StandardsValidationIssue(
+                StandardsValidationSeverity.Error,
+                issuePath,
+                $"path is invalid: {path} ({ex.Message})"));
+            return false;
+        }
+
+        if (IsUnderDirectory(projectRoot, fullPath))
+            return true;
+
+        issues.Add(new StandardsValidationIssue(
+            StandardsValidationSeverity.Error,
+            issuePath,
+            $"path must stay inside project directory: {path}"));
+        return false;
+    }
+
+    private static bool IsUnderDirectory(string directory, string path)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var root = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var candidate = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return string.Equals(candidate, root, comparison) ||
+               candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison);
+    }
 }

@@ -1295,7 +1295,7 @@ public static class WorkflowCommand
         return string.IsNullOrWhiteSpace(slug) ? "workflow" : slug;
     }
 
-    private static async Task<int> RunProcessAsync(WorkflowStepSimulation step, TextWriter output)
+    internal static async Task<int> RunProcessAsync(WorkflowStepSimulation step, TextWriter output)
     {
         IReadOnlyList<string> tokens;
         try
@@ -1335,9 +1335,11 @@ public static class WorkflowCommand
                 return 1;
             }
 
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync();
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
 
             if (!string.IsNullOrWhiteSpace(stdout))
             {

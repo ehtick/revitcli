@@ -311,17 +311,12 @@ public static class ScheduleCommand
 
     private static string FormatScheduleData(ScheduleData data, string format)
     {
-        if (format == "markdown")
-            return RenderScheduleExportMarkdown(data);
-
-        if (data.Rows.Count == 0)
-            return "No data.";
-
         return format.ToLowerInvariant() switch
         {
             "json" => JsonSerializer.Serialize(data, PrettyJson),
             "csv" => FormatCsv(data),
-            _ => FormatTable(data),
+            "markdown" => RenderScheduleExportMarkdown(data),
+            _ => data.Rows.Count == 0 ? "No data." : FormatTable(data),
         };
     }
 

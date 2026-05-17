@@ -395,6 +395,51 @@ public class DeliverablesCommandTests
     }
 
     [Fact]
+    public async Task Bundle_ExternalReceiptOutputDirectory_ReturnsFailureWithoutIncludingFiles()
+    {
+        var dir = TempDir();
+        var externalDir = TempDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(externalDir, "outside.pdf"), "external");
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export", outputDir: externalDir);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath,
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteBundleAsync(
+                dir,
+                bundlePath: null,
+                dryRun: true,
+                force: false,
+                outputFormat: "json",
+                writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.False(root.GetProperty("valid").GetBoolean());
+            Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "output-dir-outside-project");
+            Assert.DoesNotContain(root.GetProperty("files").EnumerateArray(), file =>
+                file.GetProperty("sourcePath").GetString()!.StartsWith(externalDir, System.StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+            Directory.Delete(externalDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Bundle_WritesZipAndReceipt()
     {
         var dir = TempDir();

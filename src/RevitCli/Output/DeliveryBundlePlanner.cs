@@ -164,7 +164,31 @@ public static class DeliveryBundlePlanner
         int lineNumber,
         ISet<string> outputDirectories)
     {
-        var resolved = ResolvePath(report.ProjectDirectory, outputDir);
+        string resolved;
+        try
+        {
+            resolved = ResolvePath(report.ProjectDirectory, outputDir);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            report.Issues.Add(new DeliveryManifestIssue(
+                lineNumber,
+                "error",
+                "output-dir-invalid",
+                $"output directory path is invalid: {ex.Message}"));
+            return;
+        }
+
+        if (!IsUnderDirectory(report.ProjectDirectory, resolved))
+        {
+            report.Issues.Add(new DeliveryManifestIssue(
+                lineNumber,
+                "error",
+                "output-dir-outside-project",
+                $"output directory must be inside project directory: {resolved}"));
+            return;
+        }
+
         if (!outputDirectories.Add(resolved))
             return;
 
@@ -280,6 +304,20 @@ public static class DeliveryBundlePlanner
         return Path.IsPathRooted(path)
             ? Path.GetFullPath(path)
             : Path.GetFullPath(Path.Combine(projectRoot, path));
+    }
+
+    private static bool IsUnderDirectory(string directory, string path)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var root = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var candidate = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return string.Equals(candidate, root, comparison) ||
+               candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison);
     }
 
     private static bool TryGetString(JsonElement root, string propertyName, out string value)
