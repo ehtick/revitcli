@@ -1,0 +1,26 @@
+version: 1
+name: export-package
+description: Validate export readiness, dry-run, approved publish, and package review.
+steps:
+  - name: simulate export profile
+    run: revitcli profile simulate issue
+    mode: read-only
+  - name: list export-ready sheets
+    run: revitcli inspect sheets --ready-only
+    mode: read-only
+  - name: dry-run publish
+    run: revitcli publish issue --dry-run
+    mode: dry-run
+  - name: publish package
+    run: revitcli publish issue
+    mode: mutating
+    requiresApproval: true
+  - name: verify delivery manifest
+    run: revitcli deliverables verify --output markdown
+    mode: read-only
+  - name: preview delivery bundle
+    run: revitcli deliverables bundle --dry-run --output markdown
+    mode: dry-run
+  - name: verify operation journal
+    run: revitcli journal verify
+    mode: read-only

@@ -1,0 +1,20 @@
+version: 1
+name: weekly-health
+description: Weekly model-health snapshot, trend, and journal review.
+steps:
+  - name: capture weekly snapshot
+    run: revitcli history capture --source weekly-health
+    mode: mutating
+    requiresApproval: true
+  - name: review score history
+    run: revitcli score --history 30d
+    mode: read-only
+  - name: review score trend
+    run: revitcli history trend --metric score --window 30d
+    mode: read-only
+  - name: summarize journal
+    run: revitcli journal stats
+    mode: read-only
+  - name: show recent operations
+    run: revitcli journal show --limit 10
+    mode: read-only

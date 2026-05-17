@@ -22,6 +22,7 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\profiles\*.yml" CopyToOutputDirectory="PreserveNewest" Link="profiles\%(Filename)%(Extension)" />
+    <Content Include="..\..\profiles\workflows\*.yml" CopyToOutputDirectory="PreserveNewest" Link="profiles\workflows\%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />

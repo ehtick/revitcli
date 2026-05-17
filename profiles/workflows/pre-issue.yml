@@ -1,0 +1,26 @@
+version: 1
+name: pre-issue
+description: Pre-issue checks, dry-run publish, and optional history capture.
+steps:
+  - name: simulate issue profile
+    run: revitcli profile simulate issue
+    mode: read-only
+  - name: run issue checks
+    run: revitcli check issue --output table
+    mode: read-only
+  - name: inspect sheet blockers
+    run: revitcli inspect sheets --issues-only --output markdown
+    mode: read-only
+  - name: inspect schedule blockers
+    run: revitcli inspect schedules --issues-only --output markdown
+    mode: read-only
+  - name: verify sheet frame
+    run: revitcli sheets verify --issues-only
+    mode: read-only
+  - name: dry-run issue publish
+    run: revitcli publish issue --dry-run
+    mode: dry-run
+  - name: capture pre-issue history
+    run: revitcli history capture --source pre-issue
+    mode: mutating
+    requiresApproval: true

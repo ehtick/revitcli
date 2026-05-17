@@ -1,0 +1,525 @@
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
+using RevitCli.Commands;
+using Xunit;
+
+namespace RevitCli.Tests.Commands;
+
+public class DeliverablesCommandTests
+{
+    [Fact]
+    public async Task Verify_ValidManifest_ReturnsZero()
+    {
+        var dir = TempDir();
+        try
+        {
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export");
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath,
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "table", writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Delivery manifest valid", writer.ToString());
+            Assert.Contains("Entries verified: 1", writer.ToString());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task List_Table_ShowsEntriesAndReceiptStatus()
+    {
+        var dir = TempDir();
+        try
+        {
+            var receiptPath = WriteReceipt(dir, "publish-receipt.v1", "publish");
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "publish",
+                success = true,
+                dryRun = false,
+                pipeline = "issue",
+                receiptPath,
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteListAsync(dir, "table", writer);
+
+            var output = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("publish", output);
+            Assert.Contains("success", output);
+            Assert.Contains("receipt-ok", output);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task List_Markdown_PrintsHandoffTable()
+    {
+        var dir = TempDir();
+        try
+        {
+            var receiptPath = WriteReceipt(dir, "publish-receipt.v1", "publish");
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "publish",
+                success = true,
+                dryRun = false,
+                pipeline = "issue",
+                receiptPath,
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteListAsync(dir, "markdown", writer);
+
+            var output = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("# Delivery Manifest", output);
+            Assert.Contains("| Line | Kind | Outcome | Receipt | Timestamp | Receipt path |", output);
+            Assert.Contains("| 1 | publish | success | receipt-ok | 2026-05-17T12:00:00Z |", output);
+            Assert.Contains("## Issues", output);
+            Assert.Contains("- None.", output);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Stats_Json_SummarizesKindsAndOutcomes()
+    {
+        var dir = TempDir();
+        try
+        {
+            var exportReceipt = WriteReceipt(dir, "export-receipt.v1", "export");
+            var publishReceipt = WriteReceipt(dir, "publish-receipt.v1", "publish", "publish-issue.json");
+            WriteManifest(
+                dir,
+                new
+                {
+                    schemaVersion = "delivery-manifest.v1",
+                    kind = "export",
+                    success = true,
+                    dryRun = false,
+                    receiptPath = exportReceipt
+                },
+                new
+                {
+                    schemaVersion = "delivery-manifest.v1",
+                    kind = "publish",
+                    success = false,
+                    dryRun = false,
+                    receiptPath = publishReceipt
+                });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteStatsAsync(dir, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.Equal("deliverables.v1", root.GetProperty("schemaVersion").GetString());
+            Assert.True(root.GetProperty("success").GetBoolean());
+            Assert.True(root.GetProperty("valid").GetBoolean());
+            Assert.Equal(2, root.GetProperty("entryCount").GetInt32());
+            var stats = root.GetProperty("stats");
+            Assert.Equal(2, stats.GetProperty("entryCount").GetInt32());
+            Assert.Equal(0, stats.GetProperty("errorCount").GetInt32());
+            Assert.Contains(stats.GetProperty("kinds").EnumerateArray(), item =>
+                item.GetProperty("name").GetString() == "export" && item.GetProperty("count").GetInt32() == 1);
+            Assert.Contains(stats.GetProperty("outcomes").EnumerateArray(), item =>
+                item.GetProperty("name").GetString() == "failed" && item.GetProperty("count").GetInt32() == 1);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Stats_Markdown_PrintsReviewCounts()
+    {
+        var dir = TempDir();
+        try
+        {
+            var exportReceipt = WriteReceipt(dir, "export-receipt.v1", "export");
+            var publishReceipt = WriteReceipt(dir, "publish-receipt.v1", "publish", "publish-issue.json");
+            WriteManifest(
+                dir,
+                new
+                {
+                    schemaVersion = "delivery-manifest.v1",
+                    kind = "export",
+                    success = true,
+                    dryRun = false,
+                    receiptPath = exportReceipt
+                },
+                new
+                {
+                    schemaVersion = "delivery-manifest.v1",
+                    kind = "publish",
+                    success = false,
+                    dryRun = false,
+                    receiptPath = publishReceipt
+                });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteStatsAsync(dir, "markdown", writer);
+
+            var output = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("# Delivery Manifest Stats", output);
+            Assert.Contains("- Entries: `2`", output);
+            Assert.Contains("## Kinds", output);
+            Assert.Contains("| export | 1 |", output);
+            Assert.Contains("| publish | 1 |", output);
+            Assert.Contains("## Outcomes", output);
+            Assert.Contains("| failed | 1 |", output);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_MissingReceipt_ReturnsFailure()
+    {
+        var dir = TempDir();
+        try
+        {
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                receiptPath = Path.Combine(dir, ".revitcli", "receipts", "missing.json")
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.False(root.GetProperty("success").GetBoolean());
+            Assert.False(root.GetProperty("valid").GetBoolean());
+            Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "receipt-missing");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Markdown_PrintsIssues()
+    {
+        var dir = TempDir();
+        try
+        {
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                receiptPath = Path.Combine(dir, ".revitcli", "receipts", "missing.json")
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "markdown", writer);
+
+            var output = writer.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Contains("# Delivery Manifest Verification", output);
+            Assert.Contains("- Status: `FAIL`", output);
+            Assert.Contains("`ERROR` `line 1` `receipt-missing`", output);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MissingManifest_ListReturnsInfoButVerifyFails()
+    {
+        var dir = TempDir();
+        try
+        {
+            var listWriter = new StringWriter();
+            var listExit = await DeliverablesCommand.ExecuteListAsync(dir, "table", listWriter);
+
+            Assert.Equal(0, listExit);
+            Assert.Contains("No delivery manifest found", listWriter.ToString());
+
+            var verifyWriter = new StringWriter();
+            var verifyExit = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", verifyWriter);
+
+            Assert.Equal(1, verifyExit);
+            using var json = JsonDocument.Parse(verifyWriter.ToString());
+            Assert.Contains(json.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "manifest-missing");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Bundle_DryRunMarkdown_PrintsFileTable()
+    {
+        var dir = TempDir();
+        try
+        {
+            var outputDir = Path.Combine(dir, "deliverables", "pdf");
+            Directory.CreateDirectory(outputDir);
+            File.WriteAllText(Path.Combine(outputDir, "A101.pdf"), "pdf-bytes");
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export", outputDir: outputDir);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath,
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteBundleAsync(
+                dir,
+                bundlePath: null,
+                dryRun: true,
+                force: false,
+                outputFormat: "markdown",
+                writer);
+
+            var output = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("# Delivery Bundle", output);
+            Assert.Contains("- Mode: `dry-run`", output);
+            Assert.Contains("- Bundle written: `false`", output);
+            Assert.Contains("| Kind | Bytes | Archive path | Source path | Manifest line |", output);
+            Assert.Contains("| deliverable | 9 | deliverables/pdf/A101.pdf |", output);
+            Assert.Contains("## Issues", output);
+            Assert.Contains("- None.", output);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Bundle_DryRunJson_PlansReceiptsAndDeliverableFiles()
+    {
+        var dir = TempDir();
+        try
+        {
+            var outputDir = Path.Combine(dir, "deliverables", "pdf");
+            Directory.CreateDirectory(outputDir);
+            File.WriteAllText(Path.Combine(outputDir, "A101.pdf"), "pdf-bytes");
+            Directory.CreateDirectory(Path.Combine(outputDir, ".revitcli", "receipts"));
+            File.WriteAllText(Path.Combine(outputDir, ".revitcli", "receipts", "ignored.json"), "{}");
+
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export", outputDir: outputDir);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath,
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteBundleAsync(
+                dir,
+                bundlePath: null,
+                dryRun: true,
+                force: false,
+                outputFormat: "json",
+                writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.Equal("delivery-bundle.v1", root.GetProperty("schemaVersion").GetString());
+            Assert.True(root.GetProperty("success").GetBoolean());
+            Assert.True(root.GetProperty("dryRun").GetBoolean());
+            Assert.False(root.GetProperty("bundleWritten").GetBoolean());
+            Assert.Equal(3, root.GetProperty("fileCount").GetInt32());
+            Assert.Equal(1, root.GetProperty("receiptCount").GetInt32());
+            Assert.Equal(1, root.GetProperty("deliverableCount").GetInt32());
+            Assert.Contains(root.GetProperty("files").EnumerateArray(), file =>
+                file.GetProperty("archivePath").GetString() == "deliverables/pdf/A101.pdf");
+            Assert.DoesNotContain(root.GetProperty("files").EnumerateArray(), file =>
+                file.GetProperty("archivePath").GetString()!.Contains("ignored.json"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Bundle_WritesZipAndReceipt()
+    {
+        var dir = TempDir();
+        try
+        {
+            var outputDir = Path.Combine(dir, "deliverables", "pdf");
+            Directory.CreateDirectory(outputDir);
+            File.WriteAllText(Path.Combine(outputDir, "A101.pdf"), "pdf-bytes");
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export", outputDir: outputDir);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath
+            });
+            var bundlePath = Path.Combine(dir, "review", "package.zip");
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteBundleAsync(
+                dir,
+                bundlePath,
+                dryRun: false,
+                force: false,
+                outputFormat: "table",
+                writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(bundlePath));
+            Assert.True(File.Exists(bundlePath + ".receipt.json"));
+            Assert.Contains("Delivery bundle saved", writer.ToString());
+
+            using var archive = ZipFile.OpenRead(bundlePath);
+            var entries = archive.Entries.Select(entry => entry.FullName).ToArray();
+            Assert.Contains(".revitcli/deliveries/manifest.jsonl", entries);
+            Assert.Contains(".revitcli/receipts/receipt.json", entries);
+            Assert.Contains("deliverables/pdf/A101.pdf", entries);
+
+            using var receipt = JsonDocument.Parse(File.ReadAllText(bundlePath + ".receipt.json"));
+            var root = receipt.RootElement;
+            Assert.Equal("delivery-bundle-receipt.v1", root.GetProperty("schemaVersion").GetString());
+            Assert.Equal("deliverables.bundle", root.GetProperty("action").GetString());
+            Assert.Equal(3, root.GetProperty("fileCount").GetInt32());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Bundle_MissingOutputDirectory_ReturnsFailureWithoutWritingZip()
+    {
+        var dir = TempDir();
+        try
+        {
+            var missingOutputDir = Path.Combine(dir, "deliverables", "missing");
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export", outputDir: missingOutputDir);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                receiptPath
+            });
+            var bundlePath = Path.Combine(dir, "review", "package.zip");
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteBundleAsync(
+                dir,
+                bundlePath,
+                dryRun: false,
+                force: false,
+                outputFormat: "json",
+                writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.False(File.Exists(bundlePath));
+            using var json = JsonDocument.Parse(writer.ToString());
+            Assert.Contains(json.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "output-dir-missing");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static string TempDir()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"revitcli_deliverables_{System.Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static string WriteReceipt(
+        string dir,
+        string schemaVersion,
+        string action,
+        string fileName = "receipt.json",
+        string? outputDir = null)
+    {
+        var receiptDir = Path.Combine(dir, ".revitcli", "receipts");
+        Directory.CreateDirectory(receiptDir);
+        var path = Path.Combine(receiptDir, fileName);
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            schemaVersion,
+            action,
+            success = true,
+            dryRun = false,
+            outputDir,
+            command = $"revitcli {action}"
+        }));
+        return path;
+    }
+
+    private static void WriteManifest(string dir, params object[] entries)
+    {
+        var manifestDir = Path.Combine(dir, ".revitcli", "deliveries");
+        Directory.CreateDirectory(manifestDir);
+        var path = Path.Combine(manifestDir, "manifest.jsonl");
+        File.WriteAllLines(path, entries.Select(entry => JsonSerializer.Serialize(entry)));
+    }
+}

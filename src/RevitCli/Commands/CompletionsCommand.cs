@@ -1,28 +1,83 @@
 using System.CommandLine;
 using System.Linq;
+using RevitCli.Families;
 using Spectre.Console;
 
 namespace RevitCli.Commands;
 
 public static class CompletionsCommand
 {
+    private static readonly string[] StatusOptions = { "--output" };
+    private static readonly string[] StatusOutputFormats = { "table", "json" };
+    private static readonly string[] DoctorOptions = { "--check-version", "--output" };
+    private static readonly string[] DoctorOutputFormats = { "table", "json" };
+    private static readonly string[] RevitYears = { "2024", "2025", "2026" };
+    private static readonly string[] CheckOptions = { "--profile", "--output", "--report", "--no-save" };
+    private static readonly string[] CheckOutputFormats = { "table", "json", "html", "sarif", "pr-comment" };
     private static readonly string[] QueryOptions = { "--filter", "--id", "--output" };
-    private static readonly string[] ExportOptions = { "--format", "--sheets", "--output-dir", "--dry-run" };
+    private static readonly string[] InspectSubcommands = { "categories", "params", "schedules", "sheets" };
+    private static readonly string[] InspectOptions =
+        { "--output", "--include-empty", "--category", "--name", "--writable-only", "--missing-only", "--ready-only", "--empty-only", "--sheets", "--issues-only" };
+    private static readonly string[] InspectOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] ExportOptions = { "--format", "--sheets", "--views", "--output-dir", "--dry-run", "--output" };
+    private static readonly string[] ExportOutputFormats = { "table", "json" };
     private static readonly string[] SetOptions = { "--filter", "--id", "--param", "--value", "--dry-run", "--plan-output" };
     private static readonly string[] PlanSubcommands = { "show", "apply" };
-    private static readonly string[] PlanOptions = { "--output", "--yes", "--dry-run", "--max-changes" };
+    private static readonly string[] PlanOptions =
+    {
+        "--output", "--yes", "--dry-run", "--max-changes", "--profile",
+        "--high-impact-threshold", "--confirm-high-impact", "--allow-inferred"
+    };
+    private static readonly string[] PlanOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] AuditOptions = { "--rules", "--list" };
     private static readonly string[] FixOptions =
     {
         "--profile", "--rule", "--severity", "--dry-run", "--apply", "--yes",
-        "--allow-inferred", "--max-changes", "--baseline-output", "--no-snapshot"
+        "--allow-inferred", "--max-changes", "--baseline-output", "--no-snapshot", "--plan-output"
     };
     private static readonly string[] RollbackOptions = { "--dry-run", "--yes", "--max-changes" };
-    private static readonly string[] JournalSubcommands = { "sign", "verify" };
-    private static readonly string[] JournalOptions = { "--dir", "--journal", "--signature", "--key", "--until", "--output" };
+    private static readonly string[] DiffOptions = { "--output", "--report", "--categories", "--max-rows", "--review" };
+    private static readonly string[] DiffOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] WorkflowSubcommands = { "init", "validate", "simulate", "run", "suggest", "examples", "receipts" };
+    private static readonly string[] WorkflowOptions =
+        { "--dir", "--journal", "--output", "--dry-run", "--yes", "--continue-on-error", "--force", "--min-count", "--max-steps", "--limit", "--failed-only" };
+    private static readonly string[] WorkflowOutputFormats = { "table", "json", "yaml", "markdown" };
+    private static readonly string[] ReportSubcommands = { "weekly" };
+    private static readonly string[] ReportOptions = { "--window", "--dir", "--history-dir", "--journal", "--output", "--report" };
+    private static readonly string[] ReportOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] DeliverablesSubcommands = { "list", "stats", "verify", "bundle" };
+    private static readonly string[] DeliverablesOptions = { "--dir", "--bundle-path", "--dry-run", "--force", "--output" };
+    private static readonly string[] DeliverablesOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] StandardsSubcommands = { "install", "validate" };
+    private static readonly string[] StandardsOptions =
+        { "--manifest", "--dir", "--output", "--ref", "--subpath", "--force", "--dry-run" };
+    private static readonly string[] StandardsOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] ReleaseSubcommands = { "verify" };
+    private static readonly string[] ReleaseOptions = { "--root", "--output", "--tag", "--strict" };
+    private static readonly string[] ReleaseOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] SheetsSubcommands = { "verify", "index", "init", "show" };
+    private static readonly string[] SheetsOptions = { "--against", "--rule", "--issues-only", "--output", "--path", "--force" };
+    private static readonly string[] SheetsOutputFormats = { "table", "json", "markdown", "yaml" };
+    private static readonly string[] ScheduleSubcommands = { "list", "export", "create" };
+    private static readonly string[] ScheduleOptions =
+        { "--category", "--name", "--fields", "--filter", "--sort", "--sort-desc", "--output", "--template", "--place-on-sheet" };
+    private static readonly string[] ScheduleListOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] ScheduleExportOutputFormats = { "table", "json", "csv", "markdown" };
+    private static readonly string[] FamilySubcommands = { "ls", "validate", "purge", "export" };
+    private static readonly string[] FamilyOptions =
+    {
+        "--unused", "--category", "--rules", "--rules-from", "--output", "--fail-on",
+        "--keep", "--dry-run", "--apply", "--yes", "--report", "--name", "--all", "--output-dir", "--overwrite"
+    };
+    private static readonly string[] FamilyOutputFormats = { "table", "json", "csv", "sarif" };
+    private static readonly string[] JournalSubcommands = { "show", "stats", "review", "sign", "verify" };
+    private static readonly string[] JournalOptions =
+        { "--dir", "--journal", "--signature", "--key", "--until", "--limit", "--high-impact-threshold", "--action", "--category", "--operator", "--user", "--output" };
+    private static readonly string[] JournalOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] ExampleTopics = ExamplesCommand.TopicNames;
     private static readonly string[] PublishOptions =
-        { "--profile", "--dry-run", "--since", "--since-mode", "--update-baseline" };
+        { "--profile", "--dry-run", "--output", "--since", "--since-mode", "--update-baseline" };
+    private static readonly string[] PublishOutputFormats = { "table", "json" };
     private static readonly string[] SinceModes = { "content", "meta" };
     private static readonly string[] ImportOptions =
         { "--category", "--match-by", "--map", "--dry-run", "--plan-output", "--on-missing", "--on-duplicate", "--encoding", "--batch-size" };
@@ -64,16 +119,57 @@ public static class CompletionsCommand
     private static string GenerateBash()
     {
         var commands = JoinWords(CliCommandCatalog.TopLevelCommandNames);
+        var statusOptions = JoinWords(StatusOptions);
+        var statusOutputFormats = JoinWords(StatusOutputFormats);
+        var doctorOptions = JoinWords(DoctorOptions);
+        var doctorOutputFormats = JoinWords(DoctorOutputFormats);
+        var revitYears = JoinWords(RevitYears);
+        var checkOptions = JoinWords(CheckOptions);
+        var checkOutputFormats = JoinWords(CheckOutputFormats);
         var queryOptions = JoinWords(QueryOptions);
+        var inspectWords = JoinWords(InspectSubcommands.Concat(InspectOptions));
+        var inspectOptions = JoinWords(InspectOptions);
+        var inspectOutputFormats = JoinWords(InspectOutputFormats);
         var exportOptions = JoinWords(ExportOptions);
         var setOptions = JoinWords(SetOptions);
         var planWords = JoinWords(PlanSubcommands.Concat(PlanOptions));
+        var planOutputFormats = JoinWords(PlanOutputFormats);
         var auditOptions = JoinWords(AuditOptions);
         var fixOptions = JoinWords(FixOptions);
         var rollbackOptions = JoinWords(RollbackOptions);
+        var diffOptions = JoinWords(DiffOptions);
+        var diffOutputFormats = JoinWords(DiffOutputFormats);
+        var workflowWords = JoinWords(WorkflowSubcommands.Concat(WorkflowOptions));
+        var workflowOptions = JoinWords(WorkflowOptions);
+        var workflowOutputFormats = JoinWords(WorkflowOutputFormats);
+        var reportWords = JoinWords(ReportSubcommands.Concat(ReportOptions));
+        var reportOptions = JoinWords(ReportOptions);
+        var reportOutputFormats = JoinWords(ReportOutputFormats);
+        var deliverablesWords = JoinWords(DeliverablesSubcommands.Concat(DeliverablesOptions));
+        var deliverablesOptions = JoinWords(DeliverablesOptions);
+        var deliverablesOutputFormats = JoinWords(DeliverablesOutputFormats);
+        var standardsWords = JoinWords(StandardsSubcommands.Concat(StandardsOptions));
+        var standardsOptions = JoinWords(StandardsOptions);
+        var standardsOutputFormats = JoinWords(StandardsOutputFormats);
+        var releaseWords = JoinWords(ReleaseSubcommands.Concat(ReleaseOptions));
+        var releaseOptions = JoinWords(ReleaseOptions);
+        var releaseOutputFormats = JoinWords(ReleaseOutputFormats);
+        var sheetsWords = JoinWords(SheetsSubcommands.Concat(SheetsOptions));
+        var sheetsOptions = JoinWords(SheetsOptions);
+        var sheetsOutputFormats = JoinWords(SheetsOutputFormats);
+        var scheduleWords = JoinWords(ScheduleSubcommands.Concat(ScheduleOptions));
+        var scheduleOptions = JoinWords(ScheduleOptions);
+        var scheduleListOutputFormats = JoinWords(ScheduleListOutputFormats);
+        var scheduleExportOutputFormats = JoinWords(ScheduleExportOutputFormats);
+        var familyWords = JoinWords(FamilySubcommands.Concat(FamilyOptions));
+        var familyOptions = JoinWords(FamilyOptions);
+        var familyOutputFormats = JoinWords(FamilyOutputFormats);
+        var familyRules = JoinWords(FamilyValidator.AllRuleIds);
         var journalWords = JoinWords(JournalSubcommands.Concat(JournalOptions));
+        var journalOutputFormats = JoinWords(JournalOutputFormats);
         var exampleTopics = JoinWords(ExampleTopics);
         var publishOptions = JoinWords(PublishOptions);
+        var publishOutputFormats = JoinWords(PublishOutputFormats);
         var sinceModes = JoinWords(SinceModes);
         var importOptions = JoinWords(ImportOptions);
         var onMissingValues = JoinWords(OnMissingValues);
@@ -83,6 +179,7 @@ public static class CompletionsCommand
         var configKeys = JoinWords(ConfigCommand.ValidKeys);
         var outputFormats = JoinWords(QueryCommand.ValidOutputFormats);
         var exportFormats = JoinWords(ExportCommand.ValidFormats);
+        var exportOutputFormats = JoinWords(ExportOutputFormats);
         var auditRules = JoinWords(AuditCommand.AvailableRules);
         var shells = JoinWords(CliCommandCatalog.Shells);
 
@@ -103,6 +200,41 @@ public static class CompletionsCommand
             "    fi",
             "",
             "    case \"$cmd\" in",
+            "        status)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{statusOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            $"            COMPREPLY=($(compgen -W \"{statusOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        doctor)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{doctorOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --check-version)",
+            $"                    COMPREPLY=($(compgen -W \"{revitYears}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            $"            COMPREPLY=($(compgen -W \"{doctorOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        check)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{checkOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --profile|--report)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            $"            COMPREPLY=($(compgen -W \"{checkOptions}\" -- \"$cur\"))",
+            "            ;;",
             "        query)",
             "            case \"$prev\" in",
             "                --output)",
@@ -111,11 +243,28 @@ public static class CompletionsCommand
             "                    ;;",
             "            esac",
             $"            COMPREPLY=($(compgen -W \"{queryOptions}\" -- \"$cur\"))",
+        "            ;;",
+            "        inspect)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{inspectOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{inspectWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{inspectOptions}\" -- \"$cur\"))",
             "            ;;",
             "        export)",
             "            case \"$prev\" in",
             "                --format)",
             $"                    COMPREPLY=($(compgen -W \"{exportFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{exportOutputFormats}\" -- \"$cur\"))",
             "                    return",
             "                    ;;",
             "                --output-dir)",
@@ -129,6 +278,12 @@ public static class CompletionsCommand
         $"            COMPREPLY=($(compgen -W \"{setOptions}\" -- \"$cur\"))",
         "            ;;",
             "        plan)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{planOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
             $"            COMPREPLY=($(compgen -W \"{planWords}\" -- \"$cur\"))",
             "            ;;",
             "        audit)",
@@ -178,6 +333,10 @@ public static class CompletionsCommand
             "            ;;",
             "        publish)",
             "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{publishOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
             "                --since|--profile)",
             "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
             "                    return",
@@ -224,13 +383,218 @@ public static class CompletionsCommand
             "            fi",
             $"            COMPREPLY=($(compgen -W \"{rollbackOptions}\" -- \"$cur\"))",
             "            ;;",
+            "        diff)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{diffOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --report)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            case \"$cur\" in",
+            "                -*)",
+            $"                    COMPREPLY=($(compgen -W \"{diffOptions}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                *)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            ;;",
+            "        workflow)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{workflowOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --dir)",
+            "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --journal)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{workflowWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            "            case \"$cur\" in",
+            "                -*)",
+            $"                    COMPREPLY=($(compgen -W \"{workflowOptions}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                *)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            ;;",
+            "        report)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{reportOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --dir|--history-dir)",
+            "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --journal|--report)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{reportWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{reportOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        deliverables)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{deliverablesOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --dir)",
+            "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --bundle-path)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{deliverablesWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{deliverablesOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        standards)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{standardsOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --dir)",
+            "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --manifest|--subpath)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{standardsWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{standardsOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        release)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{releaseOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --root)",
+            "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{releaseWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{releaseOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        sheets)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{sheetsOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --against|--path)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --rule)",
+            $"                    COMPREPLY=($(compgen -W \"numbering.scheme numbering.gap numbering.duplicate numbering.outOfRange required.missing required.viewMissing linkage.overloaded linkage.emptySheet\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{sheetsWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{sheetsOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        schedule)",
+            "            case \"$prev\" in",
+            "                --output)",
+            "                    if [ \"$subcmd\" = \"list\" ]; then",
+            $"                        COMPREPLY=($(compgen -W \"{scheduleListOutputFormats}\" -- \"$cur\"))",
+            "                    else",
+            $"                        COMPREPLY=($(compgen -W \"{scheduleExportOutputFormats}\" -- \"$cur\"))",
+            "                    fi",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{scheduleWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{scheduleOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        family)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{familyOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --rules)",
+            $"                    COMPREPLY=($(compgen -W \"{familyRules}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --rules-from|--report|--output-dir)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{familyWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{familyOptions}\" -- \"$cur\"))",
+            "            ;;",
             "        journal)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{journalOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --journal|--signature|--key)",
+            "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --dir)",
+            "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
             $"            COMPREPLY=($(compgen -W \"{journalWords}\" -- \"$cur\"))",
             "            ;;",
             "        examples)",
             $"            COMPREPLY=($(compgen -W \"{exampleTopics}\" -- \"$cur\"))",
             "            ;;",
-            "        status|doctor|interactive)",
+            "        interactive)",
             "            COMPREPLY=()",
             "            ;;",
             "    esac",
@@ -242,16 +606,44 @@ public static class CompletionsCommand
     {
         var commandLines = CliCommandCatalog.TopLevelCommands
             .Select(command => $"        '{command.Name}:{command.Description}'");
+        var statusOutputFormats = JoinWords(StatusOutputFormats);
+        var doctorOutputFormats = JoinWords(DoctorOutputFormats);
+        var revitYears = JoinWords(RevitYears);
+        var checkOutputFormats = JoinWords(CheckOutputFormats);
         var outputFormats = JoinWords(QueryCommand.ValidOutputFormats);
+        var inspectSubcommands = JoinWords(InspectSubcommands);
+        var inspectOutputFormats = JoinWords(InspectOutputFormats);
         var exportFormats = JoinWords(ExportCommand.ValidFormats);
+        var exportOutputFormats = JoinWords(ExportOutputFormats);
         var planSubcommands = JoinWords(PlanSubcommands);
+        var planOutputFormats = JoinWords(PlanOutputFormats);
         var configSubcommands = JoinWords(CliCommandCatalog.ConfigSubcommands);
         var configKeys = JoinWords(ConfigCommand.ValidKeys);
         var shells = JoinWords(CliCommandCatalog.Shells);
         var auditRules = JoinWords(AuditCommand.AvailableRules);
         var fixOptions = JoinWords(FixOptions);
+        var diffOutputFormats = JoinWords(DiffOutputFormats);
+        var workflowSubcommands = JoinWords(WorkflowSubcommands);
+        var workflowOutputFormats = JoinWords(WorkflowOutputFormats);
+        var reportSubcommands = JoinWords(ReportSubcommands);
+        var reportOutputFormats = JoinWords(ReportOutputFormats);
+        var deliverablesSubcommands = JoinWords(DeliverablesSubcommands);
+        var deliverablesOutputFormats = JoinWords(DeliverablesOutputFormats);
+        var standardsSubcommands = JoinWords(StandardsSubcommands);
+        var standardsOutputFormats = JoinWords(StandardsOutputFormats);
+        var releaseSubcommands = JoinWords(ReleaseSubcommands);
+        var releaseOutputFormats = JoinWords(ReleaseOutputFormats);
+        var sheetsSubcommands = JoinWords(SheetsSubcommands);
+        var sheetsOutputFormats = JoinWords(SheetsOutputFormats);
+        var scheduleSubcommands = JoinWords(ScheduleSubcommands);
+        var scheduleOutputFormats = JoinWords(ScheduleExportOutputFormats);
+        var familySubcommands = JoinWords(FamilySubcommands);
+        var familyOutputFormats = JoinWords(FamilyOutputFormats);
+        var familyRules = JoinWords(FamilyValidator.AllRuleIds);
         var journalSubcommands = JoinWords(JournalSubcommands);
+        var journalOutputFormats = JoinWords(JournalOutputFormats);
         var exampleTopics = JoinWords(ExampleTopics);
+        var publishOutputFormats = JoinWords(PublishOutputFormats);
 
         return JoinLines(
             "#compdef revitcli",
@@ -270,20 +662,57 @@ public static class CompletionsCommand
             "        cmds)",
             "            _describe 'command' commands",
             "            ;;",
-            "        args)",
-            "            case $words[2] in",
-            "                query)",
+        "        args)",
+        "            case $words[2] in",
+            "                status)",
             "                    _arguments \\",
-            "                        '--filter[Filter expression]:filter:' \\",
-            "                        '--id[Element ID]:id:' \\",
-            $"                        '--output[Output format]:format:({outputFormats})'",
+            $"                        '--output[Output format]:format:({statusOutputFormats})'",
+            "                    ;;",
+            "                doctor)",
+            "                    _arguments \\",
+            $"                        '--check-version[Target Revit year]:year:({revitYears})' \\",
+            $"                        '--output[Output format]:format:({doctorOutputFormats})'",
+            "                    ;;",
+            "                check)",
+            "                    _arguments \\",
+            "                        '1:check set:' \\",
+            "                        '--profile[Path to .revitcli.yml profile]:file:_files' \\",
+            $"                        '--output[Output format]:format:({checkOutputFormats})' \\",
+            "                        '--report[Save report to file]:file:_files' \\",
+            "                        '--no-save[Do not save results for diff comparison]'",
+            "                    ;;",
+                "                query)",
+                "                    _arguments \\",
+                "                        '--filter[Filter expression]:filter:' \\",
+                "                        '--id[Element ID]:id:' \\",
+                $"                        '--output[Output format]:format:({outputFormats})'",
+                "                    ;;",
+            "                inspect)",
+            "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {inspectSubcommands}",
+            "                    else",
+            "                        _arguments \\",
+            "                            '2:category or file:_files' \\",
+            $"                            '--output[Output format]:format:({inspectOutputFormats})' \\",
+            "                            '--include-empty[Show supported empty categories]' \\",
+            "                            '--category[Schedule category pattern]:category:' \\",
+            "                            '--name[Schedule name pattern]:name:' \\",
+            "                            '--writable-only[Only confirmed writable parameters]' \\",
+            "                            '--missing-only[Only parameters with missing values]' \\",
+            "                            '--ready-only[Only export-ready schedules or sheets]' \\",
+            "                            '--empty-only[Only zero-row schedules]' \\",
+            "                            '--sheets[Sheet number/name pattern]:pattern:' \\",
+            "                            '--issues-only[Only schedules or sheets with issues]'",
+            "                    fi",
             "                    ;;",
             "                export)",
             "                    _arguments \\",
             $"                        '--format[Export format]:format:({exportFormats})' \\",
             "                        '--sheets[Sheet patterns]:sheets:' \\",
+            "                        '--views[View patterns]:views:' \\",
             "                        '--output-dir[Output directory]:dir:_directories' \\",
-            "                        '--dry-run[Validate without writing files]'",
+            "                        '--dry-run[Validate without writing files]' \\",
+            $"                        '--output[Output format for dry-runs]:format:({exportOutputFormats})'",
             "                    ;;",
                 "                set)",
                 "                    _arguments \\",
@@ -300,10 +729,11 @@ public static class CompletionsCommand
                 "                    else",
                 "                        _arguments \\",
                 "                            '2:plan file:_files' \\",
-                "                            '--output[Output format]:format:(table json)' \\",
+            $"                            '--output[Output format]:format:({planOutputFormats})' \\",
                 "                            '--yes[Confirm apply]' \\",
                 "                            '--dry-run[Preview apply]' \\",
-                "                            '--max-changes[Maximum writes]:n:'",
+                "                            '--max-changes[Maximum writes]:n:' \\",
+                "                            '--allow-inferred[Allow inferred fix actions]'",
                 "                    fi",
                 "                    ;;",
             "                audit)",
@@ -339,6 +769,7 @@ public static class CompletionsCommand
             "                    _arguments \\",
             "                        '--profile[Path to .revitcli.yml profile]:file:_files' \\",
             "                        '--dry-run[Preview without exporting]' \\",
+            $"                        '--output[Output format for dry-runs]:format:({publishOutputFormats})' \\",
             "                        '--since[Baseline snapshot JSON file]:file:_files' \\",
             "                        '--since-mode[content or meta]:mode:(content meta)' \\",
             "                        '--update-baseline[Update baseline after successful publish]'",
@@ -354,7 +785,8 @@ public static class CompletionsCommand
             "                        '--allow-inferred[Allow inferred fixes]' \\",
             "                        '--max-changes[Maximum number of actions]' \\",
             "                        '--baseline-output[Save baseline snapshot path]:file:_files' \\",
-            "                        '--no-snapshot[Skip baseline and journal support]'",
+            "                        '--no-snapshot[Skip baseline and journal support]' \\",
+            "                        '--plan-output[Write saved fix plan JSON]:file:_files'",
             "                    ;;",
                 "                rollback)",
                 "                    _arguments \\",
@@ -362,6 +794,136 @@ public static class CompletionsCommand
                 "                        '--dry-run[Preview rollback without applying]' \\",
                 "                        '--yes[Confirm rollback apply in non-interactive mode]' \\",
                 "                        '--max-changes[Maximum number of rollback writes]'",
+                "                    ;;",
+                "                diff)",
+                "                    _arguments \\",
+                "                        '1:from snapshot:_files' \\",
+                "                        '2:to snapshot:_files' \\",
+                $"                        '--output[Output format]:format:({diffOutputFormats})' \\",
+                "                        '--report[Write review or diff report]:file:_files' \\",
+                "                        '--categories[Comma-separated category filter]:categories:' \\",
+                "                        '--max-rows[Rows shown per section]:n:' \\",
+                "                        '--review[Render anomaly/notable/routine review]'",
+                "                    ;;",
+                "                workflow)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {workflowSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '2:workflow file:_files' \\",
+                "                            '--dir[Base directory]:dir:_directories' \\",
+                "                            '--journal[Journal JSONL file]:file:_files' \\",
+                $"                            '--output[Output format]:format:({workflowOutputFormats})' \\",
+                "                            '--dry-run[Print workflow run plan without executing steps]' \\",
+                "                            '--yes[Allow approved mutating steps to run]' \\",
+                "                            '--continue-on-error[Continue after a failed workflow step]' \\",
+                "                            '--force[Overwrite existing workflow files during init]' \\",
+                "                            '--min-count[Minimum repeated sequence count]:n:' \\",
+                "                            '--max-steps[Maximum suggested step count]:n:' \\",
+                "                            '--limit[Maximum suggestions or receipts]:n:' \\",
+                "                            '--failed-only[Only show failed workflow receipts]'",
+                "                    fi",
+                "                    ;;",
+                "                report)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {reportSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--window[History window]:window:' \\",
+                "                            '--dir[Project directory]:dir:_directories' \\",
+                "                            '--history-dir[History directory]:dir:_directories' \\",
+                "                            '--journal[Journal JSONL file]:file:_files' \\",
+                $"                            '--output[Output format]:format:({reportOutputFormats})' \\",
+                "                            '--report[Write report file]:file:_files'",
+                "                    fi",
+                "                    ;;",
+                "                deliverables)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {deliverablesSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--dir[Project directory]:dir:_directories' \\",
+                "                            '--bundle-path[Zip file path]:file:_files' \\",
+                "                            '--dry-run[Plan without writing files]' \\",
+                "                            '--force[Overwrite existing bundle path]' \\",
+                $"                            '--output[Output format]:format:({deliverablesOutputFormats})'",
+                "                    fi",
+                "                    ;;",
+                "                standards)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {standardsSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--manifest[Standards manifest file]:file:_files' \\",
+                "                            '--dir[Project directory]:dir:_directories' \\",
+                $"                            '--output[Output format]:format:({standardsOutputFormats})' \\",
+                "                            '--ref[Git branch, tag, or commit]:ref:' \\",
+                "                            '--subpath[Path inside standards source]:file:_files' \\",
+                "                            '--force[Overwrite existing files]' \\",
+                "                            '--dry-run[Show install plan without writing files]'",
+                "                    fi",
+                "                    ;;",
+                "                release)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {releaseSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--root[Repository root]:dir:_directories' \\",
+            $"                            '--output[Output format]:format:({releaseOutputFormats})' \\",
+                "                            '--tag[Release tag]:tag:' \\",
+                "                            '--strict[Treat warnings as failures]'",
+                "                    fi",
+                "                    ;;",
+                "                sheets)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {sheetsSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--against[Sheet index YAML]:file:_files' \\",
+                "                            '--rule[Sheet rule]:rule:' \\",
+                "                            '--issues-only[Only warning/error issues]' \\",
+            $"                            '--output[Output format]:format:({sheetsOutputFormats})' \\",
+                "                            '--path[Sheet index path]:file:_files' \\",
+                "                            '--force[Overwrite existing sheet index]'",
+                "                    fi",
+                "                    ;;",
+                "                schedule)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {scheduleSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--category[Element category]:category:' \\",
+                "                            '--name[Schedule name]:name:' \\",
+                "                            '--fields[Comma-separated field names]:fields:' \\",
+                "                            '--filter[Filter expression]:filter:' \\",
+                "                            '--sort[Sort by field]:field:' \\",
+                "                            '--sort-desc[Sort descending]' \\",
+            $"                            '--output[Output format]:format:({scheduleOutputFormats})' \\",
+                "                            '--template[Schedule template name]:template:' \\",
+                "                            '--place-on-sheet[Sheet pattern]:sheet:'",
+                "                    fi",
+                "                    ;;",
+                "                family)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {familySubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--unused[Only list unused families]' \\",
+                "                            '--category[Revit category]:category:' \\",
+                $"                            '--rules[Comma-separated family rules]:rules:({familyRules})' \\",
+                "                            '--rules-from[Standards manifest file]:file:_files' \\",
+                $"                            '--output[Output format]:format:({familyOutputFormats})' \\",
+                "                            '--fail-on[Failure severity]:severity:(error warning)' \\",
+                "                            '--keep[Keep family name patterns]:patterns:' \\",
+                "                            '--dry-run[Preview family purge or export]' \\",
+                "                            '--apply[Apply family purge]' \\",
+                "                            '--yes[Confirm family purge]' \\",
+                "                            '--report[Write family purge JSON report]:file:_files' \\",
+                "                            '--name[Family name filter]:name:' \\",
+                "                            '--all[Export all loadable families]' \\",
+                "                            '--output-dir[Family export directory]:dir:_directories' \\",
+                "                            '--overwrite[Overwrite exported .rfa files]'",
+                "                    fi",
                 "                    ;;",
                 "                journal)",
                 "                    _arguments \\",
@@ -371,7 +933,13 @@ public static class CompletionsCommand
                 "                        '--signature[Signature file]:file:_files' \\",
                 "                        '--key[HMAC key file]:file:_files' \\",
                 "                        '--until[Sign entries at or before timestamp]:timestamp:' \\",
-                "                        '--output[Output format]:format:(table json)'",
+                "                        '--limit[Maximum entries to show]:n:' \\",
+                "                        '--high-impact-threshold[Affected count for high-impact review]:n:' \\",
+                "                        '--action[Filter entries by action]:action:' \\",
+                "                        '--category[Filter entries by category]:category:' \\",
+                "                        '--operator[Filter entries by operator]:operator:' \\",
+                "                        '--user[Filter entries by user]:user:' \\",
+                $"                        '--output[Output format]:format:({journalOutputFormats})'",
                 "                    ;;",
                 "                examples)",
                 $"                    _arguments '1:topic:({exampleTopics})'",
@@ -401,22 +969,55 @@ public static class CompletionsCommand
     {
         var commandLines = CliCommandCatalog.TopLevelCommands
             .Select(command => $"        '{command.Name}' = '{command.Description}'");
+        var statusOptions = FormatPowerShellArray(StatusOptions);
+        var doctorOptions = FormatPowerShellArray(DoctorOptions);
+        var checkOptions = FormatPowerShellArray(CheckOptions);
         var queryOptions = FormatPowerShellArray(QueryOptions);
+        var inspectOptions = FormatPowerShellArray(InspectSubcommands.Concat(InspectOptions));
         var exportOptions = FormatPowerShellArray(ExportOptions);
         var setOptions = FormatPowerShellArray(SetOptions);
         var planOptions = FormatPowerShellArray(PlanSubcommands.Concat(PlanOptions));
         var auditOptions = FormatPowerShellArray(AuditOptions);
         var fixOptions = FormatPowerShellArray(FixOptions);
         var rollbackOptions = FormatPowerShellArray(RollbackOptions);
+        var diffOptions = FormatPowerShellArray(DiffOptions);
+        var workflowOptions = FormatPowerShellArray(WorkflowSubcommands.Concat(WorkflowOptions));
+        var reportOptions = FormatPowerShellArray(ReportSubcommands.Concat(ReportOptions));
+        var deliverablesOptions = FormatPowerShellArray(DeliverablesSubcommands.Concat(DeliverablesOptions));
+        var standardsOptions = FormatPowerShellArray(StandardsSubcommands.Concat(StandardsOptions));
+        var releaseOptions = FormatPowerShellArray(ReleaseSubcommands.Concat(ReleaseOptions));
+        var sheetsOptions = FormatPowerShellArray(SheetsSubcommands.Concat(SheetsOptions));
+        var scheduleOptions = FormatPowerShellArray(ScheduleSubcommands.Concat(ScheduleOptions));
+        var familyOptions = FormatPowerShellArray(FamilySubcommands.Concat(FamilyOptions));
         var journalOptions = FormatPowerShellArray(JournalSubcommands.Concat(JournalOptions));
         var exampleTopics = FormatPowerShellArray(ExampleTopics);
         var publishOptions = FormatPowerShellArray(PublishOptions);
+        var publishOutputFormats = FormatPowerShellArray(PublishOutputFormats);
         var sinceModes = FormatPowerShellArray(SinceModes);
         var importOptions = FormatPowerShellArray(ImportOptions);
         var onMissingValues = FormatPowerShellArray(OnMissingValues);
         var onDuplicateValues = FormatPowerShellArray(OnDuplicateValues);
         var encodingValues = FormatPowerShellArray(EncodingValues);
+        var statusOutputFormats = FormatPowerShellArray(StatusOutputFormats);
+        var doctorOutputFormats = FormatPowerShellArray(DoctorOutputFormats);
+        var revitYears = FormatPowerShellArray(RevitYears);
+        var checkOutputFormats = FormatPowerShellArray(CheckOutputFormats);
         var outputFormats = FormatPowerShellArray(QueryCommand.ValidOutputFormats);
+        var inspectOutputFormats = FormatPowerShellArray(InspectOutputFormats);
+        var planOutputFormats = FormatPowerShellArray(PlanOutputFormats);
+        var exportOutputFormats = FormatPowerShellArray(ExportOutputFormats);
+        var diffOutputFormats = FormatPowerShellArray(DiffOutputFormats);
+        var workflowOutputFormats = FormatPowerShellArray(WorkflowOutputFormats);
+        var reportOutputFormats = FormatPowerShellArray(ReportOutputFormats);
+        var deliverablesOutputFormats = FormatPowerShellArray(DeliverablesOutputFormats);
+        var standardsOutputFormats = FormatPowerShellArray(StandardsOutputFormats);
+        var releaseOutputFormats = FormatPowerShellArray(ReleaseOutputFormats);
+        var sheetsOutputFormats = FormatPowerShellArray(SheetsOutputFormats);
+        var scheduleSubcommands = FormatPowerShellArray(ScheduleSubcommands);
+        var scheduleOutputFormats = FormatPowerShellArray(ScheduleExportOutputFormats);
+        var familyOutputFormats = FormatPowerShellArray(FamilyOutputFormats);
+        var familyRules = FormatPowerShellArray(FamilyValidator.AllRuleIds);
+        var journalOutputFormats = FormatPowerShellArray(JournalOutputFormats);
         var exportFormats = FormatPowerShellArray(ExportCommand.ValidFormats);
         var configSubcommands = FormatPowerShellArray(CliCommandCatalog.ConfigSubcommands);
         var configKeys = FormatPowerShellArray(ConfigCommand.ValidKeys);
@@ -432,13 +1033,26 @@ public static class CompletionsCommand
             "    }",
             "",
             "    $commandOptions = @{",
+            $"        'status' = @({statusOptions})",
+            $"        'doctor' = @({doctorOptions})",
+            $"        'check' = @({checkOptions})",
             $"        'query' = @({queryOptions})",
+            $"        'inspect' = @({inspectOptions})",
             $"        'export' = @({exportOptions})",
             $"        'set' = @({setOptions})",
             $"        'plan' = @({planOptions})",
             $"        'audit' = @({auditOptions})",
             $"        'fix' = @({fixOptions})",
             $"        'rollback' = @({rollbackOptions})",
+            $"        'diff' = @({diffOptions})",
+            $"        'workflow' = @({workflowOptions})",
+            $"        'report' = @({reportOptions})",
+            $"        'deliverables' = @({deliverablesOptions})",
+            $"        'standards' = @({standardsOptions})",
+            $"        'release' = @({releaseOptions})",
+            $"        'sheets' = @({sheetsOptions})",
+            $"        'schedule' = @({scheduleOptions})",
+            $"        'family' = @({familyOptions})",
             $"        'journal' = @({journalOptions})",
             $"        'examples' = @({exampleTopics})",
             $"        'publish' = @({publishOptions})",
@@ -447,11 +1061,31 @@ public static class CompletionsCommand
 
             "",
             $"    $sinceModes = @({sinceModes})",
+            $"    $publishOutputFormats = @({publishOutputFormats})",
             $"    $onMissingValues = @({onMissingValues})",
             $"    $onDuplicateValues = @({onDuplicateValues})",
             $"    $encodingValues = @({encodingValues})",
             "",
+            $"    $statusOutputFormats = @({statusOutputFormats})",
+            $"    $doctorOutputFormats = @({doctorOutputFormats})",
+            $"    $revitYears = @({revitYears})",
+            $"    $checkOutputFormats = @({checkOutputFormats})",
             $"    $outputFormats = @({outputFormats})",
+            $"    $inspectOutputFormats = @({inspectOutputFormats})",
+            $"    $planOutputFormats = @({planOutputFormats})",
+            $"    $exportOutputFormats = @({exportOutputFormats})",
+            $"    $diffOutputFormats = @({diffOutputFormats})",
+            $"    $workflowOutputFormats = @({workflowOutputFormats})",
+            $"    $reportOutputFormats = @({reportOutputFormats})",
+            $"    $deliverablesOutputFormats = @({deliverablesOutputFormats})",
+            $"    $standardsOutputFormats = @({standardsOutputFormats})",
+            $"    $releaseOutputFormats = @({releaseOutputFormats})",
+            $"    $sheetsOutputFormats = @({sheetsOutputFormats})",
+            $"    $scheduleSubcommands = @({scheduleSubcommands})",
+            $"    $scheduleOutputFormats = @({scheduleOutputFormats})",
+            $"    $familyOutputFormats = @({familyOutputFormats})",
+            $"    $familyRules = @({familyRules})",
+            $"    $journalOutputFormats = @({journalOutputFormats})",
             $"    $exportFormats = @({exportFormats})",
             $"    $configSubcommands = @({configSubcommands})",
             $"    $configKeys = @({configKeys})",
@@ -515,7 +1149,42 @@ public static class CompletionsCommand
             "    }",
             "",
             "    switch ($command) {",
-            "        'query' {",
+            "        'status' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $statusOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['status'] -ToolTip 'Option'",
+            "            return",
+            "        }",
+            "        'doctor' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $doctorOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--check-version') {",
+            "                New-RevitCliCompletionResults -Values $revitYears -ToolTip 'Revit year'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['doctor'] -ToolTip 'Option'",
+            "            return",
+            "        }",
+            "        'check' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $checkOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--profile' -or $previous -eq '--report') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['check'] -ToolTip 'Option'",
+            "            return",
+            "        }",
+        "        'query' {",
             "            if ($previous -eq '--output') {",
             "                New-RevitCliCompletionResults -Values $outputFormats -ToolTip 'Output format'",
             "                return",
@@ -524,9 +1193,25 @@ public static class CompletionsCommand
             "            New-RevitCliCompletionResults -Values $commandOptions['query'] -ToolTip 'Option'",
             "            return",
             "        }",
+            "        'inspect' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $inspectOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            New-RevitCliCompletionResults -Values $commandOptions['inspect'] -ToolTip 'Inspect subcommand or option'",
+            "            return",
+            "        }",
             "        'export' {",
             "            if ($previous -eq '--format') {",
             "                New-RevitCliCompletionResults -Values $exportFormats -ToolTip 'Export format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $exportOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--output-dir') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
             "                return",
             "            }",
             "",
@@ -536,8 +1221,12 @@ public static class CompletionsCommand
         "        'set' {",
         "            New-RevitCliCompletionResults -Values $commandOptions['set'] -ToolTip 'Option'",
         "            return",
-        "        }",
+            "        }",
             "        'plan' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $planOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
             "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
             "                New-RevitCliCompletionResults -Values @('show', 'apply') -ToolTip 'Plan subcommand'",
             "                return",
@@ -585,6 +1274,10 @@ public static class CompletionsCommand
             "            return",
             "        }",
             "        'publish' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $publishOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
             "            if ($previous -eq '--since-mode') {",
             "                New-RevitCliCompletionResults -Values $sinceModes -ToolTip 'Since mode'",
             "                return",
@@ -605,7 +1298,184 @@ public static class CompletionsCommand
             "            New-RevitCliCompletionResults -Values $commandOptions['rollback'] -ToolTip 'Option'",
             "            return",
             "        }",
+            "        'diff' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $diffOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--report') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -le 3 -or ($tokens.Count -eq 4 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['diff'] -ToolTip 'Diff option'",
+            "            return",
+            "        }",
+            "        'workflow' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $workflowOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--dir') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--journal') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+                "                New-RevitCliCompletionResults -Values @('init', 'validate', 'simulate', 'run', 'suggest', 'examples', 'receipts') -ToolTip 'Workflow subcommand'",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -le 4 -or ($tokens.Count -eq 5 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['workflow'] -ToolTip 'Workflow option'",
+            "            return",
+            "        }",
+            "        'report' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $reportOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--journal' -or $previous -eq '--report') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--dir' -or $previous -eq '--history-dir') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('weekly') -ToolTip 'Report subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['report'] -ToolTip 'Report option'",
+            "            return",
+            "        }",
+            "        'deliverables' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $deliverablesOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--dir' -or $previous -eq '--bundle-path') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('list', 'stats', 'verify', 'bundle') -ToolTip 'Deliverables subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['deliverables'] -ToolTip 'Deliverables option'",
+            "            return",
+            "        }",
+            "        'standards' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $standardsOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--manifest' -or $previous -eq '--dir' -or $previous -eq '--subpath') {",
+                "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+                "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('install', 'validate') -ToolTip 'Standards subcommand'",
+                "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['standards'] -ToolTip 'Standards option'",
+            "            return",
+            "        }",
+            "        'release' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $releaseOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--root') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('verify') -ToolTip 'Release subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['release'] -ToolTip 'Release option'",
+            "            return",
+            "        }",
+            "        'sheets' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $sheetsOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--against' -or $previous -eq '--path') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--rule') {",
+            "                New-RevitCliCompletionResults -Values @('numbering.scheme', 'numbering.gap', 'numbering.duplicate', 'numbering.outOfRange', 'required.missing', 'required.viewMissing', 'linkage.overloaded', 'linkage.emptySheet') -ToolTip 'Sheet rule'",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('verify', 'index') -ToolTip 'Sheets subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['sheets'] -ToolTip 'Sheets option'",
+            "            return",
+            "        }",
+            "        'schedule' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $scheduleOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values $scheduleSubcommands -ToolTip 'Schedule subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['schedule'] -ToolTip 'Schedule option'",
+            "            return",
+            "        }",
+            "        'family' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $familyOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--rules') {",
+            "                New-RevitCliCompletionResults -Values $familyRules -ToolTip 'Family rule'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--rules-from' -or $previous -eq '--report' -or $previous -eq '--output-dir') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('ls', 'validate', 'purge', 'export') -ToolTip 'Family subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['family'] -ToolTip 'Family option'",
+            "            return",
+            "        }",
             "        'journal' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $journalOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--journal' -or $previous -eq '--signature' -or $previous -eq '--key' -or $previous -eq '--dir') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
             "            New-RevitCliCompletionResults -Values $commandOptions['journal'] -ToolTip 'Journal subcommand or option'",
             "            return",
             "        }",

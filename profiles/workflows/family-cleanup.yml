@@ -1,0 +1,17 @@
+version: 1
+name: family-cleanup
+description: Find unused or risky families and preview purge work.
+steps:
+  - name: list unused families
+    run: revitcli family ls --unused
+    mode: read-only
+  - name: validate family health
+    run: revitcli family validate --output table
+    mode: read-only
+  - name: dry-run family purge
+    run: revitcli family purge --dry-run --report .revitcli/reports/family-purge.json
+    mode: dry-run
+  - name: capture cleanup review history
+    run: revitcli history capture --source family-cleanup
+    mode: mutating
+    requiresApproval: true
