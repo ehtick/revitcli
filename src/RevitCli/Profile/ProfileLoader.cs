@@ -173,6 +173,8 @@ public static class ProfileLoader
                 $"Profile {path}: extendsStrategy must be 'replace' or 'deep-merge', got '{profile.ExtendsStrategyRaw}'.");
         }
 
+        ValidateDefaults(profile, path);
+
         foreach (var (name, check) in profile.Checks)
         {
             if (!ValidFailOn.Contains(check.FailOn))
@@ -195,6 +197,15 @@ public static class ProfileLoader
         }
 
         ValidateFixes(profile, path);
+    }
+
+    private static void ValidateDefaults(ProjectProfile profile, string path)
+    {
+        if (profile.Defaults.PlanMaxChanges.HasValue && profile.Defaults.PlanMaxChanges.Value <= 0)
+            throw new InvalidOperationException($"Profile {path}: defaults.planMaxChanges must be greater than 0");
+
+        if (profile.Defaults.HighImpactChanges.HasValue && profile.Defaults.HighImpactChanges.Value <= 0)
+            throw new InvalidOperationException($"Profile {path}: defaults.highImpactChanges must be greater than 0");
     }
 
     private static void ValidateFixes(ProjectProfile profile, string path)
@@ -288,6 +299,8 @@ public static class ProfileLoader
             {
                 OutputDir = child.Defaults.OutputDir ?? baseProfile.Defaults.OutputDir,
                 Notify = child.Defaults.Notify ?? baseProfile.Defaults.Notify,
+                PlanMaxChanges = child.Defaults.PlanMaxChanges ?? baseProfile.Defaults.PlanMaxChanges,
+                HighImpactChanges = child.Defaults.HighImpactChanges ?? baseProfile.Defaults.HighImpactChanges,
             },
         };
 

@@ -185,6 +185,26 @@ public class HistoryDiffTests : IDisposable
     }
 
     [Fact]
+    public async Task Diff_Review_PrintsRuleBasedSummary()
+    {
+        var store = new HistoryStore(HistoryDir);
+        await store.InitAsync();
+        await store.AppendAsync(MakeSnapshot(2), "manual",
+            new DateTimeOffset(2026, 4, 26, 0, 0, 0, TimeSpan.Zero));
+        await store.AppendAsync(MakeSnapshot(1), "manual",
+            new DateTimeOffset(2026, 4, 27, 0, 0, 0, TimeSpan.Zero));
+
+        var writer = new StringWriter();
+        var exit = await HistoryCommand.ExecuteDiffAsync(
+            "@-2", "@-1", "table", 20, null, false, HistoryDir, writer, review: true);
+
+        Assert.Equal(0, exit);
+        var text = writer.ToString();
+        Assert.Contains("Highest severity: anomaly", text);
+        Assert.Contains("walls: 1 removed", text);
+    }
+
+    [Fact]
     public async Task Diff_MissingMaxRows_ReturnsOne()
     {
         var writer = new StringWriter();

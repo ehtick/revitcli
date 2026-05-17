@@ -358,7 +358,11 @@ public static class ProfileCommand
         // names (not reflection) keeps the surface explicit and StringComparison.Ordinal-safe.
         DiffScalar("defaults.outputDir", a.OutputDir, b.OutputDir, result);
         DiffScalar("defaults.notify", a.Notify, b.Notify, result);
+        DiffScalar("defaults.planMaxChanges", FormatNullableInt(a.PlanMaxChanges), FormatNullableInt(b.PlanMaxChanges), result);
+        DiffScalar("defaults.highImpactChanges", FormatNullableInt(a.HighImpactChanges), FormatNullableInt(b.HighImpactChanges), result);
     }
+
+    private static string? FormatNullableInt(int? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private static void DiffScalar(string path, string? aVal, string? bVal, ProfileDiffResult result)
     {

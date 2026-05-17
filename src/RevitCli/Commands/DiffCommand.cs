@@ -20,17 +20,18 @@ public static class DiffCommand
         var reportOpt = new Option<string?>("--report", "Write to file (format inferred from .md/.json extension)");
         var categoriesOpt = new Option<string?>("--categories", "Comma-separated category filter");
         var maxRowsOpt = new Option<int>("--max-rows", () => 20, "Rows shown per section in table/markdown");
+        var reviewOpt = new Option<bool>("--review", "Render a rule-based review grouped by anomaly/notable/routine changes");
 
         var command = new Command("diff", "Diff two snapshot JSON files")
         {
-            fromArg, toArg, outputOpt, reportOpt, categoriesOpt, maxRowsOpt
+            fromArg, toArg, outputOpt, reportOpt, categoriesOpt, maxRowsOpt, reviewOpt
         };
 
         command.SetHandler(async (string from, string to, string output,
-                                  string? report, string? categories, int maxRows) =>
+                                  string? report, string? categories, int maxRows, bool review) =>
         {
-            Environment.ExitCode = await ExecuteAsync(from, to, output, report, categories, maxRows, Console.Out);
-        }, fromArg, toArg, outputOpt, reportOpt, categoriesOpt, maxRowsOpt);
+            Environment.ExitCode = await ExecuteAsync(from, to, output, report, categories, maxRows, Console.Out, review);
+        }, fromArg, toArg, outputOpt, reportOpt, categoriesOpt, maxRowsOpt, reviewOpt);
 
         return command;
     }
@@ -38,7 +39,8 @@ public static class DiffCommand
     public static async Task<int> ExecuteAsync(
         string fromPath, string toPath,
         string outputFormat, string? reportPath, string? categoriesFilter, int maxRows,
-        TextWriter output)
+        TextWriter output,
+        bool review = false)
     {
         if (!File.Exists(fromPath))
         {
@@ -98,7 +100,9 @@ public static class DiffCommand
             else if (ext == ".json") effectiveFormat = "json";
         }
 
-        var rendered = DiffRenderer.Render(diff, effectiveFormat, maxRows);
+        var rendered = review
+            ? DiffReviewRenderer.Render(DiffReviewRenderer.Build(diff), effectiveFormat, maxRows)
+            : DiffRenderer.Render(diff, effectiveFormat, maxRows);
 
         if (reportPath != null)
         {

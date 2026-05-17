@@ -473,6 +473,7 @@ public static class HistoryCommand
         var includeFixesOpt = new Option<bool>("--include-fixes", () => false,
             "Include fix-baseline entries when resolving references");
         var dirOpt = new Option<string?>("--dir", "Override history directory");
+        var reviewOpt = new Option<bool>("--review", "Render a rule-based review grouped by anomaly/notable/routine changes");
 
         var cmd = new Command("diff", "Diff two snapshots resolved from history references")
         {
@@ -483,14 +484,15 @@ public static class HistoryCommand
             categoriesOpt,
             includeFixesOpt,
             dirOpt,
+            reviewOpt,
         };
 
         cmd.SetHandler(async (string from, string to, string outputFormat,
-                              int maxRows, string? categories, bool includeFixes, string? dir) =>
+                              int maxRows, string? categories, bool includeFixes, string? dir, bool review) =>
         {
             Environment.ExitCode = await ExecuteDiffAsync(
-                from, to, outputFormat, maxRows, categories, includeFixes, dir, Console.Out);
-        }, fromArg, toArg, outputOpt, maxRowsOpt, categoriesOpt, includeFixesOpt, dirOpt);
+                from, to, outputFormat, maxRows, categories, includeFixes, dir, Console.Out, review);
+        }, fromArg, toArg, outputOpt, maxRowsOpt, categoriesOpt, includeFixesOpt, dirOpt, reviewOpt);
 
         return cmd;
     }
@@ -503,7 +505,8 @@ public static class HistoryCommand
         string? categoriesFilter,
         bool includeFixes,
         string? overrideDir,
-        TextWriter output)
+        TextWriter output,
+        bool review = false)
     {
         if (string.IsNullOrWhiteSpace(fromRef) || string.IsNullOrWhiteSpace(toRef))
         {
@@ -631,7 +634,9 @@ public static class HistoryCommand
             }
         }
 
-        var rendered = DiffRenderer.Render(diff, outputFormat ?? "table", maxRows);
+        var rendered = review
+            ? DiffReviewRenderer.Render(DiffReviewRenderer.Build(diff), outputFormat ?? "table", maxRows)
+            : DiffRenderer.Render(diff, outputFormat ?? "table", maxRows);
         await output.WriteLineAsync(rendered);
         return 0;
     }

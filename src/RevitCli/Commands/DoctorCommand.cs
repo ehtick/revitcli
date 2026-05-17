@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using RevitCli.Client;
@@ -17,6 +18,12 @@ namespace RevitCli.Commands;
 
 public static class DoctorCommand
 {
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     public static Command Create(RevitClient client, CliConfig config)
     {
         var command = new Command("doctor", "Check RevitCli setup and diagnose issues");
@@ -24,22 +31,71 @@ public static class DoctorCommand
             "--check-version",
             () => 2026,
             "Revit version to check for local API DLLs, add-in manifest, and live connection: 2024|2025|2026.");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table | json");
         command.AddOption(checkVersionOpt);
+        command.AddOption(outputOpt);
 
-        command.SetHandler(async (int checkVersion) =>
+        command.SetHandler(async (int checkVersion, string outputFormat) =>
         {
-            Environment.ExitCode = await ExecuteAsync(client, config, Console.Out, checkVersion);
-        }, checkVersionOpt);
+            Environment.ExitCode = await ExecuteAsync(client, config, Console.Out, checkVersion, outputFormat);
+        }, checkVersionOpt, outputOpt);
 
         return command;
     }
 
     public static Task<int> ExecuteAsync(RevitClient client, CliConfig config, TextWriter output, int checkVersion = 2026)
     {
-        return ExecuteAsync(client, config, output, DoctorEnvironment.Current(checkVersion, config));
+        return ExecuteAsync(client, config, output, checkVersion, "table");
+    }
+
+    public static Task<int> ExecuteAsync(
+        RevitClient client,
+        CliConfig config,
+        TextWriter output,
+        string outputFormat)
+    {
+        return ExecuteAsync(client, config, output, 2026, outputFormat);
+    }
+
+    public static Task<int> ExecuteAsync(
+        RevitClient client,
+        CliConfig config,
+        TextWriter output,
+        int checkVersion,
+        string outputFormat)
+    {
+        return ExecuteAsync(client, config, output, DoctorEnvironment.Current(checkVersion, config), outputFormat);
     }
 
     internal static async Task<int> ExecuteAsync(
+        RevitClient client,
+        CliConfig config,
+        TextWriter output,
+        DoctorEnvironment environment)
+    {
+        return await ExecuteAsync(client, config, output, environment, "table");
+    }
+
+    internal static async Task<int> ExecuteAsync(
+        RevitClient client,
+        CliConfig config,
+        TextWriter output,
+        DoctorEnvironment environment,
+        string outputFormat)
+    {
+        if (!TryNormalizeOutput(outputFormat, out var normalizedOutput))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table' or 'json'.");
+            return 1;
+        }
+
+        if (normalizedOutput == "json")
+            return await ExecuteJsonAsync(client, config, output, environment);
+
+        return await ExecuteTableAsync(client, config, output, environment);
+    }
+
+    private static async Task<int> ExecuteTableAsync(
         RevitClient client,
         CliConfig config,
         TextWriter output,
@@ -133,9 +189,95 @@ public static class DoctorCommand
         }
 
         // 6. Project profile
-        WriteProfileInfo(null, s => output.WriteLine(s));
+        hasFailure |= !WriteProfileInfo(null, s => output.WriteLine(s));
 
         return hasFailure ? 1 : 0;
+    }
+
+    private static async Task<int> ExecuteJsonAsync(
+        RevitClient client,
+        CliConfig config,
+        TextWriter output,
+        DoctorEnvironment environment)
+    {
+        var capture = new StringWriter();
+        var exitCode = await ExecuteTableAsync(client, config, capture, environment);
+        var report = CreateReport(config, environment, exitCode, capture.ToString());
+
+        await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+        return report.Valid ? 0 : 1;
+    }
+
+    private static DoctorReport CreateReport(
+        CliConfig config,
+        DoctorEnvironment environment,
+        int exitCode,
+        string textOutput)
+    {
+        var checks = new List<DoctorCheck>();
+        foreach (var rawLine in textOutput.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+                continue;
+
+            if (!TryParseDiagnosticLine(line, out var status, out var message))
+                continue;
+
+            checks.Add(new DoctorCheck(status, CreateCheckName(status, message), message));
+        }
+
+        var valid = !checks.Any(check => check.Status.Equals("fail", StringComparison.OrdinalIgnoreCase));
+        return new DoctorReport(
+            "doctor.v1",
+            exitCode == 0 && valid,
+            valid,
+            exitCode,
+            environment.TargetRevitYear,
+            config.ServerUrl,
+            checks);
+    }
+
+    private static bool TryParseDiagnosticLine(string line, out string status, out string message)
+    {
+        foreach (var (prefix, normalized) in DiagnosticPrefixes)
+        {
+            if (line.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                status = normalized;
+                message = line[prefix.Length..].Trim();
+                return true;
+            }
+        }
+
+        status = "";
+        message = "";
+        return false;
+    }
+
+    private static string CreateCheckName(string status, string message)
+    {
+        if (status.Equals("hint", StringComparison.OrdinalIgnoreCase))
+            return "hint";
+
+        var parenIndex = message.IndexOf(" (", StringComparison.Ordinal);
+        var colonIndex = message.IndexOf(": ", StringComparison.Ordinal);
+        if (colonIndex > 0 && (parenIndex < 0 || colonIndex < parenIndex))
+            return message[..colonIndex].Trim();
+
+        if (parenIndex > 0)
+            return message[..parenIndex].Trim();
+
+        return message.Length <= 80 ? message : message[..80].TrimEnd();
+    }
+
+    private static bool TryNormalizeOutput(string? outputFormat, out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(outputFormat)
+            ? "table"
+            : outputFormat.Trim().ToLowerInvariant();
+
+        return normalized is "table" or "json";
     }
 
     private static bool IsTargetRevitVersion(StatusInfo status, int checkVersion)
@@ -371,7 +513,7 @@ public static class DoctorCommand
         return true;
     }
 
-    private static void WriteProfileInfo(Action<string>? spectreWrite, Action<string>? plainWrite)
+    private static bool WriteProfileInfo(Action<string>? spectreWrite, Action<string>? plainWrite)
     {
         var profilePath = ProfileLoader.Discover();
         if (profilePath == null)
@@ -395,7 +537,7 @@ public static class DoctorCommand
             plainWrite?.Invoke("  1. Copy a starter profile: cp profiles/general-publish.yml .revitcli.yml");
             plainWrite?.Invoke("  2. Run: revitcli check");
             plainWrite?.Invoke("  3. Run: revitcli publish --dry-run");
-            return;
+            return true;
         }
 
         spectreWrite?.Invoke($"  [green]\u2713[/] Profile: [cyan]{Markup.Escape(profilePath)}[/]");
@@ -431,13 +573,39 @@ public static class DoctorCommand
                 spectreWrite?.Invoke($"      Extends: [dim]{Markup.Escape(profile.Extends)}[/]");
                 plainWrite?.Invoke($"  Extends: {profile.Extends}");
             }
+
+            return true;
         }
         catch (Exception ex)
         {
             spectreWrite?.Invoke($"  [red]\u2717[/] Profile parse error: [red]{Markup.Escape(ex.Message)}[/]");
             plainWrite?.Invoke($"FAIL: Profile parse error: {ex.Message}");
+            return false;
         }
     }
+
+    private static readonly (string Prefix, string Status)[] DiagnosticPrefixes =
+    {
+        ("OK:", "ok"),
+        ("INFO:", "info"),
+        ("WARN:", "warn"),
+        ("FAIL:", "fail"),
+        ("HINT:", "hint"),
+    };
+
+    private sealed record DoctorReport(
+        [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("valid")] bool Valid,
+        [property: JsonPropertyName("exitCode")] int ExitCode,
+        [property: JsonPropertyName("targetRevitYear")] int TargetRevitYear,
+        [property: JsonPropertyName("serverUrl")] string ServerUrl,
+        [property: JsonPropertyName("checks")] IReadOnlyList<DoctorCheck> Checks);
+
+    private sealed record DoctorCheck(
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("message")] string Message);
 
 }
 

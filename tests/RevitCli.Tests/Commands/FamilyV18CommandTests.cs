@@ -106,6 +106,88 @@ public class FamilyV18CommandTests
     }
 
     [Fact]
+    public async Task Validate_RulesFromStandardsManifest_UsesFamilyRulePack()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "revitcli-family-rules-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var manifest = Path.Combine(root, "standards.yml");
+        File.WriteAllText(manifest, """
+version: 1
+name: office
+required:
+  familyRules: [category-known]
+""");
+        try
+        {
+            var handler = new FamilyHttpHandler();
+            handler.Enqueue("/api/families", HttpStatusCode.OK,
+                ApiResponse<FamilyInfo[]>.Ok(new[]
+                {
+                    new FamilyInfo { Id = 1, Name = "Bad/Name", Category = "Unknown", IsLoadable = true, IsInPlace = false }
+                }));
+            var (client, writer) = MakeClientAndWriter(handler);
+
+            var exit = await FamilyCommand.ExecuteValidateAsync(
+                client,
+                category: null,
+                rulesCsv: null,
+                outputFormat: "json",
+                failOn: null,
+                rulesFromManifestPath: manifest,
+                output: writer);
+
+            Assert.Equal(0, exit);
+            using var doc = JsonDocument.Parse(writer.ToString());
+            var issue = Assert.Single(doc.RootElement.EnumerateArray());
+            Assert.Equal("category-known", issue.GetProperty("rule").GetString());
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Validate_RulesAndRulesFromTogether_ExitsOneBeforeHttp()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "revitcli-family-rules-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var manifest = Path.Combine(root, "standards.yml");
+        File.WriteAllText(manifest, """
+version: 1
+name: office
+required:
+  familyRules: [category-known]
+""");
+        try
+        {
+            var handler = new FamilyHttpHandler();
+            var (client, writer) = MakeClientAndWriter(handler);
+
+            var exit = await FamilyCommand.ExecuteValidateAsync(
+                client,
+                category: null,
+                rulesCsv: "name-non-empty",
+                outputFormat: "table",
+                failOn: null,
+                rulesFromManifestPath: manifest,
+                output: writer);
+
+            Assert.Equal(1, exit);
+            Assert.Contains("--rules and --rules-from", writer.ToString());
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
     public async Task Validate_UnknownRule_ExitsOneWithDiagnostic()
     {
         var handler = new FamilyHttpHandler();
@@ -249,6 +331,105 @@ public class FamilyV18CommandTests
     }
 
     [Fact]
+    public async Task Purge_DryRunReport_WritesReviewableCandidateAndExclusionJson()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "revitcli-family-purge-report-" + Guid.NewGuid().ToString("N"));
+        var reportPath = Path.Combine(root, "reports", "family-purge.json");
+        try
+        {
+            var handler = new FamilyHttpHandler();
+            handler.Enqueue("/api/families", HttpStatusCode.OK,
+                ApiResponse<FamilyInfo[]>.Ok(new[]
+                {
+                    new FamilyInfo { Id = 10, Name = "Placed Door", Category = "Doors", IsLoadable = true, IsInPlace = false, IsPlaced = true },
+                    new FamilyInfo { Id = 11, Name = "Keep Window", Category = "Windows", IsLoadable = true, IsInPlace = false, IsPlaced = false },
+                    new FamilyInfo { Id = 12, Name = "InPlace Casework", Category = "Casework", IsLoadable = false, IsInPlace = true, IsPlaced = false },
+                    new FamilyInfo { Id = 13, Name = "Old Window", Category = "Windows", IsLoadable = true, IsInPlace = false, IsPlaced = false },
+                }));
+            var (client, writer) = MakeClientAndWriter(handler);
+
+            var exit = await FamilyCommand.ExecutePurgeAsync(
+                client,
+                category: "Windows",
+                keepCsv: "Keep",
+                dryRun: true,
+                apply: false,
+                yes: false,
+                reportPath,
+                writer);
+
+            Assert.Equal(0, exit);
+            Assert.Contains("Wrote purge report:", writer.ToString());
+            Assert.DoesNotContain(handler.Requests, r => r.Path.EndsWith("/purge"));
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(reportPath));
+            var rootElement = doc.RootElement;
+            Assert.Equal("family-purge-report.v1", rootElement.GetProperty("schema").GetString());
+            Assert.Equal("dry-run", rootElement.GetProperty("mode").GetString());
+            Assert.Equal("Windows", rootElement.GetProperty("filters").GetProperty("category").GetString());
+            Assert.Equal("Keep", rootElement.GetProperty("filters").GetProperty("keepPatterns")[0].GetString());
+            Assert.True(rootElement.GetProperty("safety").GetProperty("effectiveDryRun").GetBoolean());
+            Assert.True(rootElement.GetProperty("safety").GetProperty("requiresApply").GetBoolean());
+
+            var summary = rootElement.GetProperty("summary");
+            Assert.Equal(4, summary.GetProperty("totalFamiliesReviewed").GetInt32());
+            Assert.Equal(1, summary.GetProperty("candidateCount").GetInt32());
+            Assert.Equal(1, summary.GetProperty("keptByPatternCount").GetInt32());
+            Assert.Equal(1, summary.GetProperty("excludedPlacedCount").GetInt32());
+            Assert.Equal(1, summary.GetProperty("excludedInPlaceCount").GetInt32());
+            Assert.Equal(13, rootElement.GetProperty("candidates")[0].GetProperty("id").GetInt64());
+            Assert.Equal(11, rootElement.GetProperty("keptByPattern")[0].GetProperty("id").GetInt64());
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Purge_ApplyWithoutYesReport_CapturesRefusalReason()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "revitcli-family-purge-refused-" + Guid.NewGuid().ToString("N"));
+        var reportPath = Path.Combine(root, "family-purge.json");
+        try
+        {
+            var handler = new FamilyHttpHandler();
+            handler.Enqueue("/api/families", HttpStatusCode.OK,
+                ApiResponse<FamilyInfo[]>.Ok(SampleFamilies()));
+            var (client, writer) = MakeClientAndWriter(handler);
+
+            var exit = await FamilyCommand.ExecutePurgeAsync(
+                client,
+                category: null,
+                keepCsv: null,
+                dryRun: false,
+                apply: true,
+                yes: false,
+                reportPath,
+                writer);
+
+            Assert.Equal(1, exit);
+            Assert.Contains("without --yes", writer.ToString());
+            Assert.DoesNotContain(handler.Requests, r => r.Path.EndsWith("/api/families/purge"));
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(reportPath));
+            var rootElement = doc.RootElement;
+            Assert.Equal("refused", rootElement.GetProperty("mode").GetString());
+            Assert.True(rootElement.GetProperty("safety").GetProperty("requiresYes").GetBoolean());
+            Assert.Contains("--yes", rootElement.GetProperty("safety").GetProperty("refusedReason").GetString());
+            Assert.Equal(2, rootElement.GetProperty("summary").GetProperty("candidateCount").GetInt32());
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
     public async Task Purge_DryRunAndApplyTogether_IsRejected()
     {
         var handler = new FamilyHttpHandler();
@@ -283,6 +464,54 @@ public class FamilyV18CommandTests
 
         Assert.Equal(2, exit);
         Assert.Contains("Skipped", writer.ToString());
+    }
+
+    [Fact]
+    public async Task Purge_PartialFailureReport_CapturesRevitResult()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "revitcli-family-purge-partial-" + Guid.NewGuid().ToString("N"));
+        var reportPath = Path.Combine(root, "family-purge.json");
+        try
+        {
+            var handler = new FamilyHttpHandler();
+            handler.Enqueue("/api/families", HttpStatusCode.OK,
+                ApiResponse<FamilyInfo[]>.Ok(SampleFamilies()));
+            handler.Enqueue("/api/families/purge", HttpStatusCode.OK,
+                ApiResponse<FamilyPurgeResult>.Ok(new FamilyPurgeResult
+                {
+                    Purged = new List<FamilyPurgedItem> { new() { Id = 5002, Name = "M_Fixed", Category = "Windows" } },
+                    Skipped = new List<FamilyPurgeSkipped>
+                    {
+                        new() { Id = 5004, Name = "Bad/Name", Reason = "Revit refused: still referenced" }
+                    }
+                }));
+            var (client, writer) = MakeClientAndWriter(handler);
+
+            var exit = await FamilyCommand.ExecutePurgeAsync(
+                client,
+                category: null,
+                keepCsv: null,
+                dryRun: false,
+                apply: true,
+                yes: true,
+                reportPath,
+                writer);
+
+            Assert.Equal(2, exit);
+            using var doc = JsonDocument.Parse(File.ReadAllText(reportPath));
+            var rootElement = doc.RootElement;
+            Assert.Equal("partial", rootElement.GetProperty("mode").GetString());
+            Assert.Equal(1, rootElement.GetProperty("summary").GetProperty("purgedCount").GetInt32());
+            Assert.Equal(1, rootElement.GetProperty("summary").GetProperty("revitSkippedCount").GetInt32());
+            Assert.Equal(5002, rootElement.GetProperty("result").GetProperty("purged")[0].GetProperty("id").GetInt64());
+            Assert.Equal(5004, rootElement.GetProperty("result").GetProperty("skipped")[0].GetProperty("id").GetInt64());
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     // ─── export ───────────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using RevitCli.Checks;
 using RevitCli.Client;
@@ -14,6 +16,21 @@ namespace RevitCli.Commands;
 
 public static class CheckCommand
 {
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private static readonly HashSet<string> ValidOutputFormats = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "table",
+        "json",
+        "html",
+        AuditReportFormats.Sarif,
+        AuditReportFormats.PrComment,
+    };
+
     public static Command Create(RevitClient client)
     {
         var nameArg = new Argument<string?>("name", () => null, "Check set name (default: 'default')");
@@ -42,12 +59,17 @@ public static class CheckCommand
     internal static async Task<int> ExecuteAsync(RevitClient client, string? name, string? profilePath,
         string outputFormat, string? reportPath, bool noSave, bool sendNotify, TextWriter output)
     {
+        if (!TryResolveFormat(outputFormat, reportPath, out var format))
+        {
+            await output.WriteLineAsync(
+                "Error: --output must be one of: table, json, html, sarif, pr-comment.");
+            return 1;
+        }
+
         var run = await CheckRunner.RunAsync(client, name, profilePath);
         if (!run.Success)
         {
-            await output.WriteLineAsync(run.Error);
-            if (run.Error.Contains("not running", StringComparison.OrdinalIgnoreCase))
-                await output.WriteLineAsync("  Run 'revitcli doctor' to diagnose connection issues.");
+            await WriteRunFailureAsync(name ?? "default", format, run.Error, output);
             return 1;
         }
 
@@ -59,25 +81,17 @@ public static class CheckCommand
         var displayPassed = run.Data.DisplayPassed;
         var displayFailed = run.Data.DisplayFailed;
 
-        // Render output
-        var format = outputFormat.ToLowerInvariant();
+        // Determine exit code based on failOn before rendering so JSON callers
+        // get the same gate result the process returns.
+        var failOn = checkDef.FailOn.ToLowerInvariant();
+        var hasErrors = allIssues.Any(i => i.Severity == "error");
+        var hasWarnings = allIssues.Any(i => i.Severity == "warning");
 
-        // Infer format from report file extension if provided
-        if (reportPath != null)
-        {
-            var ext = Path.GetExtension(reportPath).ToLowerInvariant();
-            if (ext == ".html" || ext == ".htm")
-                format = "html";
-            else if (ext == ".json")
-                format = "json";
-            else
-            {
-                // Let the v1.7 report formats (sarif/pr-comment) infer from .sarif / .md
-                var inferred = AuditReportFormats.InferFormatFromExtension(ext);
-                if (inferred != null)
-                    format = inferred;
-            }
-        }
+        var exitCode = 0;
+        if (failOn == "error" && hasErrors)
+            exitCode = 1;
+        else if (failOn == "warning" && (hasErrors || hasWarnings))
+            exitCode = 1;
 
         string rendered;
         if (AuditReportFormats.TryRender(format, allIssues, out var ciContent))
@@ -88,7 +102,14 @@ public static class CheckCommand
         {
             rendered = format switch
             {
-                "json" => CheckReportRenderer.RenderJson(checkName, displayPassed, displayFailed, allIssues, suppressedCount),
+                "json" => CheckReportRenderer.RenderJson(
+                    checkName,
+                    displayPassed,
+                    displayFailed,
+                    allIssues,
+                    suppressedCount,
+                    exitCode,
+                    failOn),
                 "html" => CheckReportRenderer.RenderHtml(checkName, displayPassed, displayFailed, allIssues, suppressedCount),
                 _ => CheckReportRenderer.RenderTable(checkName, displayPassed, displayFailed, allIssues, suppressedCount)
             };
@@ -151,17 +172,6 @@ public static class CheckCommand
             }
         }
 
-        // Determine exit code based on failOn
-        var failOn = checkDef.FailOn.ToLowerInvariant();
-        var hasErrors = allIssues.Any(i => i.Severity == "error");
-        var hasWarnings = allIssues.Any(i => i.Severity == "warning");
-
-        var exitCode = 0;
-        if (failOn == "error" && hasErrors)
-            exitCode = 1;
-        else if (failOn == "warning" && (hasErrors || hasWarnings))
-            exitCode = 1;
-
         // Webhook notification (suppressed when called from publish precheck).
         // Mirrors PublishCommand's pattern: best-effort, never affects exit code.
         if (sendNotify
@@ -180,4 +190,59 @@ public static class CheckCommand
 
         return exitCode;
     }
+
+    private static bool TryResolveFormat(string? outputFormat, string? reportPath, out string format)
+    {
+        format = string.IsNullOrWhiteSpace(outputFormat)
+            ? "table"
+            : outputFormat.Trim().ToLowerInvariant();
+
+        if (!string.IsNullOrWhiteSpace(reportPath))
+        {
+            var ext = Path.GetExtension(reportPath).ToLowerInvariant();
+            if (ext == ".html" || ext == ".htm")
+                format = "html";
+            else if (ext == ".json")
+                format = "json";
+            else
+            {
+                // Let the v1.7 report formats (sarif/pr-comment) infer from .sarif / .md.
+                var inferred = AuditReportFormats.InferFormatFromExtension(ext);
+                if (inferred != null)
+                    format = inferred;
+            }
+        }
+
+        return ValidOutputFormats.Contains(format);
+    }
+
+    private static async Task WriteRunFailureAsync(
+        string checkName,
+        string format,
+        string error,
+        TextWriter output)
+    {
+        var hint = error.Contains("not running", StringComparison.OrdinalIgnoreCase)
+            ? "Run 'revitcli doctor' to diagnose connection issues."
+            : null;
+
+        if (format == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(
+                new CheckErrorOutput("check.v1", false, checkName, error, hint),
+                JsonOpts));
+            return;
+        }
+
+        await output.WriteLineAsync(error);
+        if (hint != null)
+            await output.WriteLineAsync($"  {hint}");
+    }
+
+    private sealed record CheckErrorOutput(
+        [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("check")] string Check,
+        [property: JsonPropertyName("error")] string Error,
+        [property: JsonPropertyName("hint")] string? Hint);
 }

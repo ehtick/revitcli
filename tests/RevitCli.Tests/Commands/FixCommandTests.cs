@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Commands;
+using RevitCli.Plans;
 using RevitCli.Shared;
 using Xunit;
 
@@ -178,6 +179,76 @@ fixes:
         finally
         {
             File.Delete(profilePath);
+        }
+    }
+
+    [Fact]
+    public async Task Fix_PlanOutput_WritesSavedFixPlan()
+    {
+        var profilePath = WriteProfile("""
+version: 1
+checks:
+  default:
+    failOn: error
+    auditRules:
+      - rule: required-parameter
+fixes:
+  - rule: required-parameter
+    category: doors
+    parameter: Mark
+    strategy: setParam
+    value: "D-{element.id}"
+""");
+        var planPath = Path.Combine(Path.GetTempPath(), $"revitcli_fix_plan_{Guid.NewGuid():N}.json");
+        try
+        {
+            var handler = new QueueHttpHandler();
+            handler.Enqueue("/api/audit", ApiResponse<AuditResult>.Ok(new AuditResult
+            {
+                Passed = 0,
+                Failed = 1,
+                Issues = new List<AuditIssue>
+                {
+                    new()
+                    {
+                        Rule = "required-parameter",
+                        Severity = "warning",
+                        Message = "Missing Mark",
+                        ElementId = 10,
+                        Category = "doors",
+                        Parameter = "Mark",
+                        CurrentValue = "",
+                        Source = "structured"
+                    }
+                }
+            }));
+            var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+            var writer = new StringWriter();
+
+            var exitCode = await FixCommand.ExecuteAsync(
+                client, "default", profilePath, Array.Empty<string>(), null,
+                dryRun: false, apply: false, yes: false, allowInferred: false,
+                maxChanges: 50, baselineOutput: null, noSnapshot: false, writer, planPath);
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(planPath));
+            Assert.Contains("Plan written", writer.ToString());
+            Assert.Contains("revitcli plan apply", writer.ToString());
+            Assert.DoesNotContain(handler.Requests, r => r.EndsWith("/api/elements/set", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(handler.Requests, r => r.EndsWith("/api/snapshot", StringComparison.OrdinalIgnoreCase));
+
+            var plan = SetPlanFileStore.LoadFix(planPath);
+            Assert.Equal("fix", plan.Type);
+            Assert.Equal("default", plan.Summary.CheckName);
+            Assert.Equal(1, plan.Summary.ActionCount);
+            Assert.Equal(10, plan.Actions[0].ElementId);
+            Assert.Equal("Mark", plan.Actions[0].Parameter);
+            Assert.Equal("D-10", plan.Actions[0].NewValue);
+        }
+        finally
+        {
+            File.Delete(profilePath);
+            if (File.Exists(planPath)) File.Delete(planPath);
         }
     }
 

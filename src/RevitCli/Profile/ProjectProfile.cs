@@ -106,6 +106,12 @@ public class ProfileDefaults
 
     [YamlMember(Alias = "notify")]
     public string? Notify { get; set; }
+
+    [YamlMember(Alias = "planMaxChanges")]
+    public int? PlanMaxChanges { get; set; }
+
+    [YamlMember(Alias = "highImpactChanges")]
+    public int? HighImpactChanges { get; set; }
 }
 
 public class CheckDefinition

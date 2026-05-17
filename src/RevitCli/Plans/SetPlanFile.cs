@@ -151,23 +151,59 @@ public sealed class SetPlanCommands
 
 public sealed class PlanReceipt
 {
+    [JsonPropertyName("schemaVersion")]
+    public string SchemaVersion { get; set; } = "plan-receipt.v1";
+
     [JsonPropertyName("action")]
     public string Action { get; set; } = "plan.apply";
 
     [JsonPropertyName("planPath")]
     public string PlanPath { get; set; } = "";
 
+    [JsonPropertyName("command")]
+    public string Command { get; set; } = "";
+
+    [JsonPropertyName("dryRun")]
+    public bool DryRun { get; set; }
+
+    [JsonPropertyName("timestamp")]
+    public string Timestamp { get; set; } = "";
+
     [JsonPropertyName("appliedAtUtc")]
     public string AppliedAtUtc { get; set; } = "";
+
+    [JsonPropertyName("operator")]
+    public string Operator { get; set; } = "";
+
+    [JsonPropertyName("user")]
+    public string User { get; set; } = "";
 
     [JsonPropertyName("appliedBy")]
     public string AppliedBy { get; set; } = "";
 
+    [JsonPropertyName("machine")]
+    public string Machine { get; set; } = "";
+
+    [JsonPropertyName("modelPath")]
+    public string? ModelPath { get; set; }
+
+    [JsonPropertyName("documentName")]
+    public string? DocumentName { get; set; }
+
+    [JsonPropertyName("documentVersion")]
+    public string? DocumentVersion { get; set; }
+
     [JsonPropertyName("affected")]
     public int Affected { get; set; }
 
+    [JsonPropertyName("affectedElementIds")]
+    public List<long> AffectedElementIds { get; set; } = new();
+
     [JsonPropertyName("success")]
     public bool Success { get; set; } = true;
+
+    [JsonPropertyName("requiresRollback")]
+    public bool RequiresRollback { get; set; }
 
     [JsonPropertyName("operation")]
     public string Operation { get; set; } = "";
@@ -186,6 +222,15 @@ public sealed class PlanReceipt
 
     [JsonPropertyName("elementWrites")]
     public int ElementWrites { get; set; }
+
+    [JsonPropertyName("baselinePath")]
+    public string? BaselinePath { get; set; }
+
+    [JsonPropertyName("journalPath")]
+    public string? JournalPath { get; set; }
+
+    [JsonPropertyName("actionCount")]
+    public int ActionCount { get; set; }
 
     [JsonPropertyName("groups")]
     public List<ImportGroup> Groups { get; set; } = new();
@@ -417,7 +462,35 @@ public static class SetPlanFileStore
         return plan;
     }
 
+    internal static FixPlanFile LoadFix(string path)
+    {
+        var json = File.ReadAllText(path);
+        var plan = JsonSerializer.Deserialize<FixPlanFile>(json, JsonOptions)
+            ?? throw new InvalidOperationException("Plan file is empty or invalid JSON.");
+
+        if (plan.SchemaVersion != 1)
+            throw new InvalidOperationException($"Unsupported plan schemaVersion '{plan.SchemaVersion}'.");
+
+        if (!string.Equals(plan.Type, "fix", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Unsupported plan type '{plan.Type}'.");
+
+        if (plan.Actions == null)
+            throw new InvalidOperationException("Plan file is missing fix actions.");
+
+        return plan;
+    }
+
     public static void SaveImport(string path, ImportPlanFile plan)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var dir = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(dir))
+            Directory.CreateDirectory(dir);
+
+        File.WriteAllText(fullPath, JsonSerializer.Serialize(plan, JsonOptions));
+    }
+
+    internal static void SaveFix(string path, FixPlanFile plan)
     {
         var fullPath = Path.GetFullPath(path);
         var dir = Path.GetDirectoryName(fullPath);

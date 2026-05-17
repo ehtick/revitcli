@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Commands;
@@ -114,6 +115,52 @@ public class DiffCommandTests
         Assert.True(File.Exists(reportPath));
         var content = File.ReadAllText(reportPath);
         Assert.StartsWith("## Model changes", content); // format inferred from .md extension
+
+        Directory.Delete(dir, recursive: true);
+    }
+
+    [Fact]
+    public async Task Diff_Review_PrintsAnomalySummary()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "revitcli-test-diff-" + System.Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var a = WriteSnapshot(Path.Combine(dir, "a.json"), Fixture((1, "A", "h1"), (2, "B", "h2")));
+        var b = WriteSnapshot(Path.Combine(dir, "b.json"), Fixture((1, "A", "h1")));
+        var writer = new StringWriter();
+
+        var exitCode = await DiffCommand.ExecuteAsync(a, b, "table", null, null, 20, writer, review: true);
+
+        Assert.Equal(0, exitCode);
+        var output = writer.ToString();
+        Assert.Contains("Highest severity: anomaly", output);
+        Assert.Contains("walls: 1 removed", output);
+        Assert.Contains("Recommended actions", output);
+
+        Directory.Delete(dir, recursive: true);
+    }
+
+    [Fact]
+    public async Task Diff_ReviewJson_ContainsReviewGroups()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "revitcli-test-diff-" + System.Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var aSnap = Fixture((1, "90min", "h1"));
+        aSnap.Categories["walls"][0].Parameters["Fire Rating"] = "90min";
+        aSnap.Categories["walls"][0].Parameters.Remove("Mark");
+        var bSnap = Fixture((1, "60min", "h2"));
+        bSnap.Categories["walls"][0].Parameters["Fire Rating"] = "60min";
+        bSnap.Categories["walls"][0].Parameters.Remove("Mark");
+        var a = WriteSnapshot(Path.Combine(dir, "a.json"), aSnap);
+        var bPath = WriteSnapshot(Path.Combine(dir, "b.json"), bSnap);
+        var writer = new StringWriter();
+
+        var exitCode = await DiffCommand.ExecuteAsync(a, bPath, "json", null, null, 20, writer, review: true);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        Assert.Equal("notable", json.RootElement.GetProperty("highestSeverity").GetString());
+        var groups = json.RootElement.GetProperty("groups").EnumerateArray().ToArray();
+        Assert.Contains(groups, group => group.GetProperty("parameter").GetString() == "Fire Rating");
 
         Directory.Delete(dir, recursive: true);
     }

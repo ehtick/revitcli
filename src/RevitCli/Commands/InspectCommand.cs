@@ -59,7 +59,7 @@ public static class InspectCommand
 
     private static Command CreateCategoriesCommand(RevitClient client)
     {
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
         var includeEmptyOpt = new Option<bool>("--include-empty", () => false, "Show supported categories with zero elements");
         var command = new Command("categories", "Inspect common query categories") { outputOpt, includeEmptyOpt };
         command.SetHandler(async (output, includeEmpty) =>
@@ -72,33 +72,67 @@ public static class InspectCommand
     private static Command CreateParamsCommand(RevitClient client)
     {
         var categoryArg = new Argument<string>("category", "Element category to inspect, e.g. doors");
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+        var nameOpt = new Option<string?>("--name", "Filter parameters by name pattern");
+        var writableOnlyOpt = new Option<bool>("--writable-only", "Only show parameters confirmed writable by metadata");
+        var missingOnlyOpt = new Option<bool>("--missing-only", "Only show parameters with missing values on some elements");
         var command = new Command("params", "Inspect parameters found on elements in a category")
         {
             categoryArg,
-            outputOpt
+            outputOpt,
+            nameOpt,
+            writableOnlyOpt,
+            missingOnlyOpt
         };
-        command.SetHandler(async (category, output) =>
+        command.SetHandler(async (category, output, name, writableOnly, missingOnly) =>
         {
-            Environment.ExitCode = await ExecuteParamsAsync(client, category, output, Console.Out);
-        }, categoryArg, outputOpt);
+            Environment.ExitCode = await ExecuteParamsAsync(
+                client,
+                category,
+                output,
+                name,
+                writableOnly,
+                missingOnly,
+                Console.Out);
+        }, categoryArg, outputOpt, nameOpt, writableOnlyOpt, missingOnlyOpt);
         return command;
     }
 
     private static Command CreateSchedulesCommand(RevitClient client)
     {
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json");
-        var command = new Command("schedules", "Inspect schedules and export commands") { outputOpt };
-        command.SetHandler(async output =>
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+        var categoryOpt = new Option<string?>("--category", "Filter schedules by category pattern");
+        var nameOpt = new Option<string?>("--name", "Filter schedules by name pattern");
+        var readyOnlyOpt = new Option<bool>("--ready-only", "Only show schedules ready for delivery export");
+        var emptyOnlyOpt = new Option<bool>("--empty-only", "Only show schedules with zero rows");
+        var issuesOnlyOpt = new Option<bool>("--issues-only", "Only show schedules with export-readiness issues");
+        var command = new Command("schedules", "Inspect schedules and export commands")
         {
-            Environment.ExitCode = await ExecuteSchedulesAsync(client, output, Console.Out);
-        }, outputOpt);
+            outputOpt,
+            categoryOpt,
+            nameOpt,
+            readyOnlyOpt,
+            emptyOnlyOpt,
+            issuesOnlyOpt
+        };
+        command.SetHandler(async (output, category, name, readyOnly, emptyOnly, issuesOnly) =>
+        {
+            Environment.ExitCode = await ExecuteSchedulesAsync(
+                client,
+                output,
+                category,
+                name,
+                readyOnly,
+                emptyOnly,
+                issuesOnly,
+                Console.Out);
+        }, outputOpt, categoryOpt, nameOpt, readyOnlyOpt, emptyOnlyOpt, issuesOnlyOpt);
         return command;
     }
 
     private static Command CreateSheetsCommand(RevitClient client)
     {
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
         var sheetsOpt = new Option<string[]>(
             "--sheets",
             () => Array.Empty<string>(),
@@ -129,7 +163,56 @@ public static class InspectCommand
         RevitClient client,
         string outputFormat,
         TextWriter output)
+        => await ExecuteSchedulesAsync(
+            client,
+            outputFormat,
+            categoryFilter: null,
+            nameFilter: null,
+            readyOnly: false,
+            emptyOnly: false,
+            issuesOnly: false,
+            output);
+
+    public static async Task<int> ExecuteSchedulesAsync(
+        RevitClient client,
+        string outputFormat,
+        string? categoryFilter,
+        string? nameFilter,
+        bool readyOnly,
+        bool emptyOnly,
+        TextWriter output)
+        => await ExecuteSchedulesAsync(
+            client,
+            outputFormat,
+            categoryFilter,
+            nameFilter,
+            readyOnly,
+            emptyOnly,
+            issuesOnly: false,
+            output);
+
+    public static async Task<int> ExecuteSchedulesAsync(
+        RevitClient client,
+        string outputFormat,
+        string? categoryFilter,
+        string? nameFilter,
+        bool readyOnly,
+        bool emptyOnly,
+        bool issuesOnly,
+        TextWriter output)
     {
+        if (readyOnly && emptyOnly)
+        {
+            await output.WriteLineAsync("Error: --ready-only and --empty-only are mutually exclusive.");
+            return 1;
+        }
+
+        if (readyOnly && issuesOnly)
+        {
+            await output.WriteLineAsync("Error: --ready-only and --issues-only are mutually exclusive.");
+            return 1;
+        }
+
         var result = await client.ListSchedulesAsync();
         if (!result.Success)
         {
@@ -140,35 +223,40 @@ public static class InspectCommand
         var schedules = result.Data ?? Array.Empty<ScheduleInfo>();
         var items = schedules
             .OrderBy(schedule => schedule.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(schedule => new ScheduleInspectItem(
-                schedule.Id,
-                schedule.Name,
-                schedule.Category,
-                schedule.FieldCount,
-                schedule.RowCount,
-                schedule.RowCount >= 0,
-                BuildExportCommand(schedule.Name)))
+            .Select(BuildScheduleInspectItem)
+            .Where(item => MatchesOptionalPattern(item.Category ?? "", categoryFilter))
+            .Where(item => MatchesOptionalPattern(item.Name, nameFilter))
+            .Where(item => !readyOnly || item.ExportReady)
+            .Where(item => !emptyOnly || item.RowCount == 0)
+            .Where(item => !issuesOnly || item.HasIssues)
             .ToArray();
 
-        if (outputFormat.Equals("json", StringComparison.OrdinalIgnoreCase))
+        if (IsJson(outputFormat))
         {
             await output.WriteLineAsync(JsonSerializer.Serialize(items, PrettyJson));
             return 0;
         }
 
-        if (items.Length == 0)
+        if (IsMarkdown(outputFormat))
         {
-            await output.WriteLineAsync("No schedules found in the model.");
+            await output.WriteLineAsync(RenderSchedulesMarkdown(items));
             return 0;
         }
 
-        await output.WriteLineAsync($"{"Name",-30} {"Category",-15} {"Fields",-8} {"Rows",-8} Export command");
-        await output.WriteLineAsync(new string('-', 112));
+        if (items.Length == 0)
+        {
+            await output.WriteLineAsync("No schedules matched the inspect filters.");
+            return 0;
+        }
+
+        await output.WriteLineAsync($"{"Name",-30} {"Category",-15} {"Fields",-8} {"Rows",-8} {"Ready",-7} {"Issues",-24} Commands");
+        await output.WriteLineAsync(new string('-', 160));
 
         foreach (var item in items)
         {
+            var ready = item.ExportReady ? "yes" : "no";
             await output.WriteLineAsync(
-                $"{item.Name,-30} {item.Category,-15} {item.FieldCount,-8} {item.RowCount,-8} {item.ExportCommand}");
+                $"{TrimForTable(item.Name, 30),-30} {TrimForTable(item.Category ?? "-", 15),-15} {item.FieldCount,-8} {item.RowCount,-8} {ready,-7} {TrimForTable(item.IssueSummary, 24),-24} csv: {item.CsvExportCommand} | json: {item.JsonExportCommand}");
         }
 
         return 0;
@@ -222,9 +310,15 @@ public static class InspectCommand
                 null));
         }
 
-        if (outputFormat.Equals("json", StringComparison.OrdinalIgnoreCase))
+        if (IsJson(outputFormat))
         {
             await output.WriteLineAsync(JsonSerializer.Serialize(items, PrettyJson));
+            return 0;
+        }
+
+        if (IsMarkdown(outputFormat))
+        {
+            await output.WriteLineAsync(RenderCategoriesMarkdown(items));
             return 0;
         }
 
@@ -289,9 +383,15 @@ public static class InspectCommand
             .Where(item => !issuesOnly || item.HasIssues)
             .ToArray();
 
-        if (outputFormat.Equals("json", StringComparison.OrdinalIgnoreCase))
+        if (IsJson(outputFormat))
         {
             await output.WriteLineAsync(JsonSerializer.Serialize(items, PrettyJson));
+            return 0;
+        }
+
+        if (IsMarkdown(outputFormat))
+        {
+            await output.WriteLineAsync(RenderSheetsMarkdown(items));
             return 0;
         }
 
@@ -318,6 +418,23 @@ public static class InspectCommand
         string category,
         string outputFormat,
         TextWriter output)
+        => await ExecuteParamsAsync(
+            client,
+            category,
+            outputFormat,
+            nameFilter: null,
+            writableOnly: false,
+            missingOnly: false,
+            output);
+
+    public static async Task<int> ExecuteParamsAsync(
+        RevitClient client,
+        string category,
+        string outputFormat,
+        string? nameFilter,
+        bool writableOnly,
+        bool missingOnly,
+        TextWriter output)
     {
         if (string.IsNullOrWhiteSpace(category))
         {
@@ -333,11 +450,21 @@ public static class InspectCommand
         }
 
         var elements = result.Data ?? Array.Empty<ElementInfo>();
-        var items = BuildParameterItems(category, elements);
+        var items = BuildParameterItems(category, elements)
+            .Where(item => MatchesOptionalPattern(item.Name, nameFilter))
+            .Where(item => !writableOnly || item.CanWrite == true)
+            .Where(item => !missingOnly || item.ValueCoveragePercent < 100)
+            .ToArray();
 
-        if (outputFormat.Equals("json", StringComparison.OrdinalIgnoreCase))
+        if (IsJson(outputFormat))
         {
             await output.WriteLineAsync(JsonSerializer.Serialize(items, PrettyJson));
+            return 0;
+        }
+
+        if (IsMarkdown(outputFormat))
+        {
+            await output.WriteLineAsync(RenderParamsMarkdown(category, elements.Length, items));
             return 0;
         }
 
@@ -349,7 +476,7 @@ public static class InspectCommand
 
         if (items.Length == 0)
         {
-            await output.WriteLineAsync($"No parameters found on {elements.Length} {category} element(s).");
+            await output.WriteLineAsync($"No parameters matched the inspect filters on {elements.Length} {category} element(s).");
             return 0;
         }
 
@@ -383,7 +510,11 @@ public static class InspectCommand
                     stat.SeenOn++;
                     stat.HasWriteMetadata = true;
                     if (parameter.CanWrite)
+                    {
                         stat.WritableOn++;
+                        stat.WritableSampleElementId ??= element.Id;
+                    }
+
                     if (parameter.IsReadOnly)
                         stat.ReadOnlyOn++;
                     if (!string.IsNullOrWhiteSpace(parameter.StorageType))
@@ -393,6 +524,12 @@ public static class InspectCommand
                     {
                         stat.ValueSeenOn++;
                         AddSampleValue(stat, parameter.Value);
+                    }
+                    else
+                    {
+                        stat.MissingSampleElementId ??= element.Id;
+                        if (parameter.CanWrite)
+                            stat.MissingWritableSampleElementId ??= element.Id;
                     }
                 }
 
@@ -421,6 +558,7 @@ public static class InspectCommand
                 var canWrite = stat.HasWriteMetadata
                     ? stat.WritableOn > 0
                     : (bool?)null;
+                var probeElementId = stat.MissingWritableSampleElementId ?? stat.WritableSampleElementId;
                 return new ParameterInspectItem(
                     stat.Name,
                     stat.SeenOn,
@@ -433,9 +571,134 @@ public static class InspectCommand
                     writeStatus,
                     stat.StorageTypes.OrderBy(type => type, StringComparer.OrdinalIgnoreCase).ToArray(),
                     stat.SampleValues.ToArray(),
-                    canWrite == true ? BuildDryRunProbeCommand(category, stat.Name) : "");
+                    probeElementId,
+                    stat.MissingSampleElementId,
+                    canWrite == true ? BuildDryRunProbeCommand(category, stat.Name, probeElementId) : "");
             })
             .ToArray();
+    }
+
+    private static string RenderCategoriesMarkdown(IReadOnlyList<CategoryInspectItem> items)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Inspect Categories");
+        writer.WriteLine();
+        writer.WriteLine($"- Categories: `{items.Count}`");
+        writer.WriteLine();
+
+        if (items.Count == 0)
+        {
+            writer.WriteLine("No elements found in common categories.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine("| Alias | Label | Model category | Count | Sample element | Next command |");
+        writer.WriteLine("|---|---|---|---:|---:|---|");
+        foreach (var item in items.OrderByDescending(item => item.Count).ThenBy(item => item.Alias, StringComparer.OrdinalIgnoreCase))
+        {
+            writer.WriteLine(
+                $"| {EscapeTableCell(item.Alias)} | {EscapeTableCell(item.Label)} | {EscapeTableCell(item.ModelCategory ?? "-")} | {item.Count} | {EscapeTableCell(item.SampleElementId?.ToString() ?? "-")} | {InlineCodeCell(item.ParamsCommand)} |");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderParamsMarkdown(
+        string category,
+        int elementCount,
+        IReadOnlyList<ParameterInspectItem> items)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine($"# Inspect Parameters: {EscapeMarkdownText(category)}");
+        writer.WriteLine();
+        writer.WriteLine($"- Elements: `{elementCount}`");
+        writer.WriteLine($"- Parameters: `{items.Count}`");
+        writer.WriteLine();
+
+        if (elementCount == 0)
+        {
+            writer.WriteLine($"No elements found for category `{EscapeInlineCode(category)}`.");
+            return writer.ToString().TrimEnd();
+        }
+
+        if (items.Count == 0)
+        {
+            writer.WriteLine("No parameters matched the inspect filters.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine("| Parameter | Seen | Values | Write | Type | Samples | Dry-run probe |");
+        writer.WriteLine("|---|---:|---:|---|---|---|---|");
+        foreach (var item in items)
+        {
+            var storageTypes = item.StorageTypes.Length == 0
+                ? "unknown"
+                : string.Join("/", item.StorageTypes);
+            var samples = item.SampleValues.Length == 0
+                ? "-"
+                : string.Join(" | ", item.SampleValues);
+            var probe = string.IsNullOrWhiteSpace(item.DryRunProbeCommand)
+                ? "-"
+                : InlineCodeCell(item.DryRunProbeCommand);
+            writer.WriteLine(
+                $"| {EscapeTableCell(item.Name)} | {item.SeenOn} ({item.CoveragePercent:0.#}%) | {item.ValueSeenOn} ({item.ValueCoveragePercent:0.#}%) | {EscapeTableCell(item.WriteStatus)} | {EscapeTableCell(storageTypes)} | {EscapeTableCell(samples)} | {probe} |");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderSchedulesMarkdown(IReadOnlyList<ScheduleInspectItem> items)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Inspect Schedules");
+        writer.WriteLine();
+        writer.WriteLine($"- Schedules: `{items.Count}`");
+        writer.WriteLine($"- Ready: `{items.Count(item => item.ExportReady)}`");
+        writer.WriteLine($"- With issues: `{items.Count(item => item.HasIssues)}`");
+        writer.WriteLine();
+
+        if (items.Count == 0)
+        {
+            writer.WriteLine("No schedules matched the inspect filters.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine("| Name | Category | Fields | Rows | Ready | Issues | CSV export | JSON export |");
+        writer.WriteLine("|---|---|---:|---:|---|---|---|---|");
+        foreach (var item in items)
+        {
+            writer.WriteLine(
+                $"| {EscapeTableCell(item.Name)} | {EscapeTableCell(item.Category ?? "-")} | {item.FieldCount} | {item.RowCount} | {YesNo(item.ExportReady)} | {EscapeTableCell(item.IssueSummary)} | {InlineCodeCell(item.CsvExportCommand)} | {InlineCodeCell(item.JsonExportCommand)} |");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderSheetsMarkdown(IReadOnlyList<SheetInspectItem> items)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Inspect Sheets");
+        writer.WriteLine();
+        writer.WriteLine($"- Sheets: `{items.Count}`");
+        writer.WriteLine($"- Ready: `{items.Count(item => item.ExportReady)}`");
+        writer.WriteLine($"- With issues: `{items.Count(item => item.HasIssues)}`");
+        writer.WriteLine();
+
+        if (items.Count == 0)
+        {
+            writer.WriteLine("No sheets matched the inspect filters.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine("| Number | Name | Views | Ready | Issues | Dry-run export |");
+        writer.WriteLine("|---|---|---:|---|---|---|");
+        foreach (var item in items)
+        {
+            writer.WriteLine(
+                $"| {EscapeTableCell(item.Number)} | {EscapeTableCell(item.Name)} | {item.PlacedViewCount} | {YesNo(item.ExportReady)} | {EscapeTableCell(item.IssueSummary)} | {InlineCodeCell(item.DryRunExportCommand)} |");
+        }
+
+        return writer.ToString().TrimEnd();
     }
 
     private static ParameterStats GetParameterStats(Dictionary<string, ParameterStats> stats, string name)
@@ -474,6 +737,81 @@ public static class InspectCommand
     private static string BuildExportCommand(string scheduleName)
     {
         return $"revitcli schedule export --name {QuoteArgument(scheduleName)} --output csv";
+    }
+
+    private static string BuildScheduleJsonExportCommand(string scheduleName)
+    {
+        return $"revitcli schedule export --name {QuoteArgument(scheduleName)} --output json";
+    }
+
+    private static string BuildScheduleTableExportCommand(string scheduleName)
+    {
+        return $"revitcli schedule export --name {QuoteArgument(scheduleName)} --output table";
+    }
+
+    private static ScheduleInspectItem BuildScheduleInspectItem(ScheduleInfo schedule)
+    {
+        var issues = BuildScheduleIssues(schedule).ToArray();
+        var csvCommand = string.IsNullOrWhiteSpace(schedule.Name)
+            ? ""
+            : BuildExportCommand(schedule.Name);
+        var jsonCommand = string.IsNullOrWhiteSpace(schedule.Name)
+            ? ""
+            : BuildScheduleJsonExportCommand(schedule.Name);
+        var tableCommand = string.IsNullOrWhiteSpace(schedule.Name)
+            ? ""
+            : BuildScheduleTableExportCommand(schedule.Name);
+
+        return new ScheduleInspectItem(
+            schedule.Id,
+            schedule.Name,
+            schedule.Category,
+            schedule.FieldCount,
+            schedule.RowCount,
+            schedule.FieldCount > 0,
+            schedule.RowCount > 0,
+            issues,
+            csvCommand,
+            csvCommand,
+            jsonCommand,
+            tableCommand);
+    }
+
+    private static List<ScheduleIssue> BuildScheduleIssues(ScheduleInfo schedule)
+    {
+        var issues = new List<ScheduleIssue>();
+        if (string.IsNullOrWhiteSpace(schedule.Name))
+        {
+            issues.Add(new ScheduleIssue(
+                "error",
+                "missing-name",
+                "Schedule name is blank."));
+        }
+
+        if (schedule.FieldCount <= 0)
+        {
+            issues.Add(new ScheduleIssue(
+                "error",
+                "no-fields",
+                "Schedule has no fields to export."));
+        }
+
+        if (schedule.RowCount < 0)
+        {
+            issues.Add(new ScheduleIssue(
+                "warning",
+                "unknown-rows",
+                "Schedule row count is unavailable."));
+        }
+        else if (schedule.RowCount == 0)
+        {
+            issues.Add(new ScheduleIssue(
+                "warning",
+                "empty-schedule",
+                "Schedule has zero rows."));
+        }
+
+        return issues;
     }
 
     private static SheetInspectItem BuildSheetInspectItem(SnapshotSheet sheet)
@@ -613,6 +951,12 @@ public static class InspectCommand
                || MatchesPattern(item.Selector, pattern);
     }
 
+    private static bool MatchesOptionalPattern(string text, string? pattern)
+    {
+        return string.IsNullOrWhiteSpace(pattern)
+            || MatchesPattern(text, pattern.Trim());
+    }
+
     private static bool MatchesPattern(string text, string pattern)
     {
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(pattern))
@@ -635,8 +979,11 @@ public static class InspectCommand
         return $"revitcli inspect params {category}";
     }
 
-    private static string BuildDryRunProbeCommand(string category, string parameterName)
+    private static string BuildDryRunProbeCommand(string category, string parameterName, long? sampleElementId)
     {
+        if (sampleElementId is > 0)
+            return $"revitcli set --id {sampleElementId.Value} --param {QuoteArgument(parameterName)} --value {QuoteArgument("<value>")} --dry-run";
+
         return $"revitcli set {category} --param {QuoteArgument(parameterName)} --value {QuoteArgument("<value>")} --dry-run";
     }
 
@@ -650,6 +997,38 @@ public static class InspectCommand
         if (value.Length <= maxLength)
             return value;
         return value[..Math.Max(0, maxLength - 3)] + "...";
+    }
+
+    private static bool IsJson(string? outputFormat) =>
+        string.Equals(outputFormat, "json", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMarkdown(string? outputFormat) =>
+        string.Equals(outputFormat, "markdown", StringComparison.OrdinalIgnoreCase);
+
+    private static string YesNo(bool value) => value ? "yes" : "no";
+
+    private static string EscapeInlineCode(string? value)
+    {
+        return (value ?? string.Empty)
+            .Replace("`", "'", StringComparison.Ordinal)
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal);
+    }
+
+    private static string InlineCodeCell(string? value) =>
+        $"`{EscapeTableCell(EscapeInlineCode(value))}`";
+
+    private static string EscapeMarkdownText(string? value)
+    {
+        return (value ?? string.Empty)
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal);
+    }
+
+    private static string EscapeTableCell(string? value)
+    {
+        return EscapeMarkdownText(string.IsNullOrWhiteSpace(value) ? "-" : value)
+            .Replace("|", "\\|", StringComparison.Ordinal);
     }
 
     private static bool IsConnectionFailure(string? error)
@@ -686,6 +1065,8 @@ public static class InspectCommand
         string WriteStatus,
         string[] StorageTypes,
         string[] SampleValues,
+        long? SampleElementId,
+        long? MissingSampleElementId,
         string DryRunProbeCommand);
 
     private sealed record ScheduleInspectItem(
@@ -694,8 +1075,27 @@ public static class InspectCommand
         string? Category,
         int FieldCount,
         int RowCount,
-        bool ExportReady,
-        string ExportCommand);
+        bool HasFields,
+        bool HasRows,
+        ScheduleIssue[] Issues,
+        string ExportCommand,
+        string CsvExportCommand,
+        string JsonExportCommand,
+        string TableExportCommand)
+    {
+        public bool HasIssues => Issues.Length > 0;
+
+        public bool HasBlockingIssues => Issues.Any(issue => issue.Severity.Equals("error", StringComparison.OrdinalIgnoreCase));
+
+        public bool ExportReady => !string.IsNullOrWhiteSpace(Name) && HasFields && HasRows && !HasBlockingIssues;
+
+        public string IssueSummary => HasIssues ? string.Join(", ", Issues.Select(issue => issue.Code)) : "ok";
+    }
+
+    private sealed record ScheduleIssue(
+        string Severity,
+        string Code,
+        string Message);
 
     private sealed record SheetInspectItem(
         long ViewId,
@@ -737,6 +1137,9 @@ public static class InspectCommand
         public int WritableOn { get; set; }
         public int ReadOnlyOn { get; set; }
         public bool HasWriteMetadata { get; set; }
+        public long? WritableSampleElementId { get; set; }
+        public long? MissingWritableSampleElementId { get; set; }
+        public long? MissingSampleElementId { get; set; }
         public List<string> SampleValues { get; } = new();
         public HashSet<string> StorageTypes { get; } = new(StringComparer.OrdinalIgnoreCase);
     }

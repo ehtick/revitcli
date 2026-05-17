@@ -4,6 +4,7 @@ using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Output;
@@ -27,7 +28,7 @@ public static class ScheduleCommand
 
     private static Command CreateListCommand(RevitClient client)
     {
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
         var cmd = new Command("list", "List existing schedules in the Revit model") { outputOpt };
         cmd.SetHandler(async (output) =>
         {
@@ -44,7 +45,7 @@ public static class ScheduleCommand
         var filterOpt = new Option<string?>("--filter", "Filter expression");
         var sortOpt = new Option<string?>("--sort", "Sort by field name");
         var sortDescOpt = new Option<bool>("--sort-desc", () => false, "Sort descending");
-        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, csv");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, csv, markdown");
         var templateOpt = new Option<string?>("--template", "Schedule template name from .revitcli.yml");
 
         var cmd = new Command("export", "Export schedule data from the Revit model")
@@ -88,23 +89,54 @@ public static class ScheduleCommand
 
     public static async Task<int> ExecuteListAsync(RevitClient client, string outputFormat, TextWriter output)
     {
+        if (!TryNormalizeListOutput(outputFormat, out var normalizedOutput))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
         var result = await client.ListSchedulesAsync();
         if (!result.Success)
         {
-            await output.WriteLineAsync($"Error: {result.Error}");
+            if (normalizedOutput == "json")
+            {
+                await output.WriteLineAsync(JsonSerializer.Serialize(
+                    new ScheduleListErrorOutput(false, result.Error ?? "Unknown error"),
+                    PrettyJson));
+                return 1;
+            }
+
+            var message = result.Error ?? "Unknown error";
+            if (normalizedOutput == "markdown")
+                await output.WriteLineAsync(RenderScheduleListErrorMarkdown(message));
+            else
+                await output.WriteLineAsync($"Error: {message}");
             return 1;
         }
 
         var schedules = result.Data!;
         if (schedules.Length == 0)
         {
-            await output.WriteLineAsync("No schedules found in the model.");
+            if (normalizedOutput == "json")
+            {
+                await output.WriteLineAsync(JsonSerializer.Serialize(Array.Empty<ScheduleInfo>(), PrettyJson));
+                return 0;
+            }
+
+            if (normalizedOutput == "markdown")
+                await output.WriteLineAsync(RenderScheduleListMarkdown(schedules));
+            else
+                await output.WriteLineAsync("No schedules found in the model.");
             return 0;
         }
 
-        if (outputFormat.Equals("json", StringComparison.OrdinalIgnoreCase))
+        if (normalizedOutput == "json")
         {
             await output.WriteLineAsync(JsonSerializer.Serialize(schedules, PrettyJson));
+        }
+        else if (normalizedOutput == "markdown")
+        {
+            await output.WriteLineAsync(RenderScheduleListMarkdown(schedules));
         }
         else
         {
@@ -117,11 +149,26 @@ public static class ScheduleCommand
         return 0;
     }
 
+    private static bool TryNormalizeListOutput(string? outputFormat, out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(outputFormat)
+            ? "table"
+            : outputFormat.Trim().ToLowerInvariant();
+
+        return normalized is "table" or "json" or "markdown";
+    }
+
     public static async Task<int> ExecuteExportAsync(
         RevitClient client, string? category, string? existingName,
         string? fields, string? filter, string? sort, bool sortDesc,
         string outputFormat, string? templateName, TextWriter output)
     {
+        if (!TryNormalizeExportOutput(outputFormat, out var normalizedOutput))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', 'csv', or 'markdown'.");
+            return 1;
+        }
+
         var request = new ScheduleExportRequest { SortDescending = sortDesc };
 
         if (templateName != null)
@@ -168,12 +215,21 @@ public static class ScheduleCommand
         }
 
         var data = result.Data!;
-        await output.WriteLineAsync(FormatScheduleData(data, outputFormat));
+        await output.WriteLineAsync(FormatScheduleData(data, normalizedOutput));
 
         if (data.TotalRows > data.Rows.Count)
             await output.WriteLineAsync($"Warning: showing {data.Rows.Count} of {data.TotalRows} total rows (truncated).");
 
         return 0;
+    }
+
+    private static bool TryNormalizeExportOutput(string? outputFormat, out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(outputFormat)
+            ? "table"
+            : outputFormat.Trim().ToLowerInvariant();
+
+        return normalized is "table" or "json" or "csv" or "markdown";
     }
 
     public static async Task<int> ExecuteCreateAsync(
@@ -255,6 +311,9 @@ public static class ScheduleCommand
 
     private static string FormatScheduleData(ScheduleData data, string format)
     {
+        if (format == "markdown")
+            return RenderScheduleExportMarkdown(data);
+
         if (data.Rows.Count == 0)
             return "No data.";
 
@@ -264,6 +323,70 @@ public static class ScheduleCommand
             "csv" => FormatCsv(data),
             _ => FormatTable(data),
         };
+    }
+
+    private static string RenderScheduleListMarkdown(IReadOnlyList<ScheduleInfo> schedules)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Schedule List");
+        writer.WriteLine();
+        writer.WriteLine($"- Schedules: `{schedules.Count}`");
+        writer.WriteLine($"- Export-ready: `{schedules.Count(schedule => schedule.FieldCount > 0 && schedule.RowCount > 0)}`");
+        writer.WriteLine($"- Empty: `{schedules.Count(schedule => schedule.RowCount == 0)}`");
+        writer.WriteLine();
+
+        if (schedules.Count == 0)
+        {
+            writer.WriteLine("No schedules found in the model.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine("| Name | Category | Fields | Rows | Id |");
+        writer.WriteLine("|---|---|---:|---:|---:|");
+        foreach (var schedule in schedules)
+        {
+            writer.WriteLine(
+                $"| {EscapeTableCell(schedule.Name)} | {EscapeTableCell(schedule.Category)} | {schedule.FieldCount} | {schedule.RowCount} | {schedule.Id} |");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderScheduleListErrorMarkdown(string message)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Schedule List");
+        writer.WriteLine();
+        writer.WriteLine("- Status: `FAIL`");
+        writer.WriteLine($"- Error: {EscapeMarkdownText(message)}");
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderScheduleExportMarkdown(ScheduleData data)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Schedule Export");
+        writer.WriteLine();
+        writer.WriteLine($"- Columns: `{data.Columns.Count}`");
+        writer.WriteLine($"- Rows shown: `{data.Rows.Count}`");
+        writer.WriteLine($"- Total rows: `{data.TotalRows}`");
+        writer.WriteLine();
+
+        if (data.Rows.Count == 0)
+        {
+            writer.WriteLine("No data.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine($"| {string.Join(" | ", data.Columns.Select(EscapeTableCell))} |");
+        writer.WriteLine($"| {string.Join(" | ", data.Columns.Select(_ => "---"))} |");
+        foreach (var row in data.Rows)
+        {
+            var values = data.Columns.Select(column => row.TryGetValue(column, out var value) ? value : "");
+            writer.WriteLine($"| {string.Join(" | ", values.Select(EscapeTableCell))} |");
+        }
+
+        return writer.ToString().TrimEnd();
     }
 
     private static string FormatCsv(ScheduleData data)
@@ -309,4 +432,21 @@ public static class ScheduleCommand
 
         return sb.ToString().TrimEnd();
     }
+
+    private static string EscapeMarkdownText(string? value)
+    {
+        return (value ?? string.Empty)
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal);
+    }
+
+    private static string EscapeTableCell(string? value)
+    {
+        return EscapeMarkdownText(string.IsNullOrWhiteSpace(value) ? "-" : value)
+            .Replace("|", "\\|", StringComparison.Ordinal);
+    }
+
+    private sealed record ScheduleListErrorOutput(
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("error")] string Error);
 }

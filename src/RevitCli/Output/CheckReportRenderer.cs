@@ -27,11 +27,23 @@ public static class CheckReportRenderer
         return string.Join(Environment.NewLine, lines);
     }
 
-    public static string RenderJson(string checkName, int passed, int failed, List<AuditIssue> issues, int suppressed = 0)
+    public static string RenderJson(
+        string checkName,
+        int passed,
+        int failed,
+        List<AuditIssue> issues,
+        int suppressed = 0,
+        int? exitCode = null,
+        string? failOn = null)
     {
         var report = new
         {
+            schemaVersion = "check.v1",
+            success = exitCode.HasValue ? exitCode.Value == 0 : (bool?)null,
+            valid = exitCode.HasValue ? exitCode.Value == 0 : (bool?)null,
+            exitCode,
             check = checkName,
+            failOn,
             passed,
             failed,
             suppressed,

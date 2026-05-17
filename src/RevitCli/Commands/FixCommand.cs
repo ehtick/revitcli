@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using RevitCli.Checks;
 using RevitCli.Client;
 using RevitCli.Fix;
+using RevitCli.Plans;
 using RevitCli.Shared;
 
 namespace RevitCli.Commands;
@@ -31,6 +32,7 @@ public static class FixCommand
         var maxChangesOpt = new Option<int>("--max-changes", () => 50, "Maximum number of fixes to apply");
         var baselineOutputOpt = new Option<string?>("--baseline-output", "Path to save baseline snapshot");
         var noSnapshotOpt = new Option<bool>("--no-snapshot", "Skip baseline snapshot and journal rollback support");
+        var planOutputOpt = new Option<string?>("--plan-output", "Write a saved fix plan JSON file without applying");
 
         var command = new Command("fix", "Plan or apply profile-driven parameter fixes")
         {
@@ -44,7 +46,8 @@ public static class FixCommand
             allowInferredOpt,
             maxChangesOpt,
             baselineOutputOpt,
-            noSnapshotOpt
+            noSnapshotOpt,
+            planOutputOpt
         };
 
         command.SetHandler(async (context) =>
@@ -60,10 +63,11 @@ public static class FixCommand
             var maxChanges = context.ParseResult.GetValueForOption(maxChangesOpt);
             var baselineOutput = context.ParseResult.GetValueForOption(baselineOutputOpt);
             var noSnapshot = context.ParseResult.GetValueForOption(noSnapshotOpt);
+            var planOutput = context.ParseResult.GetValueForOption(planOutputOpt);
 
             Environment.ExitCode = await ExecuteAsync(
                 client, checkName, profilePath, rules, severity, dryRun, apply,
-                yes, allowInferred, maxChanges, baselineOutput, noSnapshot, Console.Out);
+                yes, allowInferred, maxChanges, baselineOutput, noSnapshot, Console.Out, planOutput);
         });
 
         return command;
@@ -82,11 +86,18 @@ public static class FixCommand
         int maxChanges,
         string? baselineOutput,
         bool noSnapshot,
-        TextWriter output)
+        TextWriter output,
+        string? planOutputPath = null)
     {
         if (dryRun && apply)
         {
             await output.WriteLineAsync("Error: --dry-run and --apply cannot be combined.");
+            return 1;
+        }
+
+        if (apply && !string.IsNullOrWhiteSpace(planOutputPath))
+        {
+            await output.WriteLineAsync("Error: --plan-output cannot be combined with --apply.");
             return 1;
         }
 
@@ -108,6 +119,24 @@ public static class FixCommand
             Rules = new HashSet<string>(normalizedRules, StringComparer.OrdinalIgnoreCase)
         };
         var plan = FixPlanner.Plan(run.Data.CheckName, run.Data.Issues, profile, options);
+
+        if (!string.IsNullOrWhiteSpace(planOutputPath))
+        {
+            var planFile = FixPlanFile.Create(
+                plan,
+                run.Data.ProfilePath,
+                options.Rules.ToList(),
+                severity,
+                planOutputPath);
+            SetPlanFileStore.SaveFix(planOutputPath, planFile);
+            await output.WriteLineAsync($"Plan written to {Path.GetFullPath(planOutputPath)}");
+            await output.WriteLineAsync($"Review: {planFile.Commands.Show}");
+            await output.WriteLineAsync($"Dry-run apply: {planFile.Commands.DryRunApply}");
+            await output.WriteLineAsync($"Apply: {planFile.Commands.Apply}");
+            if (planFile.Summary.InferredCount > 0)
+                await output.WriteLineAsync("Apply note: inferred actions require plan apply --allow-inferred.");
+            return 0;
+        }
 
         if (!apply)
         {

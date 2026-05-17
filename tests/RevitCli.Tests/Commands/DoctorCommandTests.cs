@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -126,6 +127,74 @@ public class DoctorCommandTests
     }
 
     [Fact]
+    public async Task Execute_JsonOutput_ServerUp_PrintsMachineReadableReport()
+    {
+        var environment = CreateDoctorEnvironment();
+        var status = new StatusInfo
+        {
+            RevitVersion = "2026",
+            RevitYear = 2026,
+            AddinVersion = environment.CliVersion,
+            DocumentName = "Test.rvt"
+        };
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(status)));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment, "json");
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.Equal("doctor.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.True(root.GetProperty("valid").GetBoolean());
+        Assert.Equal(2026, root.GetProperty("targetRevitYear").GetInt32());
+        Assert.Equal("http://localhost:17839", root.GetProperty("serverUrl").GetString());
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("status").GetString() == "ok" &&
+            check.GetProperty("message").GetString()!.Contains("Connected to Revit 2026", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Execute_JsonOutput_ServerDown_PrintsFailuresAndHints()
+    {
+        var environment = CreateDoctorEnvironment();
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment, "json");
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("valid").GetBoolean());
+        var checks = root.GetProperty("checks").EnumerateArray().ToArray();
+        Assert.Contains(checks, check => check.GetProperty("status").GetString() == "fail");
+        Assert.Contains(checks, check =>
+            check.GetProperty("status").GetString() == "hint" &&
+            check.GetProperty("message").GetString()!.Contains("Start Revit 2026", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Execute_UnknownOutput_ReturnsFailureBeforeHttp()
+    {
+        var environment = CreateDoctorEnvironment();
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(
+            new StatusInfo { RevitVersion = "2026", RevitYear = 2026, AddinVersion = environment.CliVersion })));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await DoctorCommand.ExecuteAsync(client, new CliConfig(), writer, environment, "xml");
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--output", writer.ToString());
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
     public async Task Execute_CheckVersion2025_UsesVersionSpecificInstallAndManifest()
     {
         var environment = CreateDoctorEnvironment(2025);
@@ -199,13 +268,13 @@ public class DoctorCommandTests
     [Fact]
     public async Task Execute_LiveAddinPatchMismatch_WarnsButDoesNotFail()
     {
-        var environment = WithCliVersion(CreateDoctorEnvironment(), "1.3.0");
+        var environment = CreateDoctorEnvironment();
         WriteAddinManifest(environment, CurrentCliAssemblyPath());
         var status = new StatusInfo
         {
             RevitVersion = "2026",
             RevitYear = 2026,
-            AddinVersion = "1.3.1",
+            AddinVersion = BumpPatch(environment.CliVersion),
             DocumentName = "Test.rvt"
         };
         var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(status)));
@@ -222,13 +291,15 @@ public class DoctorCommandTests
     [Fact]
     public async Task Execute_LiveAddinMetadataMismatch_InformsButDoesNotWarn()
     {
-        var environment = WithCliVersion(CreateDoctorEnvironment(), "1.3.0+newcli");
+        var baseline = CreateDoctorEnvironment();
+        var coreVersion = StripBuildMetadata(baseline.CliVersion);
+        var environment = WithCliVersion(baseline, $"{coreVersion}+newcli");
         WriteAddinManifest(environment, CurrentCliAssemblyPath());
         var status = new StatusInfo
         {
             RevitVersion = "2026",
             RevitYear = 2026,
-            AddinVersion = "1.3.0+oldaddin",
+            AddinVersion = $"{coreVersion}+oldaddin",
             DocumentName = "Test.rvt"
         };
         var handler = new FakeHttpHandler(JsonSerializer.Serialize(ApiResponse<StatusInfo>.Ok(status)));
@@ -242,6 +313,21 @@ public class DoctorCommandTests
         Assert.Contains("INFO: Live Add-in build metadata differs from CLI", output);
         Assert.Contains("CLI-only updates do not require restarting Revit", output);
         Assert.DoesNotContain("WARN: Live Add-in version metadata", output);
+    }
+
+    private static string StripBuildMetadata(string version)
+    {
+        var plusIndex = version.IndexOf('+');
+        return plusIndex >= 0 ? version[..plusIndex] : version;
+    }
+
+    private static string BumpPatch(string version)
+    {
+        var core = StripBuildMetadata(version);
+        var parts = core.Split('.');
+        Assert.True(parts.Length >= 3, $"Expected semver-like version, got {version}");
+        Assert.True(int.TryParse(parts[2], out var patch), $"Expected numeric patch, got {version}");
+        return $"{parts[0]}.{parts[1]}.{patch + 1}";
     }
 
     [Fact]

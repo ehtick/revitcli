@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Output;
@@ -14,30 +17,98 @@ namespace RevitCli.Commands;
 
 public static class PublishCommand
 {
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private static readonly Regex DryRunExportLine = new(
+        @"^\[dry-run\] Would export '([^']+)': format=([^,]+), sheets=\[(.*)\], outputDir=(.*)$",
+        RegexOptions.Compiled);
+
     public static Command Create(RevitClient client)
     {
         var nameArg = new Argument<string?>("name", () => null, "Publish pipeline name (default: 'default')");
         var profileOpt = new Option<string?>("--profile", "Path to .revitcli.yml profile");
         var dryRunOpt = new Option<bool>("--dry-run", "Show what would be exported without exporting");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format for dry-runs: table | json");
         var sinceOpt = new Option<string?>("--since", "Baseline snapshot JSON file; only re-export sheets whose content changed since");
         var sinceModeOpt = new Option<string?>("--since-mode", "content | meta (default: content, or from profile)");
         var updateBaselineOpt = new Option<bool>("--update-baseline", "After successful publish, write the current snapshot back to the --since path");
 
         var command = new Command("publish", "Run export pipeline from .revitcli.yml profile")
         {
-            nameArg, profileOpt, dryRunOpt, sinceOpt, sinceModeOpt, updateBaselineOpt
+            nameArg, profileOpt, dryRunOpt, outputOpt, sinceOpt, sinceModeOpt, updateBaselineOpt
         };
 
-        command.SetHandler(async (name, profilePath, dryRun, since, sinceMode, updateBaseline) =>
+        command.SetHandler(async (name, profilePath, dryRun, outputFormat, since, sinceMode, updateBaseline) =>
         {
             Environment.ExitCode = await ExecuteAsync(
-                client, name, profilePath, dryRun, since, sinceMode, updateBaseline, Console.Out);
-        }, nameArg, profileOpt, dryRunOpt, sinceOpt, sinceModeOpt, updateBaselineOpt);
+                client, name, profilePath, dryRun, since, sinceMode, updateBaseline, Console.Out, outputFormat);
+        }, nameArg, profileOpt, dryRunOpt, outputOpt, sinceOpt, sinceModeOpt, updateBaselineOpt);
 
         return command;
     }
 
     public static async Task<int> ExecuteAsync(
+        RevitClient client,
+        string? name,
+        string? profilePath,
+        bool dryRun,
+        string? since,
+        string? sinceMode,
+        bool updateBaseline,
+        TextWriter output,
+        string outputFormat = "table")
+    {
+        if (!TryNormalizeOutput(outputFormat, out var normalizedOutput))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table' or 'json'.");
+            return 1;
+        }
+
+        var pipelineName = name ?? "default";
+        if (normalizedOutput == "json")
+        {
+            if (!dryRun)
+            {
+                await output.WriteLineAsync(JsonSerializer.Serialize(
+                    PublishJsonReport.Failure(
+                        pipelineName,
+                        dryRun,
+                        "--output json is supported for publish dry-runs only. Add --dry-run or use table output."),
+                    JsonOpts));
+                return 1;
+            }
+
+            var capture = new StringWriter();
+            var exitCode = await ExecuteTableAsync(
+                client,
+                name,
+                profilePath,
+                dryRun,
+                since,
+                sinceMode,
+                updateBaseline,
+                capture);
+            var report = CreateJsonReport(pipelineName, dryRun, exitCode, capture.ToString());
+            await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+            return exitCode;
+        }
+
+        return await ExecuteTableAsync(
+            client,
+            name,
+            profilePath,
+            dryRun,
+            since,
+            sinceMode,
+            updateBaseline,
+            output);
+    }
+
+    private static async Task<int> ExecuteTableAsync(
         RevitClient client,
         string? name,
         string? profilePath,
@@ -201,6 +272,7 @@ public static class PublishCommand
         // Run each export preset
         var succeeded = 0;
         var failed = 0;
+        var receiptExports = new List<PublishReceiptExport>();
 
         foreach (var presetName in pipeline.Presets)
         {
@@ -263,14 +335,28 @@ public static class PublishCommand
             };
 
             var result = await client.ExportAsync(request);
-            if (result.Success && result.Data?.Status == "completed")
+            var exportSuccess = result.Success && result.Data?.Status == "completed";
+            var exportMessage = result.Error ?? result.Data?.Message;
+            receiptExports.Add(new PublishReceiptExport(
+                presetName,
+                preset.Format,
+                preset.Sheets ?? new List<string>(),
+                request.Sheets,
+                request.Views,
+                outputDir,
+                exportSuccess,
+                result.Data?.Status,
+                result.Data?.TaskId,
+                exportMessage));
+
+            if (exportSuccess)
             {
-                await output.WriteLineAsync($"  Completed: {result.Data.Message ?? "OK"}");
+                await output.WriteLineAsync($"  Completed: {result.Data?.Message ?? "OK"}");
                 succeeded++;
             }
             else
             {
-                var errMsg = result.Error ?? result.Data?.Message ?? "Unknown error";
+                var errMsg = exportMessage ?? "Unknown error";
                 await output.WriteLineAsync($"  Failed: {errMsg}");
                 if (errMsg.Contains("not running"))
                     await output.WriteLineAsync("  Run 'revitcli doctor' to diagnose connection issues.");
@@ -304,16 +390,23 @@ public static class PublishCommand
         // Journal log + receipt
         if (!dryRun)
         {
+            var command = BuildPublishCommand(pipelineName, profilePath, since, sinceMode, updateBaseline);
+            var timestamp = DateTime.UtcNow.ToString("o");
             var receipt = new
             {
+                schemaVersion = "publish-receipt.v1",
                 action = "publish",
+                success = failed == 0,
+                dryRun = false,
                 pipeline = pipelineName,
                 succeeded,
                 failed,
                 presets = pipeline.Presets,
+                exports = receiptExports,
                 incremental = changedSheetNumbers != null,
                 changedSheets = changedSheetNumbers?.Count ?? 0,
-                timestamp = DateTime.UtcNow.ToString("o"),
+                command,
+                timestamp,
                 user = Environment.UserName,
                 profileHash = resolvedProfilePath != null && File.Exists(resolvedProfilePath)
                     ? ComputeFileHash(resolvedProfilePath) : null,
@@ -332,6 +425,19 @@ public static class PublishCommand
                     Directory.CreateDirectory(dir);
                 File.WriteAllText(receiptPath, System.Text.Json.JsonSerializer.Serialize(receipt,
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                DeliveryManifestWriter.Append(receiptDir, new
+                {
+                    schemaVersion = "delivery-manifest.v1",
+                    kind = "publish",
+                    receiptPath = Path.GetFullPath(receiptPath),
+                    success = failed == 0,
+                    dryRun = false,
+                    pipeline = pipelineName,
+                    succeeded,
+                    failed,
+                    command,
+                    timestamp
+                });
                 await output.WriteLineAsync($"Receipt saved to {receiptPath}");
             }
             catch { /* best effort */ }
@@ -363,4 +469,168 @@ public static class PublishCommand
         var hash = sha.ComputeHash(stream);
         return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant()[..16];
     }
+
+    private static string BuildPublishCommand(
+        string pipelineName,
+        string? profilePath,
+        string? since,
+        string? sinceMode,
+        bool updateBaseline)
+    {
+        var parts = new List<string> { "revitcli", "publish" };
+        if (!string.Equals(pipelineName, "default", StringComparison.OrdinalIgnoreCase))
+            parts.Add(QuoteArgument(pipelineName));
+        if (!string.IsNullOrWhiteSpace(profilePath))
+        {
+            parts.Add("--profile");
+            parts.Add(QuoteArgument(profilePath));
+        }
+        if (!string.IsNullOrWhiteSpace(since))
+        {
+            parts.Add("--since");
+            parts.Add(QuoteArgument(since));
+        }
+        if (!string.IsNullOrWhiteSpace(sinceMode))
+        {
+            parts.Add("--since-mode");
+            parts.Add(sinceMode);
+        }
+        if (updateBaseline)
+            parts.Add("--update-baseline");
+
+        return string.Join(" ", parts);
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return "\"\"";
+        return value.Any(char.IsWhiteSpace) || value.Contains('"')
+            ? $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+            : value;
+    }
+
+    private static bool TryNormalizeOutput(string? outputFormat, out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(outputFormat)
+            ? "table"
+            : outputFormat.Trim().ToLowerInvariant();
+
+        return normalized is "table" or "json";
+    }
+
+    private static PublishJsonReport CreateJsonReport(
+        string pipelineName,
+        bool dryRun,
+        int exitCode,
+        string textOutput)
+    {
+        var messages = new List<PublishJsonMessage>();
+        var exports = new List<PublishJsonExport>();
+        foreach (var rawLine in textOutput.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+                continue;
+
+            messages.Add(new PublishJsonMessage(ClassifyLine(line), line));
+            if (TryParseDryRunExport(line, out var plannedExport))
+                exports.Add(plannedExport);
+        }
+
+        var error = exitCode == 0
+            ? null
+            : messages.FirstOrDefault(message => message.Level == "error")?.Message ?? "Publish failed.";
+
+        return new PublishJsonReport(
+            "publish.v1",
+            exitCode == 0,
+            dryRun,
+            pipelineName,
+            exitCode,
+            exports,
+            messages,
+            error);
+    }
+
+    private static string ClassifyLine(string line)
+    {
+        if (line.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Failed:", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Precheck failed", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Failed ", StringComparison.OrdinalIgnoreCase))
+        {
+            return "error";
+        }
+
+        if (line.StartsWith("Warning:", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Baseline NOT updated", StringComparison.OrdinalIgnoreCase))
+        {
+            return "warn";
+        }
+
+        return "info";
+    }
+
+    private static bool TryParseDryRunExport(string line, out PublishJsonExport plannedExport)
+    {
+        var match = DryRunExportLine.Match(line);
+        if (!match.Success)
+        {
+            plannedExport = default!;
+            return false;
+        }
+
+        var sheetText = match.Groups[3].Value;
+        var usesPresetDefaultSheets = sheetText.Equals("(preset default)", StringComparison.OrdinalIgnoreCase);
+        var sheets = usesPresetDefaultSheets
+            ? Array.Empty<string>()
+            : sheetText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        plannedExport = new PublishJsonExport(
+            match.Groups[1].Value,
+            match.Groups[2].Value,
+            sheets,
+            usesPresetDefaultSheets,
+            match.Groups[4].Value);
+        return true;
+    }
+
+    private sealed record PublishJsonReport(
+        [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("dryRun")] bool DryRun,
+        [property: JsonPropertyName("pipeline")] string Pipeline,
+        [property: JsonPropertyName("exitCode")] int ExitCode,
+        [property: JsonPropertyName("plannedExports")] IReadOnlyList<PublishJsonExport> PlannedExports,
+        [property: JsonPropertyName("messages")] IReadOnlyList<PublishJsonMessage> Messages,
+        [property: JsonPropertyName("error")] string? Error)
+    {
+        public static PublishJsonReport Failure(string pipeline, bool dryRun, string error) =>
+            new("publish.v1", false, dryRun, pipeline, 1, Array.Empty<PublishJsonExport>(),
+                new[] { new PublishJsonMessage("error", error) }, error);
+    }
+
+    private sealed record PublishJsonExport(
+        [property: JsonPropertyName("preset")] string Preset,
+        [property: JsonPropertyName("format")] string Format,
+        [property: JsonPropertyName("sheets")] IReadOnlyList<string> Sheets,
+        [property: JsonPropertyName("usesPresetDefaultSheets")] bool UsesPresetDefaultSheets,
+        [property: JsonPropertyName("outputDir")] string OutputDir);
+
+    private sealed record PublishReceiptExport(
+        [property: JsonPropertyName("preset")] string Preset,
+        [property: JsonPropertyName("format")] string Format,
+        [property: JsonPropertyName("configuredSheets")] IReadOnlyList<string> ConfiguredSheets,
+        [property: JsonPropertyName("sheets")] IReadOnlyList<string> Sheets,
+        [property: JsonPropertyName("views")] IReadOnlyList<string> Views,
+        [property: JsonPropertyName("outputDir")] string OutputDir,
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("status")] string? Status,
+        [property: JsonPropertyName("taskId")] string? TaskId,
+        [property: JsonPropertyName("message")] string? Message);
+
+    private sealed record PublishJsonMessage(
+        [property: JsonPropertyName("level")] string Level,
+        [property: JsonPropertyName("message")] string Message);
 }

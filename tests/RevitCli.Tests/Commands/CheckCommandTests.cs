@@ -216,8 +216,65 @@ checks:
         // Output should be valid JSON
         var output = writer.ToString().Trim();
         var doc = JsonDocument.Parse(output);
+        Assert.Equal("check.v1", doc.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
+        Assert.True(doc.RootElement.GetProperty("valid").GetBoolean());
+        Assert.Equal(0, doc.RootElement.GetProperty("exitCode").GetInt32());
         Assert.Equal("default", doc.RootElement.GetProperty("check").GetString());
         Assert.Equal(1, doc.RootElement.GetProperty("passed").GetInt32());
+        File.Delete(profilePath);
+    }
+
+    [Fact]
+    public async Task Check_JsonOutput_RunFailure_IsErrorObject()
+    {
+        var profilePath = CreateTempProfile(@"
+version: 1
+checks:
+  default:
+    failOn: error
+    auditRules:
+      - rule: naming
+");
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await CheckCommand.ExecuteAsync(
+            client, "default", profilePath, "json", null, true, writer);
+
+        Assert.Equal(1, exitCode);
+        using var doc = JsonDocument.Parse(writer.ToString());
+        Assert.Equal("check.v1", doc.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.False(doc.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains("not running", doc.RootElement.GetProperty("error").GetString()!.ToLowerInvariant());
+        Assert.Contains("doctor", doc.RootElement.GetProperty("hint").GetString()!);
+        File.Delete(profilePath);
+    }
+
+    [Fact]
+    public async Task Check_UnknownOutput_ReturnsFailureBeforeHttp()
+    {
+        var profilePath = CreateTempProfile(@"
+version: 1
+checks:
+  default:
+    failOn: error
+    auditRules:
+      - rule: naming
+");
+        var auditResult = new AuditResult { Passed = 1, Failed = 0, Issues = new List<AuditIssue>() };
+        var response = ApiResponse<AuditResult>.Ok(auditResult);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await CheckCommand.ExecuteAsync(
+            client, "default", profilePath, "xml", null, true, writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--output", writer.ToString());
+        Assert.Equal(0, handler.CallCount);
         File.Delete(profilePath);
     }
 
