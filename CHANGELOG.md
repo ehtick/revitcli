@@ -48,6 +48,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `revitcli examples <topic>` adds local copy-paste command examples for
   architect workflows such as inspect, sheets, schedule export, safe set/import
   plans, publish, doctor/smoke, and journal verification.
+- `revitcli release verify` adds a local release preflight for
+  `RevitCliVersion`, tag consistency, changelog/README/checklist presence,
+  Ubuntu CLI/Shared-only CI guardrails, installer hardening markers, release
+  packaging workflow markers, and smoke documentation. Live Revit smoke remains
+  a separate Windows/Revit checklist gate. `--output markdown` adds a
+  maintainer-facing release handoff view.
+- `revitcli deliverables list|stats|verify|bundle --output markdown` adds
+  architect-readable delivery handoff summaries for manifest receipt review and
+  bundle dry-runs.
+- `revitcli workflow receipts` reviews local `workflow-run-receipt.v1` files
+  with table, JSON, or Markdown output plus `--failed-only` triage.
+- `revitcli inspect categories|params|schedules|sheets --output markdown`
+  adds handoff-ready discovery reports for Codex CLI and architect review.
+- `revitcli schedule list|export --output markdown` adds handoff-ready
+  schedule tables, and `schedule export` now rejects unknown output formats
+  before contacting Revit.
 
 ### Added — v2.3 inspect/discover
 

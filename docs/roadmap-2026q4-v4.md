@@ -74,8 +74,8 @@ Reference guide:
 | Repeated pre-issue work | Checks, exports, snapshots, and schedules repeat every deadline. | profile/publish/history | Need human-readable terminal workflows. |
 | Deliverable packaging | DWG/PDF/IFC output needs predictable naming and review. | `export`, `publish` | Need preflight, manifest, and bundle receipts. |
 | Model review | Diffs and health trends exist but need quicker interpretation. | `snapshot`, `diff`, `history`, `score` | Need report presets for architects. |
-| Family cleanup | Family bloat is common and tedious to inspect manually. | `family ls/purge/validate/export` | Need office-standard packs and safer purge reports. |
-| Audit confidence | Journal exists and can be signed, but not yet easy to browse. | `journal sign/verify` | Need `journal show/stats` as pure CLI, no MCP resource. |
+| Family cleanup | Family bloat is common and tedious to inspect manually. | `family ls/purge/validate/export`, standards-driven validation, purge reports | Need more real-project standards packs and cleanup presets after field use. |
+| Audit confidence | Journal exists, can be browsed, reviewed, and signed/verified. | `journal show/stats/review/sign/verify` | Next need more real-project review presets after user feedback. |
 
 ## 5. Milestone Overview
 
@@ -106,6 +106,13 @@ Scope:
   new MCP features.
 - Add release checklist: CLI tests, dashboard checks, smoke script,
   journal verify, changelog, version bump, tag.
+- Add `revitcli release verify`: local release preflight for
+  `RevitCliVersion`, changelog/README/checklist presence, Ubuntu
+  CLI/Shared-only CI guardrails, installer markers, tag consistency, and
+  release packaging workflow markers. Table/JSON/Markdown output supports
+  terminal review, CI guardrails, and maintainer handoff notes. Ubuntu CI now
+  runs the same guardrail after the portable build. It does not execute live
+  Revit smoke.
 - Add `docs/architect-terminal-vision.md`: one-page project intent and
   non-goals for contributors.
 - Add Codex CLI architect workflow guide with safe command paths for
@@ -116,7 +123,8 @@ Exit gate:
 - A new contributor can read README and understand this is a terminal
   tool for architects that Codex CLI can operate, not an MCP project.
 - `revitcli doctor`, `query`, `set --dry-run`, `publish --dry-run`,
-  `history capture`, and `journal verify` all have copy-paste examples.
+  `history capture`, and `journal show/stats/verify` all have copy-paste
+  examples.
 
 ## 7. v2.3 - Inspect & Discover
 
@@ -133,14 +141,30 @@ Candidate commands:
   slice shipped via the existing query endpoint. Second slice adds
   query-side `parameterMetadata` so the command can surface writable
   status, read-only fields, storage types, and safer `set --dry-run`
-  probes.
+  probes. Delivery-day filters now include `--name`, `--writable-only`,
+  and `--missing-only` for finding candidate parameter fixes before
+  generating a plan. Writable parameter rows now include sample element IDs
+  and element-scoped dry-run probes so the first check can target one
+  representative element before widening to a plan.
 - `revitcli inspect schedules`: list schedules, fields, categories, and
   export readiness. First slice shipped as a CLI-side wrapper around
-  existing schedule discovery.
+  existing schedule discovery. Delivery-day filters now include category/name
+  matching, `--ready-only`, `--empty-only`, `--issues-only`, readiness
+  issues, and CSV/JSON export commands. `schedule list/export --output
+  markdown` adds handoff tables for schedule review while preserving CSV/JSON
+  for downstream scripts.
 - `revitcli inspect sheets`: CLI-only sheet discovery for Codex CLI and
   terminal users; summarize sheets by number, name, key title-block
   parameters, review issues, filters, and export-candidate state before
-  publish/export planning.
+  publish/export planning. Inspect discovery commands now support Markdown
+  handoff output for categories, parameters, schedules, and sheets while
+  preserving JSON for scripts.
+- `revitcli sheets verify`: read-only sheet-frame verification against an
+  optional `.revitcli/sheets/index.yml`, covering duplicate numbers,
+  numbering gaps/ranges, required sheets, and minimum placed-view counts.
+  First CLI-only slice shipped through the existing snapshot sheet data;
+  deeper view-type/orphan-view checks remain deferred until the snapshot
+  surface carries view inventory.
 - `revitcli examples <topic>`: local examples for common tasks. First slice
   shipped for inspect, sheets, schedule, set, import, publish, doctor, and
   journal workflows.
@@ -158,8 +182,11 @@ Exit gate:
   and build a safe dry-run `set` command without opening docs.
 - Codex CLI can answer "what can I export or check in this model?" using
   only read-only RevitCli commands, including sheet/export-candidate
-  discovery through `revitcli inspect sheets --ready-only` and issue
-  triage through `revitcli inspect sheets --issues-only`.
+  discovery through `revitcli inspect sheets --ready-only`, schedule
+  handoff triage through `revitcli inspect schedules --issues-only --output
+  markdown`, and sheet issue triage through
+  `revitcli inspect sheets --issues-only --output markdown` and
+  `revitcli sheets verify --issues-only`.
 
 ## 8. v2.4 - Safe Batch Plans
 
@@ -169,16 +196,26 @@ Scope:
 
 - Add explicit plan files for mutating commands:
   `set --plan-output`, `import --plan-output`, `fix --plan-output`.
-  First slices shipped for `set --plan-output` and `import --plan-output`
-  with frozen element IDs.
+  First slices shipped for `set --plan-output`, `import --plan-output`,
+  and `fix --plan-output` with frozen element IDs or generated fix actions.
 - Add `revitcli plan show <file>` and `revitcli plan apply <file> --yes`.
-  First slices shipped for set/import plans, including `--dry-run`,
-  `--max-changes`, and sidecar receipt files.
-- Add `--plan-output json` for Codex CLI summaries and approval prompts.
+  First slices shipped for set/import/fix plans, including `--dry-run`,
+  `--max-changes`, sidecar receipt files, and fix baseline/journal capture
+  for rollback.
+- Add JSON summaries for Codex CLI approval prompts. First slice shipped
+  through `plan show FILE --output json` with a stable `plan-summary.v1`
+  envelope for set/import/fix plans. Markdown approval reviews are also
+  available through `plan show FILE --output markdown` for architect
+  handoff notes.
 - Standardize receipts: command, model path, document version, affected
   ids, old/new values, timestamp, operator, baseline path, journal path.
+  First slice shipped through `plan-receipt.v1` sidecars for
+  `plan apply` set/import/fix, including command metadata, model context
+  when available, affected IDs, and fix rollback pointers.
 - Add thresholds: `--max-changes`, profile defaults, and second
-  confirmation for high-impact writes.
+  confirmation for high-impact writes. First slice shipped through
+  `defaults.planMaxChanges`, `defaults.highImpactChanges`,
+  `--high-impact-threshold`, and `--confirm-high-impact` on `plan apply`.
 
 Innovation:
 
@@ -200,14 +237,26 @@ Scope:
 
 - Add `.revitcli/workflows/*.yml` for human and Codex CLI-driven
   terminal workflows.
-- Add `workflow validate`, `workflow simulate`, and `workflow run`.
+- Add `workflow validate`, `workflow simulate`, and `workflow run`. First
+  slices shipped for validation/simulation and gated execution with
+  `--dry-run`, `--yes`, no shell operators, per-step risk modes, and
+  table/JSON/Markdown review output.
 - First workflow pack: `pre-issue`, `weekly-health`, `export-package`,
-  `family-cleanup`.
+  `family-cleanup`. First pack shipped as built-in templates installable with
+  `workflow init <template>` or `workflow init all`.
+- Architect prompt acceptance examples shipped through
+  `workflow examples [template]`, covering pre-issue checks, export package
+  handoff, weekly health review, and family cleanup.
 - Workflows may call only existing CLI commands; no hidden runtime.
-- Workflow simulation should return clear JSON/table summaries for
+- Workflow simulation should return clear JSON/table/Markdown summaries for
   Codex CLI to explain.
 - Every workflow step must declare whether it is read-only, dry-run, or
   mutating.
+- Real workflow runs write `workflow-run-receipt.v1` receipts with command
+  metadata, operator/machine, step statuses, exit codes, and success/failure
+  status under `.revitcli/workflows/receipts/`. Local receipt review is
+  available through `workflow receipts`, including JSON/Markdown output and
+  `--failed-only` triage.
 
 Example:
 
@@ -234,11 +283,23 @@ Goal: turn one-off profiles and workflows into office standards.
 Scope:
 
 - Profile/workflow packs with version metadata and compatibility notes.
+  First slice shipped through `.revitcli/standards.yml` `packVersion` and
+  `compatibility` metadata, including minimum RevitCli version checks,
+  supported Revit years, and notes in table/JSON validation output.
 - `revitcli standards validate`: verify a project has required profiles,
-  workflows, output paths, family rules, and schedule templates.
+  workflows, output paths, family rules, and schedule templates. First
+  CLI-only local manifest slice shipped for `.revitcli/standards.yml` with
+  table/JSON/Markdown output.
 - `revitcli standards install <path-or-git-url>`: install approved local
-  office standards.
-- Family validation rules promoted into reusable rule packs.
+  office standards. First local-pack slice shipped with dry-run, force,
+  table/JSON/Markdown output, governed-file copy, workflow copy, and
+  output-directory bootstrap.
+- Family validation rules promoted into reusable rule packs. First CLI
+  slice shipped through `family validate --rules-from .revitcli/standards.yml`
+  so standards manifests can drive the enabled built-in family rule set.
+- Family purge review reports shipped through `family purge --report FILE`
+  with a stable `family-purge-report.v1` JSON envelope for dry-run and
+  approved cleanup evidence.
 - Dashboard remains optional for managers; terminal remains primary.
 - Codex CLI task recipes can reference standards packs instead of
   inventing project rules during a session.
@@ -256,15 +317,27 @@ without putting an LLM inside RevitCli or introducing MCP as a dependency.
 Candidate tracks:
 
 - `journal show/stats`: browse recent writes, top edited categories,
-  operator, and affected elements.
+  operator, and affected elements. First richer stats slice shipped with
+  action/category/user/operator counts, affected totals per group, and
+  distinct affected element IDs. Filtered journal review shipped for
+  `journal show --action/--category/--operator/--user`. Review presets now
+  include `journal review` with table/JSON/Markdown output, risk buckets,
+  top actions/categories/operators/users, affected ID samples, and highlighted
+  mutating or high-impact entries.
 - `diff --review`: terminal summary of suspicious changes, grouped by
-  category/sheet/schedule.
+  category/sheet/schedule. First deterministic slice shipped for
+  anomaly/notable/routine triage over snapshot diffs and history diffs.
 - `workflow suggest`: detect repeated command sequences from journal and
-  propose a workflow YAML, never write it without approval.
+  propose a workflow YAML, never write it without approval. First local
+  slice shipped for explicit journal `command` / `commandLine` / `run`
+  fields with table/JSON/YAML output and no file-writing option.
 - `report weekly`: generate a terminal/Markdown summary from history,
-  score, diff, and journal.
+  score, diff, and journal. First local slice shipped for table/json/markdown
+  weekly reports from `.revitcli/history` and `.revitcli/journal.jsonl`.
 - `codex recipes`: documented prompt-to-command examples, stored as
-  docs/templates rather than executable hidden logic.
+  docs/templates rather than executable hidden logic. First template pack
+  shipped under `docs/templates/codex-recipes/` with an `examples recipes`
+  pointer and no runtime command parser.
 
 Constraint:
 
@@ -283,10 +356,37 @@ Target outcome:
   report, standards, family, history, and journal.
 - A stable "Codex CLI can call this" contract: predictable exit codes,
   readable tables, compact JSON, dry-run everywhere, and receipts for
-  writes/exports.
-- Office-standard packs are portable between projects.
+  writes/exports. First v4 contract slice shipped through
+  `status --output json`, `doctor --output json`, `check --output json`,
+  `export --dry-run --output json`, `publish --dry-run --output json`,
+  `schedule list --output json`, and journal `--output json` for
+  machine-readable setup checks, connection status, check gate results,
+  export/publish plans, schedule discovery, journal review, and
+  connection-failure diagnostics. Schedule list/export Markdown output and
+  export-side output validation extend the same predictable CLI contract to
+  handoff tables. First delivery receipt slices shipped
+  through export receipts under
+  `<outputDir>/.revitcli/receipts/export-*.json` and standardized publish
+  receipts under `.revitcli/receipts/<pipeline>-*.json`; successful real
+  exports and publishes now also append `delivery-manifest.v1` JSONL entries
+  under `.revitcli/deliveries/manifest.jsonl`. Local manifest review is
+  available through `deliverables list`, `deliverables stats`, and
+  `deliverables verify`, including receipt existence, receipt-schema checks,
+  and Markdown handoff output. Delivery handoff packaging now has
+  `deliverables bundle` dry-runs, Markdown previews, zip output, and
+  `delivery-bundle-receipt.v1` sidecars that trace packaged receipts and
+  output files. Safe-plan receipts now use `plan-receipt.v1`
+  sidecars with
+  command metadata, timestamp/operator/machine, model context when available,
+  affected element IDs, and fix rollback baseline/journal pointers. Safe-plan
+  apply also reads profile safety defaults for max changes and high-impact
+  confirmation gates.
+- Office-standard packs are portable between projects and expose
+  pack-version / compatibility metadata during validation.
 - Bulk writes are plan-based and reversible.
-- Deliverables have manifests and receipts.
+- Deliverables have manifests, receipts, and bundle receipts.
+- Delivery workflows have run receipts and a local `workflow receipts` review
+  surface for failed-run triage and handoff notes.
 - Model health is trackable from terminal and optionally visible in the
   dashboard.
 - Extension points exist for custom rules/workflows, but they serve the
@@ -378,9 +478,12 @@ RevitCli into a hidden AI/MCP platform instead of a dependable CLI.
 2. Keep existing `revitcli mcp serve` hidden and deprecated; remove it only
    with a future breaking-change notice.
 3. Continue v2.2 release packaging with version bump, tag flow, and any
-   remaining CI cleanup.
+   remaining CI cleanup. Current CLI-only slice shipped `release verify`
+   into Ubuntu CI and bumped the source-tree `RevitCliVersion` to the v2.2
+   release train; live smoke evidence still remains a Windows/Revit release
+   gate.
 4. Extend inspect/discover beyond the shipped sheets and writable parameter
    metadata into schedule/parameter workflows that directly support
    delivery-day tasks.
-5. Collect three real repetitive architect prompts and turn them into
-   v2.5 workflow acceptance examples.
+5. Collect more real repetitive architect prompts after field use and add
+   them to workflow acceptance examples when they map to visible CLI paths.

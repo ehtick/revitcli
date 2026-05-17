@@ -4,6 +4,24 @@
 adds an explicit tamper-evidence layer for regulated or high-trust
 projects.
 
+## Review
+
+Use the read-only journal commands before signing or after a smoke run:
+
+```powershell
+revitcli journal show --limit 10
+revitcli journal stats
+revitcli journal review --output markdown
+```
+
+`show` prints recent JSONL entries with line numbers, timestamps, actions,
+and compact key/value summaries. `stats` prints the total entry count,
+timestamp range, action counts, top categories, top users, and the summed
+affected-element count when journal entries include `affected` or
+`affectedElements`. `review` groups recent entries by risk, action, category,
+operator, and affected IDs so the handoff can focus on mutating or
+high-impact operations before signing.
+
 ## Sign
 
 ```powershell
