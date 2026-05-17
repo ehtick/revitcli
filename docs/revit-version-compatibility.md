@@ -5,6 +5,10 @@ from running the smoke matrix on real Windows hosts. Use
 `scripts/smoke-revit.ps1 -Version <year>` after installing the matching
 add-in and opening the test model in that Revit version.
 
+The v2.3.0 GitHub release ZIP packages the Revit 2026 add-in only. Revit
+2024 and 2025 remain source-build targets for operators with the matching
+Revit API DLLs available.
+
 ## Runtime Targets
 
 | Revit year | Add-in target | Default install path |

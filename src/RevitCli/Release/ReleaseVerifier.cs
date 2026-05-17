@@ -231,11 +231,14 @@ internal static partial class ReleaseVerifier
             "Release workflow uses a self-hosted runner.", ".github/workflows/release.yml");
         AddContains(report, "release-workflow:windows", text, "windows",
             "Release workflow runs on Windows.", ".github/workflows/release.yml");
-        foreach (var year in new[] { "2024", "2025", "2026" })
-        {
-            AddContains(report, $"release-workflow:addin-{year}", text, $"RevitYear={year}",
-                $"Release workflow builds the Revit {year} add-in.", ".github/workflows/release.yml");
-        }
+        AddContains(report, "release-workflow:addin-2026", text, "RevitYear=2026",
+            "Release workflow builds the Revit 2026 add-in.", ".github/workflows/release.yml");
+        AddNotContains(report, "release-workflow:no-addin-2024", text, "RevitYear=2024",
+            "Release workflow does not package a Revit 2024 add-in for this release.", ".github/workflows/release.yml");
+        AddNotContains(report, "release-workflow:no-addin-2025", text, "RevitYear=2025",
+            "Release workflow does not package a Revit 2025 add-in for this release.", ".github/workflows/release.yml");
+        AddContains(report, "release-workflow:revit2026-install-override", text, "REVITCLI_REVIT2026_INSTALL_DIR",
+            "Release workflow supports a Revit 2026 install-directory override.", ".github/workflows/release.yml");
 
         AddContains(report, "release-workflow:checksum", text, "SHA256SUMS.txt",
             "Release workflow writes SHA256SUMS.txt.", ".github/workflows/release.yml");

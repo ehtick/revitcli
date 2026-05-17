@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [2.3.0] - 2026-05-17
 
+### Release
+
+- The GitHub release ZIP packages the CLI and Revit 2026 add-in. Revit 2024
+  and 2025 remain source-build compatibility targets when matching Revit API
+  DLLs are available.
+- The release workflow resolves Revit 2026 API DLLs from
+  `REVITCLI_REVIT2026_INSTALL_DIR` when set, otherwise from the default
+  `%ProgramFiles%\Autodesk\Revit 2026` install path.
+
 ### Added — v2.1 configuration confidence
 
 - `revitcli doctor --check-version 2024|2025|2026` validates the requested

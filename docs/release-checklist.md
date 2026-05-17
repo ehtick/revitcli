@@ -37,7 +37,17 @@ Close all Revit processes before final release verification when possible. If
 Revit is running, the installer updates CLI files immediately and stages add-in
 files under `%LOCALAPPDATA%\RevitCli\staged` for the next Revit restart.
 
-For source-tree validation with custom Revit paths:
+For the v2.3.0 release package, validate the packaged Revit 2026 add-in. If
+Revit 2026 is installed outside `%ProgramFiles%`, pass the local path:
+
+```powershell
+.\scripts\install.ps1 -RevitYears 2026 `
+  -Revit2026InstallDir "D:\revit2026" `
+  -Force
+```
+
+For full multi-version source-tree validation when all local Revit installs are
+available:
 
 ```powershell
 .\scripts\install.ps1 -RevitYears 2024,2025,2026 `

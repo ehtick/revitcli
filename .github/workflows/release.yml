@@ -31,37 +31,37 @@ jobs:
       - name: Build CLI
         run: dotnet publish src/RevitCli -c Release -o ./stage/bin /p:Version=${{ steps.version.outputs.VERSION }}
 
-      # Build add-in per Revit year. Each year is required for a release; if any
-      # year fails to build the release does not ship — silent year-drops were
-      # masking compile breaks.
-      # 2024: net48, 2025: net8.0-windows, 2026: net8.0-windows
-      - name: Build Add-in (Revit 2026)
-        run: dotnet publish src/RevitCli.Addin -c Release -f net8.0-windows -p:RevitYear=2026 -p:Version=${{ steps.version.outputs.VERSION }} -o ./stage/addin/2026
-
-      - name: Build Add-in (Revit 2025)
+      - name: Resolve Revit 2026 install path
+        id: revit2026
         shell: pwsh
         run: |
-          $tmp = Join-Path $env:RUNNER_TEMP "revitcli-addin-2025"
-          $out = "./stage/addin/2025"
-          Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction SilentlyContinue
-          dotnet publish src/RevitCli.Addin -c Release -f net8.0-windows -p:RevitYear=2025 -p:Version=${{ steps.version.outputs.VERSION }} -o $tmp
-          if (-not (Test-Path -LiteralPath (Join-Path $tmp "RevitCli.Addin.dll"))) {
-            throw "Revit 2025 add-in publish did not produce RevitCli.Addin.dll"
+          $installDir = "${{ vars.REVITCLI_REVIT2026_INSTALL_DIR }}"
+          if ([string]::IsNullOrWhiteSpace($installDir)) {
+            $installDir = [Environment]::GetEnvironmentVariable("REVITCLI_REVIT2026_INSTALL_DIR")
           }
-          New-Item -ItemType Directory -Path (Split-Path $out) -Force | Out-Null
-          Move-Item -LiteralPath $tmp -Destination $out
+          if ([string]::IsNullOrWhiteSpace($installDir)) {
+            $installDir = Join-Path $env:ProgramFiles "Autodesk\Revit 2026"
+          }
+          foreach ($dll in @("RevitAPI.dll", "RevitAPIUI.dll")) {
+            $path = Join-Path $installDir $dll
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Missing $dll at $installDir. Set REVITCLI_REVIT2026_INSTALL_DIR to the Revit 2026 install directory."
+            }
+          }
+          "path=$installDir" >> $env:GITHUB_OUTPUT
+          Write-Host "Using Revit 2026 install dir: $installDir"
 
-      - name: Build Add-in (Revit 2024)
+      - name: Build Add-in (Revit 2026)
         shell: pwsh
         run: |
-          $tmp = Join-Path $env:RUNNER_TEMP "revitcli-addin-2024"
-          $out = "./stage/addin/2024"
+          $tmp = Join-Path $env:RUNNER_TEMP "revitcli-addin-2026"
+          $out = "./stage/addin/2026"
+          $installDir = "${{ steps.revit2026.outputs.path }}"
           Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction SilentlyContinue
-          dotnet publish src/RevitCli.Addin -c Release -f net48 -p:RevitYear=2024 -p:Version=${{ steps.version.outputs.VERSION }} -o $tmp
+          dotnet publish src/RevitCli.Addin -c Release -f net8.0-windows -p:RevitYear=2026 -p:Version=${{ steps.version.outputs.VERSION }} "-p:RevitInstallDir=$installDir" -o $tmp
           if (-not (Test-Path -LiteralPath (Join-Path $tmp "RevitCli.Addin.dll"))) {
-            throw "Revit 2024 add-in publish did not produce RevitCli.Addin.dll"
+            throw "Revit 2026 add-in publish did not produce RevitCli.Addin.dll"
           }
           New-Item -ItemType Directory -Path (Split-Path $out) -Force | Out-Null
           Move-Item -LiteralPath $tmp -Destination $out
@@ -92,7 +92,9 @@ jobs:
           body: |
             ## RevitCli ${{ github.ref_name }}
 
-            Supports Revit 2024, 2025, 2026.
+            This release package includes the CLI and the Revit 2026 add-in.
+            Source-tree builds still support Revit 2024 and 2025 when matching
+            Revit API DLLs are available.
 
             ### Install
             ```powershell

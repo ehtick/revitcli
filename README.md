@@ -7,7 +7,9 @@ and make reviewed parameter changes without clicking through repetitive
 Revit UI.
 
 > **Status: v2.3 - Inspect & Discover release**
-> Windows/Revit-first BIMOps runner for Revit 2024/2025/2026. Current focus:
+> Windows/Revit-first BIMOps runner with source-level support for Revit
+> 2024/2025/2026; the v2.3 release ZIP packages the Revit 2026 add-in.
+> Current focus:
 > reliable inspect/discover commands, standards checking, deliverable
 > publishing, schedule export, CSV writeback, safe dry-run plans,
 > `fix`/`rollback`, model snapshots, signed journals, and release preflight.
@@ -339,8 +341,17 @@ Or run `scripts/install.ps1` for end-user install (auto-detects installed Revit 
 If Revit is running, the installer updates the CLI immediately and stages
 add-in files for the next Revit restart instead of overwriting locked DLLs.
 
-For source-tree installs with Revit outside `C:\Program Files`, pass per-year
-install directories:
+For the v2.3 release package with Revit 2026 outside `C:\Program Files`, pass
+the local install directory:
+
+```powershell
+.\scripts\install.ps1 -RevitYears 2026 `
+  -Revit2026InstallDir "D:\revit2026" `
+  -Force
+```
+
+For source-tree installs covering multiple Revit years, pass per-year install
+directories:
 
 ```powershell
 .\scripts\install.ps1 -RevitYears 2024,2025,2026 `
@@ -465,7 +476,7 @@ Follow [docs/release-checklist.md](docs/release-checklist.md) before pushing a t
 2. Update `CHANGELOG.md`.
 3. Run `revitcli release verify --tag vX.Y.Z`, then complete the Windows/Revit smoke checklist.
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-5. GitHub Actions auto-publishes the CLI to NuGet.org and the multi-Revit-year add-in ZIP to the GitHub release.
+5. GitHub Actions auto-publishes the CLI to NuGet.org and the Revit 2026 add-in ZIP to the GitHub release.
 
 > Requires `NUGET_API_KEY` secret in repository settings.
 

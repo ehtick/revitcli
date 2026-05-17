@@ -48,6 +48,9 @@ public sealed class ReleaseCommandTests : IDisposable
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "ci:release-verify" &&
             check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "release-workflow:no-addin-2025" &&
+            check.GetProperty("status").GetString() == "ok");
     }
 
     [Fact]
@@ -170,9 +173,9 @@ jobs:
   release:
     runs-on: [self-hosted, windows, revit2026]
     steps:
-      - run: dotnet publish src/RevitCli.Addin -p:RevitYear=2024
-      - run: dotnet publish src/RevitCli.Addin -p:RevitYear=2025
-      - run: dotnet publish src/RevitCli.Addin -p:RevitYear=2026
+      - run: |
+          $installDir = $env:REVITCLI_REVIT2026_INSTALL_DIR
+          dotnet publish src/RevitCli.Addin -p:RevitYear=2026 "-p:RevitInstallDir=$installDir"
       - run: Get-FileHash ./revitcli-win-x64.zip | Set-Content SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
 """);
