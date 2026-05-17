@@ -193,8 +193,8 @@ function Convert-JsonArray {
         throw "$Label returned empty JSON."
     }
 
-    if ($value -is [array]) { return @($value) }
-    return @($value)
+    if ($value -is [array]) { return ,@($value) }
+    return ,@($value)
 }
 
 function Get-ElementParameterProperty {
@@ -503,4 +503,3 @@ try {
 if ($null -ne $scriptFailure) {
     throw $scriptFailure
 }
-

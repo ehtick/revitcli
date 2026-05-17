@@ -15,6 +15,14 @@ public sealed class Revit2026SmokeScriptTests
     }
 
     [Fact]
+    public void VersionedSmokeScript_PreservesSingleElementJsonArrays()
+    {
+        var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "smoke-revit.ps1"));
+
+        Assert.Contains("return ,@($value)", script);
+    }
+
+    [Fact]
     public void FixApplyCompletionMessage_IsWrittenAfterReportWrite()
     {
         var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "smoke-revit2026.ps1"));
