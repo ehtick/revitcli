@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - The release workflow resolves Revit 2026 API DLLs from
   `REVITCLI_REVIT2026_INSTALL_DIR` when set, otherwise from the default
   `%ProgramFiles%\Autodesk\Revit 2026` install path.
+- NuGet publishing is now a manual `Publish to NuGet` workflow so release tags
+  do not require a NuGet API key unless the CLI package is being published.
 
 ### Added — v2.1 configuration confidence
 

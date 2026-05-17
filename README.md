@@ -476,9 +476,9 @@ Follow [docs/release-checklist.md](docs/release-checklist.md) before pushing a t
 2. Update `CHANGELOG.md`.
 3. Run `revitcli release verify --tag vX.Y.Z`, then complete the Windows/Revit smoke checklist.
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-5. GitHub Actions auto-publishes the CLI to NuGet.org and the Revit 2026 add-in ZIP to the GitHub release.
+5. GitHub Actions packages the Revit 2026 add-in ZIP to the GitHub release. NuGet publishing is manual via the `Publish to NuGet` workflow.
 
-> Requires `NUGET_API_KEY` secret in repository settings.
+> NuGet publishing requires the `NUGET_API_KEY` repository secret and should only be run when publishing the CLI package to NuGet.org.
 
 ## Contributing
 

@@ -181,9 +181,11 @@ jobs:
 """);
         WriteFile(root, ".github/workflows/publish.yml", """
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
 jobs:
   publish:
     steps:

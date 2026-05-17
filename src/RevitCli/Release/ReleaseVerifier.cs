@@ -256,8 +256,10 @@ internal static partial class ReleaseVerifier
         if (text is null)
             return;
 
-        AddContains(report, "publish-workflow:tag-trigger", text, "tags:",
-            "NuGet publish workflow is tag-triggered.", ".github/workflows/publish.yml");
+        AddContains(report, "publish-workflow:manual-trigger", text, "workflow_dispatch:",
+            "NuGet publish workflow is manually triggered.", ".github/workflows/publish.yml");
+        AddNotContains(report, "publish-workflow:no-tag-trigger", text, "tags:",
+            "NuGet publish workflow does not run automatically on tag pushes.", ".github/workflows/publish.yml");
         AddContains(report, "publish-workflow:pack-cli", text, "dotnet pack src/RevitCli",
             "NuGet publish workflow packs the CLI project.", ".github/workflows/publish.yml");
         AddContains(report, "publish-workflow:nuget-secret", text, "NUGET_API_KEY",

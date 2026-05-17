@@ -122,3 +122,7 @@ and run:
 revitcli doctor --check-version 2026
 revitcli status
 ```
+
+NuGet publishing is a separate manual `Publish to NuGet` workflow. Run it only
+when publishing the CLI package to NuGet.org, and only after adding the
+`NUGET_API_KEY` repository secret.
