@@ -224,8 +224,8 @@ public sealed class ExamplesCommandTests
 
         var text = output.ToString();
         Assert.Equal(0, exitCode);
-        Assert.Contains("revitcli release verify --tag v2.2.0 --output json", text);
-        Assert.Contains("revitcli release verify --tag v2.2.0 --output markdown", text);
+        Assert.Contains("revitcli release verify --tag v2.3.0 --output json", text);
+        Assert.Contains("revitcli release verify --tag v2.3.0 --output markdown", text);
         Assert.Contains(".\\scripts\\smoke-revit.ps1 -Version 2026", text);
         Assert.Contains("revitcli journal verify", text);
         Assert.Contains("Codex prompt:", text);

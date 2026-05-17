@@ -32,15 +32,15 @@ public sealed class ReleaseCommandTests : IDisposable
         WriteHealthyTree(_root);
         var output = new StringWriter();
 
-        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", "v2.2.0", strict: false, output);
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", "v2.3.0", strict: false, output);
 
         Assert.Equal(0, exitCode);
         using var json = JsonDocument.Parse(output.ToString());
         var root = json.RootElement;
         Assert.Equal("release-verify.v1", root.GetProperty("schemaVersion").GetString());
         Assert.True(root.GetProperty("success").GetBoolean());
-        Assert.Equal("2.2.0", root.GetProperty("version").GetString());
-        Assert.Equal("v2.2.0", root.GetProperty("tag").GetString());
+        Assert.Equal("2.3.0", root.GetProperty("version").GetString());
+        Assert.Equal("v2.3.0", root.GetProperty("tag").GetString());
         Assert.Equal(0, root.GetProperty("errorCount").GetInt32());
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "ci:no-addin-build" &&
@@ -78,13 +78,13 @@ jobs:
         WriteHealthyTree(_root);
         var output = new StringWriter();
 
-        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "markdown", "v2.2.0", strict: false, output);
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "markdown", "v2.3.0", strict: false, output);
 
         var text = output.ToString();
         Assert.Equal(0, exitCode);
         Assert.Contains("# Release Verification", text);
         Assert.Contains("- Status: `PASS`", text);
-        Assert.Contains("- Tag: `v2.2.0`", text);
+        Assert.Contains("- Tag: `v2.3.0`", text);
         Assert.Contains("## Errors", text);
         Assert.Contains("- None.", text);
         Assert.Contains("## Passing Checks", text);
@@ -99,7 +99,7 @@ jobs:
         WriteHealthyTree(_root);
         var output = new StringWriter();
 
-        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", "v2.3.0", strict: false, output);
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", "v2.4.0", strict: false, output);
 
         Assert.Equal(1, exitCode);
         using var json = JsonDocument.Parse(output.ToString());
@@ -125,7 +125,7 @@ jobs:
         WriteFile(root, "Directory.Build.props", """
 <Project>
   <PropertyGroup>
-    <RevitCliVersion>2.2.0</RevitCliVersion>
+    <RevitCliVersion>2.3.0</RevitCliVersion>
   </PropertyGroup>
 </Project>
 """);
@@ -134,7 +134,7 @@ jobs:
 
 ## [Unreleased]
 
-### Changed - v2.2 terminal trust
+### Added - v2.3 inspect/discover
 
 - Release integrity work.
 """);

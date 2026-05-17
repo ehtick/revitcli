@@ -12,9 +12,9 @@ Revit smoke. This recipe covers local release files and CI guardrails only.
 ## Command Path
 
 ```powershell
-revitcli release verify --tag v2.2.0
-revitcli release verify --tag v2.2.0 --output json
-revitcli release verify --tag v2.2.0 --output markdown
+revitcli release verify --tag v2.3.0
+revitcli release verify --tag v2.3.0 --output json
+revitcli release verify --tag v2.3.0 --output markdown
 ```
 
 ## Review

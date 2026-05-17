@@ -210,9 +210,9 @@ public static class ExamplesCommand
             new[]
             {
                 "revitcli release verify",
-                "revitcli release verify --tag v2.2.0",
-                "revitcli release verify --tag v2.2.0 --output json",
-                "revitcli release verify --tag v2.2.0 --output markdown",
+                "revitcli release verify --tag v2.3.0",
+                "revitcli release verify --tag v2.3.0 --output json",
+                "revitcli release verify --tag v2.3.0 --output markdown",
                 "revitcli doctor --check-version 2026",
                 ".\\scripts\\smoke-revit.ps1 -Version 2026 -ElementId 12345 -Filter \"id = 12345\"",
                 "revitcli journal verify"

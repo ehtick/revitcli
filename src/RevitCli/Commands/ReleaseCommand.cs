@@ -37,7 +37,7 @@ public static class ReleaseCommand
             "Output format: table, json, markdown");
         var tagOpt = new Option<string?>(
             "--tag",
-            "Release tag to compare with RevitCliVersion (for example v2.2.0)");
+            "Release tag to compare with RevitCliVersion (for example v2.3.0)");
         var strictOpt = new Option<bool>(
             "--strict",
             "Treat warnings as release-blocking failures");

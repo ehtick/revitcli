@@ -6,7 +6,7 @@ sheets and schedules, diagnose publish failures, snapshot/diff model state,
 and make reviewed parameter changes without clicking through repetitive
 Revit UI.
 
-> **Status: v2.2 - Terminal Trust release preparation**
+> **Status: v2.3 - Inspect & Discover release**
 > Windows/Revit-first BIMOps runner for Revit 2024/2025/2026. Current focus:
 > reliable inspect/discover commands, standards checking, deliverable
 > publishing, schedule export, CSV writeback, safe dry-run plans,
@@ -35,7 +35,7 @@ revitcli report weekly --report .revitcli/reports/weekly.md  # local weekly repo
 revitcli standards install ../office-standards --dry-run     # preview standards bootstrap
 revitcli standards validate                                  # check local office standards
 revitcli family purge --dry-run --report .revitcli/reports/family-purge.json # review cleanup candidates
-revitcli release verify --tag v2.2.0 --output markdown       # local release preflight handoff
+revitcli release verify --tag v2.3.0 --output markdown       # local release preflight handoff
 revitcli publish --since baseline.json                       # incremental re-export
 revitcli import doors.csv --category doors --match-by Mark   # CSV → params
 ```
@@ -451,8 +451,9 @@ docs/superpowers/          # Design specs and implementation plans
 
 - [x] v1.5-v2.0 BIMOps foundation: fix/rollback, history, CI, family, profile governance, dashboard
 - [x] v2.1 configuration confidence: profile simulation, multi-version smoke scaffolding, journal signing
-- [ ] v2.2 release integrity: installer hardening, real multi-version smoke, release checklist
-- [ ] v2.3+ Codex CLI-assisted architect workflow: inspect/discover, safe batch plans, delivery workflows, standards packs, v4 terminal workbench
+- [x] v2.2 release integrity: installer hardening, real multi-version smoke, release checklist
+- [x] v2.3 Codex CLI-assisted architect workflow: inspect/discover, safe batch plans, delivery workflows, standards packs
+- [ ] v4 terminal workbench: dashboard/workbench polish, deeper workflow review, and long-running Revit automation ergonomics
 
 See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.
 

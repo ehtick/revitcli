@@ -477,13 +477,13 @@ RevitCli into a hidden AI/MCP platform instead of a dependable CLI.
 1. Keep MCP PRs closed; do not open new MCP work.
 2. Keep existing `revitcli mcp serve` hidden and deprecated; remove it only
    with a future breaking-change notice.
-3. Continue v2.2 release packaging with version bump, tag flow, and any
-   remaining CI cleanup. Current CLI-only slice shipped `release verify`
-   into Ubuntu CI and bumped the source-tree `RevitCliVersion` to the v2.2
-   release train; live smoke evidence still remains a Windows/Revit release
-   gate.
-4. Extend inspect/discover beyond the shipped sheets and writable parameter
-   metadata into schedule/parameter workflows that directly support
+3. Keep v2.3 release packaging focused on the version/tag flow, CI signal,
+   and Windows/Revit smoke evidence. Current CLI-only CI runs `release verify`
+   and the portable tests before tag publication; live smoke evidence remains
+   a Windows/Revit release gate.
+4. Extend inspect/discover and workflow review beyond the shipped sheets,
+   schedules, writable parameter metadata, delivery receipts, and standards
+   checks into deeper workflows that directly support
    delivery-day tasks.
 5. Collect more real repetitive architect prompts after field use and add
    them to workflow acceptance examples when they map to visible CLI paths.

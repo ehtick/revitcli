@@ -141,9 +141,7 @@ internal static partial class ReleaseVerifier
 
         report.Add(
             "changelog:release-notes",
-            text.Contains("v2.2", StringComparison.OrdinalIgnoreCase)
-                || (!string.IsNullOrWhiteSpace(report.Version)
-                    && text.Contains(report.Version, StringComparison.OrdinalIgnoreCase))
+            MentionsReleaseTrain(text, report.Version)
                 ? ReleaseVerifyStatus.Ok
                 : ReleaseVerifyStatus.Warning,
             "CHANGELOG.md should mention the current release train or version.",
@@ -381,6 +379,19 @@ internal static partial class ReleaseVerifier
 
     private static string ToNativePath(string path) =>
         path.Replace('/', Path.DirectorySeparatorChar);
+
+    private static bool MentionsReleaseTrain(string text, string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return false;
+
+        if (text.Contains(version, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var parts = version.Split('.');
+        return parts.Length >= 2
+            && text.Contains($"v{parts[0]}.{parts[1]}", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string? NormalizeTag(string? tag)
     {

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-05-17
+
 ### Added — v2.1 configuration confidence
 
 - `revitcli doctor --check-version 2024|2025|2026` validates the requested

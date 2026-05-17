@@ -133,9 +133,9 @@ revitcli workflow suggest --output yaml
 Expected command path:
 
 ```powershell
-revitcli release verify --tag v2.2.0
-revitcli release verify --tag v2.2.0 --output json
-revitcli release verify --tag v2.2.0 --output markdown
+revitcli release verify --tag v2.3.0
+revitcli release verify --tag v2.3.0 --output json
+revitcli release verify --tag v2.3.0 --output markdown
 revitcli examples release
 ```
 
