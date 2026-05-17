@@ -6,9 +6,21 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
-    runs-on: windows-latest
+    name: CLI / Shared (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "true"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -31,11 +43,14 @@ jobs:
           dotnet restore src/RevitCli/RevitCli.csproj
           dotnet restore tests/RevitCli.Tests/RevitCli.Tests.csproj
 
-      - name: Build CLI
+      - name: Build CLI and Shared projects
         run: |
           dotnet build shared/RevitCli.Shared/RevitCli.Shared.csproj --no-restore
           dotnet build src/RevitCli/RevitCli.csproj --no-restore
           dotnet build tests/RevitCli.Tests/RevitCli.Tests.csproj --no-restore
 
-      - name: Test CLI
-        run: dotnet test tests/RevitCli.Tests/ --no-build --verbosity normal
+      - name: Verify release guardrails
+        run: dotnet run --project src/RevitCli/RevitCli.csproj --no-build -- release verify --output json
+
+      - name: Test CLI and Shared behavior
+        run: dotnet test tests/RevitCli.Tests/RevitCli.Tests.csproj --no-build --verbosity normal

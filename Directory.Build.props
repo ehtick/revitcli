@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <RevitCliVersion>1.3.0</RevitCliVersion>
+    <RevitCliVersion>2.2.0</RevitCliVersion>
     <Version Condition="'$(Version)' == ''">$(RevitCliVersion)</Version>
     <Authors>RevitCli Contributors</Authors>
     <Company>RevitCli Contributors</Company>

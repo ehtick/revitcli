@@ -10,7 +10,16 @@ git status --short
 dotnet restore
 dotnet build
 dotnet test tests/RevitCli.Tests/
+revitcli release verify --tag vX.Y.Z
+revitcli release verify --tag vX.Y.Z --output markdown
 ```
+
+`release verify` checks local release files, `RevitCliVersion`, changelog and
+README release notes, Ubuntu CLI/Shared CI guardrails, installer hardening
+markers, release packaging workflow markers, and smoke documentation. Markdown
+output is intended for maintainer handoff notes. It does not run live Revit
+smoke. Ubuntu CI also runs `release verify --output json` after the portable
+CLI/Shared build so release guardrails fail before merge.
 
 If the dashboard changed:
 
@@ -67,6 +76,8 @@ claim live support beyond the versions that passed smoke. Use
 After a smoke that writes or exports, verify the local journal:
 
 ```powershell
+revitcli journal stats
+revitcli journal show --limit 10
 revitcli journal sign
 revitcli journal verify
 ```
