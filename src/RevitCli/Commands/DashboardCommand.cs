@@ -134,7 +134,7 @@ public static class DashboardCommand
         // Bind to localhost ONLY. This is intentional: the dashboard is
         // local-only data tooling. Operators who want LAN access can put
         // their own reverse proxy in front; we won't bake the foot-gun in.
-        var prefix = $"http://localhost:{port}/";
+        var prefix = $"http://127.0.0.1:{port}/";
 
         HttpListener listener;
         try

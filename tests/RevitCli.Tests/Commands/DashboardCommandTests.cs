@@ -271,12 +271,12 @@ public class DashboardCommandTests : IDisposable
             output: writer,
             cancellationToken: cts.Token);
 
-        // Spin until the listener is accepting (or fail after 2s).
-        await WaitUntilListening(port, TimeSpan.FromSeconds(2));
-
         try
         {
-            using var http = new HttpClient { BaseAddress = new Uri($"http://localhost:{port}/") };
+            // Spin until the listener is accepting (or fail with server output).
+            await WaitUntilListening(port, TimeSpan.FromSeconds(10), serveTask, writer);
+
+            using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/") };
             using var resp = await http.GetAsync("/");
             Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
             var body = await resp.Content.ReadAsStringAsync();
@@ -293,7 +293,7 @@ public class DashboardCommandTests : IDisposable
         finally
         {
             cts.Cancel();
-            await serveTask;
+            await WaitForServerStopAsync(serveTask);
         }
     }
 
@@ -316,11 +316,11 @@ public class DashboardCommandTests : IDisposable
             output: writer,
             cancellationToken: cts.Token);
 
-        await WaitUntilListening(port, TimeSpan.FromSeconds(2));
-
         try
         {
-            using var http = new HttpClient { BaseAddress = new Uri($"http://localhost:{port}/") };
+            await WaitUntilListening(port, TimeSpan.FromSeconds(10), serveTask, writer);
+
+            using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/") };
             using var resp = await http.GetAsync("/data/history.json");
             Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
             Assert.Equal("application/json; charset=utf-8", resp.Content.Headers.ContentType?.ToString());
@@ -329,7 +329,7 @@ public class DashboardCommandTests : IDisposable
         finally
         {
             cts.Cancel();
-            await serveTask;
+            await WaitForServerStopAsync(serveTask);
         }
     }
 
@@ -366,11 +366,22 @@ public class DashboardCommandTests : IDisposable
         return build;
     }
 
-    private static async Task WaitUntilListening(int port, TimeSpan timeout)
+    private static async Task WaitUntilListening(
+        int port,
+        TimeSpan timeout,
+        Task<int> serveTask,
+        TextWriter output)
     {
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
+            if (serveTask.IsCompleted)
+            {
+                var exit = await serveTask;
+                throw new InvalidOperationException(
+                    $"Dashboard server exited with code {exit} before listening. Output: {output}");
+            }
+
             try
             {
                 using var probe = new TcpClient();
@@ -382,6 +393,13 @@ public class DashboardCommandTests : IDisposable
                 await Task.Delay(25);
             }
         }
-        throw new TimeoutException($"Listener on port {port} did not come up within {timeout.TotalSeconds:F1}s.");
+
+        throw new TimeoutException(
+            $"Listener on port {port} did not come up within {timeout.TotalSeconds:F1}s. Output: {output}");
+    }
+
+    private static async Task WaitForServerStopAsync(Task<int> serveTask)
+    {
+        await serveTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }
