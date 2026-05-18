@@ -129,6 +129,26 @@ public sealed class ReportCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Weekly_UnknownOutput_ReturnsFailure()
+    {
+        await SeedHistoryAsync();
+        var output = new StringWriter();
+
+        var exitCode = await ReportCommand.ExecuteWeeklyAsync(
+            "7d",
+            _root,
+            historyDirectory: null,
+            journalPath: null,
+            outputFormat: "xml",
+            reportPath: null,
+            output,
+            _now);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--output must be 'table', 'json', or 'markdown'", output.ToString());
+    }
+
+    [Fact]
     public async Task Knowledge_Markdown_IncludesLocalArtifactsAndReuseHints()
     {
         await SeedHistoryAsync();
@@ -220,6 +240,121 @@ public sealed class ReportCommandTests : IDisposable
         Assert.Contains("Journal: missing", text);
         Assert.Contains("history.init", text);
         Assert.Contains("standards.bootstrap", text);
+    }
+
+    [Fact]
+    public async Task Knowledge_ReportPath_WritesMarkdown()
+    {
+        var reportPath = Path.Combine(_root, ".revitcli", "reports", "knowledge.md");
+        var output = new StringWriter();
+
+        var exitCode = await ReportCommand.ExecuteKnowledgeAsync(
+            _root,
+            historyDirectory: null,
+            journalPath: null,
+            standardsManifestPath: null,
+            outputFormat: "table",
+            reportPath,
+            output,
+            _now);
+
+        Assert.Equal(0, exitCode);
+        Assert.True(File.Exists(reportPath));
+        Assert.StartsWith("# RevitCli Knowledge Report", File.ReadAllText(reportPath));
+        Assert.Contains("Report saved to", output.ToString());
+    }
+
+    [Fact]
+    public async Task Knowledge_BadJournal_AddsIssue()
+    {
+        var dir = Path.Combine(_root, ".revitcli");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "journal.jsonl"), "{not json");
+        var output = new StringWriter();
+
+        var exitCode = await ReportCommand.ExecuteKnowledgeAsync(
+            _root,
+            historyDirectory: null,
+            journalPath: null,
+            standardsManifestPath: null,
+            outputFormat: "markdown",
+            reportPath: null,
+            output,
+            _now);
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("`ERROR` `journal`", text);
+        Assert.Contains("failed to read journal", text);
+    }
+
+    [Fact]
+    public async Task Knowledge_BadWorkflowReceipt_IncludesReceiptPathInIssue()
+    {
+        var receiptDir = Path.Combine(_root, ".revitcli", "workflows", "receipts");
+        Directory.CreateDirectory(receiptDir);
+        var receiptPath = Path.Combine(receiptDir, "bad.json");
+        File.WriteAllText(receiptPath, "{not json");
+        var output = new StringWriter();
+
+        var exitCode = await ReportCommand.ExecuteKnowledgeAsync(
+            _root,
+            historyDirectory: null,
+            journalPath: null,
+            standardsManifestPath: null,
+            outputFormat: "markdown",
+            reportPath: null,
+            output,
+            _now);
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("`ERROR` `workflow receipts`", text);
+        Assert.Contains(receiptPath, text);
+        Assert.Contains("not readable JSON", text);
+    }
+
+    [Fact]
+    public async Task Knowledge_UnknownOutput_ReturnsFailure()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ReportCommand.ExecuteKnowledgeAsync(
+            _root,
+            historyDirectory: null,
+            journalPath: null,
+            standardsManifestPath: null,
+            outputFormat: "xml",
+            reportPath: null,
+            output,
+            _now);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--output must be 'table', 'json', or 'markdown'", output.ToString());
+    }
+
+    [Fact]
+    public async Task Knowledge_ExplicitMissingStandardsManifest_AddsWarning()
+    {
+        var manifestPath = Path.Combine(_root, ".revitcli", "missing-standards.yml");
+        var output = new StringWriter();
+
+        var exitCode = await ReportCommand.ExecuteKnowledgeAsync(
+            _root,
+            historyDirectory: null,
+            journalPath: null,
+            standardsManifestPath: manifestPath,
+            outputFormat: "json",
+            reportPath: null,
+            output,
+            _now);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var issue = Assert.Single(json.RootElement.GetProperty("issues").EnumerateArray());
+        Assert.Equal("warning", issue.GetProperty("severity").GetString());
+        Assert.Equal("standards", issue.GetProperty("source").GetString());
+        Assert.Contains("manifest not found", issue.GetProperty("message").GetString());
     }
 
     private async Task SeedHistoryAsync()

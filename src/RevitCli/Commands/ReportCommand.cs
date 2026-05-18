@@ -135,6 +135,13 @@ public static class ReportCommand
             return 1;
         }
 
+        var effectiveFormat = InferFormat(outputFormat, reportPath);
+        if (!IsKnownReportFormat(effectiveFormat))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
         var projectRoot = string.IsNullOrWhiteSpace(projectDirectory)
             ? Directory.GetCurrentDirectory()
             : Path.GetFullPath(projectDirectory!);
@@ -220,7 +227,6 @@ public static class ReportCommand
 
         AddJournalSummary(report, ResolveJournalPath(projectRoot, journalPath), cutoff, generatedAt);
 
-        var effectiveFormat = InferFormat(outputFormat, reportPath);
         var rendered = Render(report, effectiveFormat);
         if (!string.IsNullOrWhiteSpace(reportPath))
         {
@@ -657,7 +663,7 @@ public static class ReportCommand
 
             foreach (var issue in receipts.Issues)
             {
-                AddKnowledgeIssue(issues, issue.Severity, "workflow receipts", issue.Message);
+                AddKnowledgeIssue(issues, issue.Severity, "workflow receipts", $"{issue.Path}: {issue.Message}");
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -730,7 +736,14 @@ public static class ReportCommand
         };
 
         if (!summary.Exists)
+        {
+            if (!string.IsNullOrWhiteSpace(standardsManifestPath))
+            {
+                AddKnowledgeIssue(issues, "warning", "standards", $"manifest not found: {manifestPath}");
+            }
+
             return summary;
+        }
 
         try
         {

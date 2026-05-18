@@ -74,6 +74,7 @@ internal static class CliCommandCatalog
         ("workflow examples", "Show architect prompts and acceptance command paths for workflow templates"),
         ("workflow receipts", "Review workflow-run receipts (--failed-only, --output table|json|markdown)"),
         ("report weekly", "Generate weekly history/score/diff/journal report"),
+        ("report knowledge", "Summarize reusable local project knowledge from RevitCli artifacts"),
         ("deliverables list", "List delivery manifest entries and receipt status"),
         ("deliverables stats", "Summarize delivery manifest kinds, outcomes, and receipt status"),
         ("deliverables verify", "Verify delivery manifest entries point to readable receipts"),
