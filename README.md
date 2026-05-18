@@ -6,9 +6,9 @@ sheets and schedules, diagnose publish failures, snapshot/diff model state,
 and make reviewed parameter changes without clicking through repetitive
 Revit UI.
 
-> **Status: v2.3 - Inspect & Discover release**
+> **Status: Unreleased v3.0 - Project Standards Workbench**
 > Windows/Revit-first BIMOps runner with source-level support for Revit
-> 2024/2025/2026; the v2.3 release ZIP packages the Revit 2026 add-in.
+> 2024/2025/2026; the latest tagged release ZIP packages the Revit 2026 add-in.
 > Current focus:
 > reliable inspect/discover commands, standards checking, deliverable
 > publishing, schedule export, CSV writeback, safe dry-run plans,
@@ -34,8 +34,9 @@ revitcli workflow suggest --output yaml                       # draft workflow f
 revitcli workflow receipts --output markdown                  # review workflow run receipts
 revitcli examples recipes                                     # show Codex CLI recipe templates
 revitcli report weekly --report .revitcli/reports/weekly.md  # local weekly report
-revitcli standards install ../office-standards --dry-run     # preview standards bootstrap
-revitcli standards validate                                  # check local office standards
+revitcli standards install ../office-standards --dry-run --output markdown # preview standards bootstrap
+revitcli standards install ../office-standards              # bootstrap a new project
+revitcli standards validate --output markdown                # check local office standards
 revitcli family purge --dry-run --report .revitcli/reports/family-purge.json # review cleanup candidates
 revitcli release verify --tag v2.3.0 --output markdown       # local release preflight handoff
 revitcli publish --since baseline.json                       # incremental re-export
@@ -66,7 +67,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli set <category>` | Modify parameters with `--dry-run` or `--plan-output` preview |
 | `revitcli plan show` / `apply` | Review and apply saved mutation plans |
 | `revitcli fix [checkName]` | Preview or apply profile-driven parameter fixes |
-| `revitcli rollback <baseline>` | Restore parameters changed by a fix baseline |
+| `revitcli rollback <artifact>` | Restore parameters from a fix baseline or plan receipt |
 | `revitcli export --format <fmt>` | Export DWG/PDF/IFC; supports JSON dry-run plans, receipts, and delivery manifests |
 | `revitcli schedule list` / `export` / `create` | Manage Revit schedules; list/export support table/JSON/Markdown, export also supports CSV |
 | `revitcli audit` | Run model quality checks |
@@ -192,8 +193,8 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 ### Standards — local office requirements
 
 - `.revitcli/standards.yml` records pack metadata, compatibility notes, required profiles, workflow files, output paths, schedule templates, and built-in family rule ids
-- `standards install <path-or-git-url>` copies governed files from an approved pack into the project; use `--dry-run` to preview and `--force` to overwrite existing standards/profile/workflow files
-- `standards validate` checks those local files without contacting Revit
+- `standards install <path-or-git-url>` copies governed files from an approved pack into the project, including every relative profile listed under `required.profiles`; use `--dry-run` to preview and `--force` to overwrite existing standards/profile/workflow files
+- `standards validate` checks those local files without contacting Revit; run `workflow validate --output markdown` for the installed workflows before issue work starts
 - `family validate --rules-from .revitcli/standards.yml` runs the reusable family rule set declared by the standards pack
 - Output formats: table, JSON, and Markdown for terminal review, CI jobs, or handoff notes
 
@@ -275,7 +276,7 @@ Starter templates in `profiles/`:
 - `fix --dry-run` turns `check` issues into a reviewable parameter write plan.
 - `fix --plan-output .revitcli/plans/issue-fixes.json` saves a frozen fix plan for `plan show` and `plan apply`.
 - `fix --apply --yes` writes a snapshot baseline and fix journal before modifying the model.
-- `rollback <baseline> --yes` restores only the parameters touched by that fix journal.
+- `rollback <artifact> --yes` restores only the parameters touched by that fix journal or plan receipt.
 - v1.5 supports parameter-only strategies: `setParam` and `renameByPattern`.
 
 ### Safe Plans
@@ -286,7 +287,8 @@ Starter templates in `profiles/`:
 - `plan show FILE` prints a reviewable summary for humans or Codex CLI.
 - `plan show FILE --output json` prints a stable `plan-summary.v1` envelope with risk, commands, issues, and the original plan.
 - `plan show FILE --output markdown` prints a handoff-ready review with risk, issues, preview rows, and dry-run/apply commands.
-- `plan apply FILE --dry-run` revalidates the saved plan; `plan apply FILE --yes` writes and creates `FILE.receipt.json` with a stable `plan-receipt.v1` schema, affected element IDs, command metadata, model context when available, and rollback pointers for fix plans.
+- `plan apply FILE --dry-run` revalidates the saved plan; `plan apply FILE --yes` writes and creates `FILE.receipt.json` with a stable `plan-receipt.v1` schema, affected element IDs, command metadata, model context when available, rollback actions for set/import plans, and baseline/journal pointers for fix plans.
+- `rollback FILE.receipt.json --dry-run` previews set/import plan receipt rollback; `rollback FILE.receipt.json --yes` restores old values after checking for current-value conflicts.
 - `plan apply` honors profile defaults `defaults.planMaxChanges` and `defaults.highImpactChanges`; high-impact real writes require `--confirm-high-impact` after review.
 
 ### Journal Integrity
@@ -464,6 +466,7 @@ docs/superpowers/          # Design specs and implementation plans
 - [x] v2.1 configuration confidence: profile simulation, multi-version smoke scaffolding, journal signing
 - [x] v2.2 release integrity: installer hardening, real multi-version smoke, release checklist
 - [x] v2.3 Codex CLI-assisted architect workflow: inspect/discover, safe batch plans, delivery workflows, standards packs
+- [x] v3.0 project standards workbench: office standards packs bootstrap profiles, workflows, outputs, family rules, and terminal validation
 - [ ] v4 terminal workbench: dashboard/workbench polish, deeper workflow review, and long-running Revit automation ergonomics
 
 See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.

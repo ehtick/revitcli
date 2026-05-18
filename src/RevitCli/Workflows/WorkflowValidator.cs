@@ -1,11 +1,43 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using RevitCli.Commands;
 
 namespace RevitCli.Workflows;
 
 public static class WorkflowValidator
 {
+    private static readonly HashSet<string> KnownTopLevelCommands = new(
+        CliCommandCatalog.TopLevelCommandNames,
+        StringComparer.OrdinalIgnoreCase);
+
+    private static readonly IReadOnlyDictionary<string, HashSet<string>> KnownSubcommands =
+        new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ci"] = Values("doctor"),
+            ["config"] = Values("show", "set"),
+            ["dashboard"] = Values("serve", "build"),
+            ["deliverables"] = Values("list", "stats", "verify", "bundle"),
+            ["family"] = Values("ls", "validate", "purge", "export"),
+            ["history"] = Values("init", "capture", "list", "prune", "diff", "trend"),
+            ["inspect"] = Values("categories", "params", "schedules", "sheets"),
+            ["journal"] = Values("show", "stats", "review", "sign", "verify"),
+            ["plan"] = Values("show", "apply"),
+            ["profile"] = Values("validate", "show", "diff", "install", "simulate"),
+            ["release"] = Values("verify"),
+            ["report"] = Values("weekly"),
+            ["schedule"] = Values("list", "export", "create"),
+            ["sheets"] = Values("verify", "index"),
+            ["standards"] = Values("install", "validate"),
+            ["workflow"] = Values("init", "validate", "simulate", "run", "suggest", "examples", "receipts"),
+        };
+
+    private static readonly IReadOnlyDictionary<string, HashSet<string>> KnownNestedSubcommands =
+        new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["sheets index"] = Values("init", "show"),
+        };
+
     private static readonly HashSet<string> ValidModes = new(StringComparer.OrdinalIgnoreCase)
     {
         "read-only",
@@ -131,6 +163,13 @@ public static class WorkflowValidator
                 $"{prefix}.run",
                 "workflow steps may not use shell operators, pipes, redirects, command substitution, or backticks."));
         }
+        else if (!HasKnownCommandShape(words, out var commandError))
+        {
+            issues.Add(new WorkflowValidationIssue(
+                WorkflowValidationSeverity.Error,
+                $"{prefix}.run",
+                commandError));
+        }
         else
         {
             ValidateCommandMode(step, words, prefix, issues);
@@ -155,9 +194,9 @@ public static class WorkflowValidator
             !step.RequiresApproval)
         {
             issues.Add(new WorkflowValidationIssue(
-                WorkflowValidationSeverity.Warning,
+                WorkflowValidationSeverity.Error,
                 $"{prefix}.requiresApproval",
-                "mutating workflow steps should declare requiresApproval: true."));
+                "mutating workflow steps must declare requiresApproval: true."));
         }
 
         if (string.Equals(step.Mode, "dry-run", StringComparison.OrdinalIgnoreCase) &&
@@ -205,6 +244,53 @@ public static class WorkflowValidator
 
     private static bool StartsWithRevitCli(IReadOnlyList<string> words) =>
         words.Count > 0 && string.Equals(words[0], "revitcli", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasKnownCommandShape(IReadOnlyList<string> words, out string error)
+    {
+        error = "";
+        if (words.Count < 2)
+        {
+            error = "workflow steps must include a RevitCli command after 'revitcli'.";
+            return false;
+        }
+
+        if (!KnownTopLevelCommands.Contains(words[1]))
+        {
+            error = $"unknown RevitCli command '{words[1]}'; workflows may only call existing CLI commands.";
+            return false;
+        }
+
+        if (words.Count >= 3 &&
+            !words[2].StartsWith("-", StringComparison.Ordinal) &&
+            KnownSubcommands.TryGetValue(words[1], out var knownSubcommands) &&
+            !knownSubcommands.Contains(words[2]))
+        {
+            error = $"unknown RevitCli command '{words[1]} {words[2]}'; workflows may only call existing CLI commands.";
+            return false;
+        }
+
+        if (words.Count >= 3 &&
+            !words[2].StartsWith("-", StringComparison.Ordinal) &&
+            KnownNestedSubcommands.TryGetValue($"{words[1]} {words[2]}", out var knownNestedSubcommands))
+        {
+            if (words.Count < 4 || words[3].StartsWith("-", StringComparison.Ordinal))
+            {
+                error = $"RevitCli command '{words[1]} {words[2]}' requires one of: {string.Join(", ", knownNestedSubcommands)}.";
+                return false;
+            }
+
+            if (!knownNestedSubcommands.Contains(words[3]))
+            {
+                error = $"unknown RevitCli command '{words[1]} {words[2]} {words[3]}'; workflows may only call existing CLI commands.";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static HashSet<string> Values(params string[] values) =>
+        new(values, StringComparer.OrdinalIgnoreCase);
 
     private static bool TryTokenize(
         string run,

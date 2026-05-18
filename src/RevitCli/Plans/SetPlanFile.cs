@@ -217,6 +217,9 @@ public sealed class PlanReceipt
     [JsonPropertyName("preview")]
     public List<SetPreviewItem> Preview { get; set; } = new();
 
+    [JsonPropertyName("rollbackActions")]
+    public List<PlanReceiptRollbackAction> RollbackActions { get; set; } = new();
+
     [JsonPropertyName("groupCount")]
     public int GroupCount { get; set; }
 
@@ -237,6 +240,24 @@ public sealed class PlanReceipt
 
     [JsonPropertyName("failures")]
     public List<PlanApplyFailure> Failures { get; set; } = new();
+}
+
+public sealed class PlanReceiptRollbackAction
+{
+    [JsonPropertyName("elementId")]
+    public long ElementId { get; set; }
+
+    [JsonPropertyName("param")]
+    public string Param { get; set; } = "";
+
+    [JsonPropertyName("oldValue")]
+    public string? OldValue { get; set; }
+
+    [JsonPropertyName("newValue")]
+    public string? NewValue { get; set; }
+
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = "";
 }
 
 public sealed class ImportPlanFile

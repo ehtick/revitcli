@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Commands;
 using RevitCli.Fix;
+using RevitCli.Plans;
 using RevitCli.Shared;
 using Xunit;
 
@@ -217,7 +218,7 @@ public class RollbackCommandTests
     }
 
     [Fact]
-    public async Task Execute_DryRun_PrintsReverseActions_AndDoesNotCallApi()
+    public async Task Execute_DryRun_PreflightsReverseActions_AndDoesNotApply()
     {
         var tempDir = CreateTempDirectory();
         try
@@ -244,7 +245,24 @@ public class RollbackCommandTests
                 }
             });
 
-            var handler = new QueueHttpHandler();
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 101, Name = "Door 101", OldValue = "NEW-101", NewValue = "OLD-101" }
+                }
+            }));
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 202, Name = "Wall 202", OldValue = "2h", NewValue = "" }
+                }
+            }));
             var client = MakeClient(handler);
             var writer = new StringWriter();
 
@@ -258,7 +276,10 @@ public class RollbackCommandTests
             Assert.Contains("NEW-101", output);
             Assert.Contains("OLD-101", output);
             Assert.Contains("Dry run", output, StringComparison.OrdinalIgnoreCase);
-            Assert.Empty(handler.Requests);
+            Assert.Equal(3, handler.RequestBodies.Count);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[2]);
+            Assert.DoesNotContain("\"dryRun\":false", string.Join('\n', handler.RequestBodies));
         }
         finally
         {
@@ -851,6 +872,398 @@ public class RollbackCommandTests
         }
     }
 
+    [Fact]
+    public async Task Execute_SetPlanReceiptDryRun_UsesLegacyPreviewFallback_AndDoesNotApply()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                operation: "set",
+                param: "Mark",
+                actions: new List<PlanReceiptRollbackAction>(),
+                preview: new List<SetPreviewItem>
+                {
+                    new() { Id = 100, Name = "Door 100", OldValue = "OLD-100", NewValue = "NEW-100" }
+                });
+
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 100, Name = "Door 100", OldValue = "NEW-100", NewValue = "OLD-100" }
+                }
+            }));
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: true, yes: false, maxChanges: 50, writer);
+
+            var output = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("[100]", output);
+            Assert.Contains("NEW-100", output);
+            Assert.Contains("OLD-100", output);
+            Assert.Contains("Dry run", output, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, handler.RequestBodies.Count);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
+            Assert.DoesNotContain("\"dryRun\":false", string.Join('\n', handler.RequestBodies));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_SetPlanReceiptApply_RestoresOldValue_WhenCurrentMatchesReceiptNewValue()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                operation: "set",
+                actions: new List<PlanReceiptRollbackAction>
+                {
+                    new()
+                    {
+                        ElementId = 303,
+                        Param = "Mark",
+                        OldValue = "RESTORE-ME",
+                        NewValue = "APPLIED-VALUE",
+                        Source = "set"
+                    }
+                });
+
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 303, Name = "Door 303", OldValue = "APPLIED-VALUE", NewValue = "RESTORE-ME" }
+                }
+            }));
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 303, Name = "Door 303", OldValue = "RESTORE-ME", NewValue = "RESTORE-ME" }
+                }
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("restored 1", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(3, handler.RequestBodies.Count);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
+            Assert.Contains("\"param\":\"Mark\"", handler.RequestBodies[1]);
+            Assert.Contains("\"value\":\"RESTORE-ME\"", handler.RequestBodies[1]);
+            Assert.Contains("\"dryRun\":false", handler.RequestBodies[2]);
+            Assert.Contains("\"value\":\"RESTORE-ME\"", handler.RequestBodies[2]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_ImportPlanReceiptApply_UsesPerParameterRollbackActions()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                operation: "import",
+                actions: new List<PlanReceiptRollbackAction>
+                {
+                    new()
+                    {
+                        ElementId = 404,
+                        Param = "Lock",
+                        OldValue = "OLD-LOCK",
+                        NewValue = "YALE-500",
+                        Source = "import"
+                    }
+                });
+
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 404, Name = "Door 404", OldValue = "YALE-500", NewValue = "OLD-LOCK" }
+                }
+            }));
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 404, Name = "Door 404", OldValue = "OLD-LOCK", NewValue = "OLD-LOCK" }
+                }
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("restored 1", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"param\":\"Lock\"", handler.RequestBodies[1]);
+            Assert.Contains("\"value\":\"OLD-LOCK\"", handler.RequestBodies[2]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptApplyWithoutYes_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(tempDir);
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: false, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("--yes", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptRespectsMaxChanges_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                actions: new List<PlanReceiptRollbackAction>
+                {
+                    new() { ElementId = 1, Param = "Mark", OldValue = "A", NewValue = "B", Source = "set" },
+                    new() { ElementId = 2, Param = "Mark", OldValue = "C", NewValue = "D", Source = "set" }
+                });
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 1, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("max-changes", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_UnsupportedPlanReceipt_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = Path.Combine(tempDir, "unsupported.receipt.json");
+            File.WriteAllText(
+                receiptPath,
+                """
+                {
+                  "schemaVersion": "plan-receipt.v9",
+                  "operation": "set",
+                  "rollbackActions": [
+                    { "elementId": 1, "param": "Mark", "oldValue": "A", "newValue": "B", "source": "set" }
+                  ]
+                }
+                """);
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("unsupported plan receipt", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_ImportPlanReceiptWithoutRollbackActions_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                operation: "import",
+                actions: new List<PlanReceiptRollbackAction>(),
+                preview: new List<SetPreviewItem>());
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("rollback actions", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptApply_DocumentMismatchReturnsOne_AndDoesNotWrite()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(tempDir);
+            var handler = new RecordingQueueHttpHandler();
+            handler.Enqueue("/api/status", ApiResponse<StatusInfo>.Ok(new StatusInfo
+            {
+                RevitVersion = "2026",
+                RevitYear = 2026,
+                DocumentName = "other",
+                DocumentPath = "other.rvt"
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("does not match", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { "/api/status" }, handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptApply_ConflictReturnsOneWithoutApplying()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(tempDir);
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 303, Name = "Door 303", OldValue = "SOMEONE-ELSE-EDITED", NewValue = "RESTORE-ME" }
+                }
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("conflict", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, handler.RequestBodies.Count);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
+            Assert.DoesNotContain("\"dryRun\":false", handler.RequestBodies[1]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptDryRun_ConflictReturnsOneWithoutApplying()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(tempDir);
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 303, Name = "Door 303", OldValue = "SOMEONE-ELSE-EDITED", NewValue = "RESTORE-ME" }
+                }
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: true, yes: false, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            var output = writer.ToString();
+            Assert.Contains("conflict", output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Dry run", output, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, handler.RequestBodies.Count);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
+            Assert.DoesNotContain("\"dryRun\":false", handler.RequestBodies[1]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static RevitClient MakeClient(HttpMessageHandler handler) =>
         new(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
 
@@ -898,6 +1311,41 @@ public class RollbackCommandTests
             Path.GetFileNameWithoutExtension(baselinePath) + ".fixjournal.json");
 
         File.WriteAllText(journalPath, json);
+    }
+
+    private static string WritePlanReceipt(
+        string tempDir,
+        string operation = "set",
+        string param = "Mark",
+        List<PlanReceiptRollbackAction>? actions = null,
+        List<SetPreviewItem>? preview = null)
+    {
+        var receiptPath = Path.Combine(tempDir, $"{operation}.receipt.json");
+        var receipt = new PlanReceipt
+        {
+            Operation = operation,
+            PlanPath = Path.Combine(tempDir, $"{operation}.plan.json"),
+            ModelPath = "test.rvt",
+            DocumentName = "test",
+            DocumentVersion = "2026",
+            Affected = actions?.Count ?? preview?.Count ?? 1,
+            Param = param,
+            RollbackActions = actions ?? new List<PlanReceiptRollbackAction>
+            {
+                new()
+                {
+                    ElementId = 303,
+                    Param = param,
+                    OldValue = "RESTORE-ME",
+                    NewValue = "APPLIED-VALUE",
+                    Source = operation
+                }
+            },
+            Preview = preview ?? new List<SetPreviewItem>()
+        };
+
+        File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt, JsonOptions));
+        return receiptPath;
     }
 
     private static void EnqueueMatchingStatus(RecordingQueueHttpHandler handler)

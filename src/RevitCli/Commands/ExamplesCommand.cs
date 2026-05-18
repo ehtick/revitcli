@@ -67,9 +67,12 @@ public static class ExamplesCommand
                 "revitcli set doors --filter \"id = 12345\" --param \"Fire Rating\" --value \"60min\" --dry-run",
                 "revitcli set doors --filter \"Mark = D-01\" --param \"Fire Rating\" --value \"60min\" --plan-output .revitcli/plans/fire-rating.json",
                 "revitcli plan show .revitcli/plans/fire-rating.json --output markdown",
-                "revitcli plan apply .revitcli/plans/fire-rating.json --dry-run"
+                "revitcli plan apply .revitcli/plans/fire-rating.json --dry-run",
+                "revitcli plan apply .revitcli/plans/fire-rating.json --yes --max-changes 250 --high-impact-threshold 50 --confirm-high-impact",
+                "revitcli rollback .revitcli/plans/fire-rating.json.receipt.json --dry-run",
+                "revitcli rollback .revitcli/plans/fire-rating.json.receipt.json --yes --max-changes 250"
             },
-            "Build a reviewed plan for this parameter change; summarize it before apply."),
+            "Build a reviewed plan for this parameter change; summarize it in Chinese before apply."),
         new(
             "import",
             "Write CSV data through dry-run groups and saved plans.",
@@ -78,7 +81,8 @@ public static class ExamplesCommand
                 "revitcli import doors.csv --category doors --match-by Mark --dry-run",
                 "revitcli import doors.csv --category doors --match-by Mark --map \"DoorMark:Mark,Rating:Fire Rating\" --plan-output .revitcli/plans/doors.json",
                 "revitcli plan show .revitcli/plans/doors.json --output markdown",
-                "revitcli plan apply .revitcli/plans/doors.json --yes"
+                "revitcli plan apply .revitcli/plans/doors.json --yes",
+                "revitcli rollback .revitcli/plans/doors.json.receipt.json --dry-run"
             },
             "Validate this CSV against the model and create a plan; do not apply until I approve."),
         new(
@@ -155,12 +159,11 @@ public static class ExamplesCommand
             "Validate local office standards before issue work starts.",
             new[]
             {
-                "revitcli standards install ../office-standards --dry-run",
-                "revitcli standards install ../office-standards --force",
-                "revitcli standards validate",
+                "revitcli standards install ../office-standards --dry-run --output markdown",
+                "revitcli standards install ../office-standards",
                 "revitcli standards validate --manifest .revitcli/standards.yml",
                 "revitcli standards validate --output markdown",
-                "revitcli workflow validate",
+                "revitcli workflow validate --output markdown",
                 "revitcli family validate --rules-from .revitcli/standards.yml"
             },
             "Check whether this project has the required profile, workflows, outputs, schedules, and family rules."),

@@ -246,6 +246,12 @@ public class PlanCommandTests : IDisposable
         Assert.Contains("--confirm-high-impact", command);
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("timestamp").GetString()));
         Assert.Equal(new long[] { 100, 200 }, ReadLongArray(root.GetProperty("affectedElementIds")));
+        var rollbackActions = root.GetProperty("rollbackActions").EnumerateArray().ToArray();
+        Assert.Equal(2, rollbackActions.Length);
+        Assert.Equal(100, rollbackActions[0].GetProperty("elementId").GetInt64());
+        Assert.Equal("Fire Rating", rollbackActions[0].GetProperty("param").GetString());
+        Assert.Equal("30min", rollbackActions[0].GetProperty("oldValue").GetString());
+        Assert.Equal("60min", rollbackActions[0].GetProperty("newValue").GetString());
     }
 
     [Fact]
@@ -357,6 +363,11 @@ public class PlanCommandTests : IDisposable
         Assert.Equal(@"C:\models\Demo.rvt", root.GetProperty("modelPath").GetString());
         Assert.Equal("2026", root.GetProperty("documentVersion").GetString());
         Assert.Equal(new long[] { 101, 102 }, ReadLongArray(root.GetProperty("affectedElementIds")));
+        var rollbackActions = root.GetProperty("rollbackActions").EnumerateArray().ToArray();
+        Assert.Equal(2, rollbackActions.Length);
+        Assert.Equal("Lock", rollbackActions[0].GetProperty("param").GetString());
+        Assert.Equal("OLD", rollbackActions[0].GetProperty("oldValue").GetString());
+        Assert.Equal("YALE-500", rollbackActions[0].GetProperty("newValue").GetString());
     }
 
     [Fact]

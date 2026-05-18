@@ -15,7 +15,7 @@ public sealed class ProcessExitCodeTests
     {
         var assemblyPath = typeof(DoctorCommand).Assembly.Location;
         var exePath = Path.ChangeExtension(assemblyPath, ".exe");
-        var startInfo = File.Exists(exePath)
+        var startInfo = OperatingSystem.IsWindows() && File.Exists(exePath)
             ? new ProcessStartInfo(exePath, "doctor --check-version 2023")
             : new ProcessStartInfo("dotnet", $"\"{assemblyPath}\" doctor --check-version 2023");
 

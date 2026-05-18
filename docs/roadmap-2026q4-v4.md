@@ -83,9 +83,9 @@ Reference guide:
 | --- | --- | --- |
 | v2.2 | Terminal Trust Release | Installer, docs, roadmap, and smoke gates match the terminal-first promise. |
 | v2.3 | Inspect & Discover | Architects and Codex CLI can discover categories, parameters, schedules, sheets, and examples from the terminal. |
-| v2.4 | Safe Batch Plans | Bulk edits become plan -> review -> apply -> rollback workflows. |
-| v2.5 | Delivery Workflows | Pre-issue checks, exports, snapshots, and receipts become reusable terminal workflows. |
-| v3.0 | Project Standards Workbench | Profiles, workflows, family rules, and reports become office-standard packs. |
+| v2.4 | Safe Batch Plans | Complete: bulk edits become plan -> review -> apply -> receipt -> rollback workflows. |
+| v2.5 | Delivery Workflows | Complete: pre-issue checks, exports, snapshots, and receipts become reusable terminal workflows. |
+| v3.0 | Project Standards Workbench | Complete: profiles, workflows, family rules, and reports become office-standard packs. |
 | v3.x | Review & Knowledge Capture | Repeated terminal work becomes suggested scripts/workflows after human approval. |
 | v4.0 | Architect Terminal BIM Workbench | RevitCli is a stable local command platform that Codex CLI can safely operate for recurring architectural BIM tasks. |
 
@@ -211,7 +211,8 @@ Scope:
   ids, old/new values, timestamp, operator, baseline path, journal path.
   First slice shipped through `plan-receipt.v1` sidecars for
   `plan apply` set/import/fix, including command metadata, model context
-  when available, affected IDs, and fix rollback pointers.
+  when available, affected IDs, rollback actions for set/import receipts,
+  and fix rollback pointers.
 - Add thresholds: `--max-changes`, profile defaults, and second
   confirmation for high-impact writes. First slice shipped through
   `defaults.planMaxChanges`, `defaults.highImpactChanges`,
@@ -228,6 +229,12 @@ Exit gate:
   rolled back from terminal artifacts alone.
 - Codex CLI can summarize the plan in Chinese before the architect
   approves the apply step.
+
+Completion status: complete as of 2026-05-18. The terminal path now covers
+`set/import/fix --plan-output`, `plan show` table/JSON/Markdown review,
+`plan apply` dry-run/apply with safety thresholds and receipts, set/import
+receipt rollback actions, fix baseline rollback, and local examples/recipes
+that show Chinese summary handoff plus receipt rollback.
 
 ## 9. v2.5 - Delivery Workflows
 
@@ -261,12 +268,18 @@ Scope:
 Example:
 
 ```yaml
+version: 1
 name: pre-issue
 steps:
   - run: revitcli profile simulate issue
+    mode: read-only
   - run: revitcli check issue --output table
+    mode: read-only
   - run: revitcli publish issue --dry-run
+    mode: dry-run
   - run: revitcli history capture --source pre-issue
+    mode: mutating
+    requiresApproval: true
 ```
 
 Exit gate:
@@ -275,6 +288,13 @@ Exit gate:
   readable checklist result plus artifacts for review.
 - An architect can ask Codex CLI "帮我做出图前检查" and see the exact
   workflow steps before anything mutates or exports.
+
+Completion status: complete as of 2026-05-18. The workflow surface now covers
+template install, validation, simulation, gated run, receipt writing/review,
+acceptance examples, and journal-based suggestions. Validation rejects shell
+operators, missing risk modes, unapproved mutating steps during real runs, and
+unknown RevitCli commands/subcommands so workflows call only visible CLI
+surfaces.
 
 ## 10. v3.0 - Project Standards Workbench
 
@@ -293,7 +313,9 @@ Scope:
 - `revitcli standards install <path-or-git-url>`: install approved local
   office standards. First local-pack slice shipped with dry-run, force,
   table/JSON/Markdown output, governed-file copy, workflow copy, and
-  output-directory bootstrap.
+  output-directory bootstrap. Installer now copies every relative
+  `required.profiles` entry from the pack, so office standards can bootstrap
+  more than the root `.revitcli.yml` profile.
 - Family validation rules promoted into reusable rule packs. First CLI
   slice shipped through `family validate --rules-from .revitcli/standards.yml`
   so standards manifests can drive the enabled built-in family rule set.
@@ -307,7 +329,17 @@ Scope:
 Exit gate:
 
 - A new project can be bootstrapped with office standards and checked
-  from terminal in under 10 minutes.
+  from terminal in under 10 minutes:
+  `standards install ../office-standards --dry-run --output markdown`;
+  `standards install ../office-standards`;
+  `standards validate --output markdown`;
+  `workflow validate --output markdown`; and
+  `family validate --rules-from .revitcli/standards.yml` when Revit is open.
+
+Completion status: complete as of 2026-05-18. Standards packs now cover
+manifest metadata/compatibility, install/validate table/JSON/Markdown output,
+all manifest-declared profile files, workflows, output directories, family
+rule packs, purge reports, and terminal-first bootstrap recipes.
 
 ## 11. v3.x - Review & Knowledge Capture
 
@@ -378,8 +410,10 @@ Target outcome:
   output files. Safe-plan receipts now use `plan-receipt.v1`
   sidecars with
   command metadata, timestamp/operator/machine, model context when available,
-  affected element IDs, and fix rollback baseline/journal pointers. Safe-plan
-  apply also reads profile safety defaults for max changes and high-impact
+  affected element IDs, set/import rollback actions, and fix rollback
+  baseline/journal pointers. `rollback` accepts both fix baselines and
+  plan receipt sidecars with current-value conflict checks. Safe-plan apply
+  also reads profile safety defaults for max changes and high-impact
   confirmation gates.
 - Office-standard packs are portable between projects and expose
   pack-version / compatibility metadata during validation.

@@ -405,6 +405,89 @@ required:
     }
 
     [Fact]
+    public async Task Install_LocalPack_CopiesAllRequiredProfilesFromManifest()
+    {
+        var source = Path.Combine(_root, "source-pack-extra-profile");
+        var project = Path.Combine(_root, "install-target-extra-profile");
+        Directory.CreateDirectory(project);
+        CreateStandardsPack(source);
+        Directory.CreateDirectory(Path.Combine(source, "profiles"));
+        File.WriteAllText(Path.Combine(source, "profiles", "office-checks.yml"), """
+version: 1
+checks: {}
+""");
+        WritePackStandards(source, """
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+required:
+  profiles: [.revitcli.yml, profiles/office-checks.yml]
+  workflows: [pre-issue]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  familyRules: [name-non-empty, category-known]
+""");
+        var output = new StringWriter();
+
+        var exitCode = await StandardsCommand.ExecuteInstallAsync(
+            source,
+            project,
+            refSpec: null,
+            subPath: null,
+            force: false,
+            dryRun: false,
+            outputFormat: "table",
+            output);
+
+        Assert.Equal(0, exitCode);
+        Assert.True(File.Exists(Path.Combine(project, ".revitcli.yml")));
+        Assert.True(File.Exists(Path.Combine(project, "profiles", "office-checks.yml")));
+        Assert.Contains("Validation: OK", output.ToString());
+    }
+
+    [Fact]
+    public async Task Install_MissingRequiredProfile_ReturnsErrorWithoutWritingProjectFiles()
+    {
+        var source = Path.Combine(_root, "source-pack-missing-profile");
+        var project = Path.Combine(_root, "install-target-missing-profile");
+        Directory.CreateDirectory(project);
+        CreateStandardsPack(source);
+        WritePackStandards(source, """
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+required:
+  profiles: [.revitcli.yml, profiles/missing.yml]
+  workflows: [pre-issue]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  familyRules: [name-non-empty, category-known]
+""");
+        var output = new StringWriter();
+
+        var exitCode = await StandardsCommand.ExecuteInstallAsync(
+            source,
+            project,
+            refSpec: null,
+            subPath: null,
+            force: false,
+            dryRun: false,
+            outputFormat: "table",
+            output);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("Required profile file not found in standards pack", output.ToString());
+        Assert.False(File.Exists(Path.Combine(project, ".revitcli", "standards.yml")));
+        Assert.False(File.Exists(Path.Combine(project, ".revitcli.yml")));
+    }
+
+    [Fact]
     public async Task Install_ExistingFileRequiresForce()
     {
         var source = Path.Combine(_root, "source-pack");
@@ -584,4 +667,7 @@ required:
   familyRules: [name-non-empty, category-known]
 """);
     }
+
+    private static void WritePackStandards(string root, string yaml) =>
+        File.WriteAllText(Path.Combine(root, ".revitcli", "standards.yml"), yaml);
 }

@@ -74,9 +74,11 @@ revitcli schedule export --name "Door Schedule" --output markdown
 Expected command path:
 
 ```powershell
-revitcli standards install ../office-standards --dry-run
-revitcli standards validate
+revitcli standards install ../office-standards --dry-run --output markdown
+revitcli standards install ../office-standards
+revitcli standards validate --output markdown
 revitcli standards validate --output json
+revitcli workflow validate --output markdown
 revitcli family validate --rules-from .revitcli/standards.yml
 revitcli examples standards
 ```
@@ -164,6 +166,10 @@ revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "
 revitcli set doors --filter "name contains Fire" --param "Fire Rating" --value "60min" --plan-output .revitcli/plans/fire-rating.json
 revitcli plan show .revitcli/plans/fire-rating.json
 revitcli plan apply .revitcli/plans/fire-rating.json --dry-run
+# after architect approval:
+revitcli plan apply .revitcli/plans/fire-rating.json --yes --max-changes 250 --high-impact-threshold 50 --confirm-high-impact
+revitcli rollback .revitcli/plans/fire-rating.json.receipt.json --dry-run
+revitcli rollback .revitcli/plans/fire-rating.json.receipt.json --yes --max-changes 250
 ```
 
 ## Recipe Templates
@@ -233,7 +239,9 @@ revitcli examples recipes
   built-in family rule ids. Standards manifests now carry `packVersion`
   and `compatibility` metadata so Codex CLI can report pack version,
   supported RevitCli version, supported Revit years, and compatibility notes.
-  `--output markdown` produces review notes for standards bootstrap handoff.
+  `standards install` copies every relative profile declared by
+  `required.profiles`; `--output markdown` produces review notes for standards
+  bootstrap handoff.
 - `family validate --rules-from .revitcli/standards.yml` so the standards
   pack controls the reusable family validation rule set.
 - Plan files for risky writes: generate, show, apply, receipt, rollback.
@@ -248,8 +256,8 @@ revitcli examples recipes
   approval notes.
 - `plan apply FILE --yes` writes a stable `plan-receipt.v1` sidecar with
   the exact apply command, timestamp, operator, machine, affected element
-  IDs, model context when available, and fix rollback baseline/journal
-  pointers.
+  IDs, model context when available, set/import rollback actions, and fix
+  rollback baseline/journal pointers.
 - `plan apply` reads profile safety defaults when available:
   `defaults.planMaxChanges` supplies the write cap when `--max-changes` is
   omitted, and `defaults.highImpactChanges` requires

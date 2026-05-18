@@ -68,7 +68,8 @@ public class ProfileInstallerTests : IDisposable
         // Force HEAD onto a deterministically-named 'main' branch regardless
         // of the libgit2 default. UpdateTarget edits .git/HEAD without
         // touching the working tree.
-        repo.CreateBranch("main", firstCommit);
+        if (repo.Branches["main"] == null)
+            repo.CreateBranch("main", firstCommit);
         repo.Refs.UpdateTarget("HEAD", "refs/heads/main");
 
         // Tag v1.0 against the first commit so we can exercise the tag branch.

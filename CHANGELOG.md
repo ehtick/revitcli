@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added — v2.4 safe batch plans
+
+- `plan-receipt.v1` now records explicit rollback actions for set/import plan
+  applies, and `revitcli rollback <artifact>` can restore from either a fix
+  baseline or a saved plan receipt with current-value conflict checks.
+- Safe-plan examples and Codex recipe docs now show the full review/apply/
+  receipt rollback path, including high-impact confirmation for large
+  parameter updates.
+
+### Added — v2.5 delivery workflows
+
+- v2.5 delivery workflows are marked complete in the roadmap. Workflow
+  validation now rejects unknown `revitcli` commands and grouped subcommands,
+  keeping workflow YAML limited to visible CLI command surfaces.
+
+### Added — v3.0 project standards workbench
+
+- `standards install` now copies every relative profile declared in
+  `required.profiles`, allowing office standards packs to bootstrap multiple
+  governed profile files before terminal validation.
+- Standards bootstrap docs now show the full dry-run, install, local standards,
+  workflow, and family-rule check path for new projects.
+
 ## [2.3.0] - 2026-05-17
 
 ### Release

@@ -163,7 +163,7 @@ public class CompletionsCommandTests : IDisposable
             script,
             "                rollback)",
             "                import)");
-        Assert.Contains("'1:baseline file:_files'", rollbackBlock);
+        Assert.Contains("'1:rollback artifact file:_files'", rollbackBlock);
         Assert.Contains("--dry-run[Preview rollback without applying]", rollbackBlock);
         Assert.Contains("--yes[Confirm rollback apply in non-interactive mode]", rollbackBlock);
         Assert.Contains("--max-changes[Maximum number of rollback writes]", rollbackBlock);
@@ -199,7 +199,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'release' = 'Verify local release readiness and CI guardrails'", script);
         Assert.Contains("'sheets' = 'Verify sheet numbering and local sheet-frame expectations'", script);
         Assert.Contains("'interactive' = 'Enter interactive REPL mode'", script);
-        Assert.Contains("'rollback' = 'Restore parameters changed by a fix baseline'", script);
+        Assert.Contains("'rollback' = 'Restore parameters from a fix baseline or plan receipt'", script);
         Assert.Contains("'show', 'stats', 'review', 'sign', 'verify'", script);
         Assert.Contains("'--limit'", script);
         Assert.Contains("'--high-impact-threshold'", script);

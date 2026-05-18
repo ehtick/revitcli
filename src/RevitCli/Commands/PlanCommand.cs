@@ -252,7 +252,10 @@ public static class PlanCommand
         receipt.Param = plan.Summary.Param;
         receipt.Value = plan.Summary.Value;
         receipt.Preview = data.Preview;
-        receipt.AffectedElementIds = DistinctSorted(frozenIds);
+        receipt.RollbackActions = CreateRollbackActions(plan.Summary.Param, data.Preview, "set");
+        receipt.AffectedElementIds = receipt.RollbackActions.Count > 0
+            ? DistinctSorted(receipt.RollbackActions.Select(action => action.ElementId))
+            : DistinctSorted(frozenIds);
         var receiptPath = SetPlanFileStore.SaveReceipt(file, receipt);
         await output.WriteLineAsync($"Receipt saved to {receiptPath}");
         return 0;
@@ -421,7 +424,7 @@ public static class PlanCommand
             return 1;
         }
 
-        var (affected, previews, failures) = await ApplyImportGroupsAsync(
+        var (affected, previews, failures, rollbackActions) = await ApplyImportGroupsAsync(
             client,
             plan,
             dryRun,
@@ -470,7 +473,10 @@ public static class PlanCommand
         receipt.ElementWrites = elementWrites;
         receipt.Groups = plan.Groups;
         receipt.Failures = failures;
-        receipt.AffectedElementIds = DistinctSorted(plan.Groups.SelectMany(group => group.ElementIds));
+        receipt.RollbackActions = rollbackActions;
+        receipt.AffectedElementIds = receipt.RollbackActions.Count > 0
+            ? DistinctSorted(receipt.RollbackActions.Select(action => action.ElementId))
+            : DistinctSorted(plan.Groups.SelectMany(group => group.ElementIds));
         var receiptPath = SetPlanFileStore.SaveReceipt(file, receipt);
         await output.WriteLineAsync($"Receipt saved to {receiptPath}");
         return failures.Count == 0 ? 0 : 2;
@@ -840,6 +846,27 @@ public static class PlanCommand
             .ToList();
     }
 
+    private static List<PlanReceiptRollbackAction> CreateRollbackActions(
+        string param,
+        IEnumerable<SetPreviewItem>? previews,
+        string source)
+    {
+        if (string.IsNullOrWhiteSpace(param) || previews == null)
+            return new List<PlanReceiptRollbackAction>();
+
+        return previews
+            .Where(item => item != null && item.Id > 0)
+            .Select(item => new PlanReceiptRollbackAction
+            {
+                ElementId = item.Id,
+                Param = param,
+                OldValue = item.OldValue,
+                NewValue = item.NewValue,
+                Source = source
+            })
+            .ToList();
+    }
+
     private static string QuoteArgument(string value)
     {
         return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
@@ -1194,7 +1221,11 @@ public static class PlanCommand
             .Replace("\n", " ", StringComparison.Ordinal);
     }
 
-    private static async Task<(int Affected, List<SetPreviewItem> Previews, List<PlanApplyFailure> Failures)> ApplyImportGroupsAsync(
+    private static async Task<(
+        int Affected,
+        List<SetPreviewItem> Previews,
+        List<PlanApplyFailure> Failures,
+        List<PlanReceiptRollbackAction> RollbackActions)> ApplyImportGroupsAsync(
         RevitClient client,
         ImportPlanFile plan,
         bool dryRun,
@@ -1202,6 +1233,7 @@ public static class PlanCommand
     {
         var failures = new List<PlanApplyFailure>();
         var previews = new List<SetPreviewItem>();
+        var rollbackActions = new List<PlanReceiptRollbackAction>();
         var affected = 0;
 
         foreach (var group in plan.Groups)
@@ -1229,12 +1261,15 @@ public static class PlanCommand
                     break;
                 }
 
+                var responsePreviews = resp.Data?.Preview ?? new List<SetPreviewItem>();
                 affected += resp.Data?.Affected ?? 0;
-                previews.AddRange(resp.Data?.Preview ?? new List<SetPreviewItem>());
+                previews.AddRange(responsePreviews);
+                if (!dryRun)
+                    rollbackActions.AddRange(CreateRollbackActions(group.Param, responsePreviews, "import"));
             }
         }
 
-        return (affected, previews, failures);
+        return (affected, previews, failures, rollbackActions);
     }
 
     private sealed record PlanShowOutput(

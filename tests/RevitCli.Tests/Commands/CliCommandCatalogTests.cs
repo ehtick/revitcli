@@ -134,8 +134,8 @@ public class CliCommandCatalogTests
     {
         Assert.Contains(
             CliCommandCatalog.InteractiveHelpEntries,
-            entry => entry.Command == "rollback <baseline>" &&
-                     entry.Description == "Restore parameters changed by a fix baseline");
+            entry => entry.Command == "rollback <artifact>" &&
+                     entry.Description == "Restore parameters from a fix baseline or plan receipt");
     }
 
     [Fact]

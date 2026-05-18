@@ -151,12 +151,13 @@ public static class StandardsInstaller
                 "Standards pack must contain .revitcli/standards.yml, standards.yml, or standards.yaml.");
         }
 
+        var packRoot = DeterminePackRoot(rootDirectory, manifest);
         var profile = FirstExisting(
-            Path.Combine(rootDirectory, ".revitcli.yml"),
-            Path.Combine(rootDirectory, ".revitcli", ".revitcli.yml"));
+            Path.Combine(packRoot, ".revitcli.yml"),
+            Path.Combine(packRoot, ".revitcli", ".revitcli.yml"));
         var workflowRoot = FirstExistingDirectory(
-            Path.Combine(rootDirectory, ".revitcli", "workflows"),
-            Path.Combine(rootDirectory, "workflows"));
+            Path.Combine(packRoot, ".revitcli", "workflows"),
+            Path.Combine(packRoot, "workflows"));
         var workflows = workflowRoot == null
             ? Array.Empty<string>()
             : WorkflowExtensions
@@ -164,7 +165,7 @@ public static class StandardsInstaller
                 .OrderBy(Path.GetFileName, StringComparer.Ordinal)
                 .ToArray();
 
-        return new StandardsPackLayout(manifest, profile, workflows);
+        return new StandardsPackLayout(packRoot, manifest, profile, workflows);
     }
 
     private static StandardsInstallResult BuildPlan(
@@ -181,7 +182,10 @@ public static class StandardsInstaller
         };
 
         AddFile(result, "manifest", layout.ManifestPath, Path.Combine(projectRoot, StandardsValidator.DefaultManifestPath));
-        if (layout.ProfilePath != null)
+
+        var manifest = StandardsValidator.LoadManifest(layout.ManifestPath);
+        var requiredProfileCount = AddRequiredProfiles(result, layout.RootDirectory, projectRoot, manifest.Required.Profiles);
+        if (requiredProfileCount == 0 && layout.ProfilePath != null)
         {
             AddFile(result, "profile", layout.ProfilePath, Path.Combine(projectRoot, ProfileLoader.FileName));
         }
@@ -195,7 +199,6 @@ public static class StandardsInstaller
                 Path.Combine(projectRoot, ".revitcli", "workflows", Path.GetFileName(workflow)));
         }
 
-        var manifest = StandardsValidator.LoadManifest(layout.ManifestPath);
         foreach (var outputPath in manifest.Required.OutputPaths.Where(path => !string.IsNullOrWhiteSpace(path)))
         {
             var target = ResolveUnderProject(projectRoot, outputPath);
@@ -207,6 +210,34 @@ public static class StandardsInstaller
         }
 
         return result;
+    }
+
+    private static int AddRequiredProfiles(
+        StandardsInstallResult result,
+        string sourceRoot,
+        string projectRoot,
+        IReadOnlyList<string> profiles)
+    {
+        var copied = 0;
+        var seenTargets = new HashSet<string>(PathComparer);
+        foreach (var profile in profiles.Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            var source = ResolveRequiredPackFile(sourceRoot, profile, "profile");
+            if (!File.Exists(source))
+            {
+                throw new InvalidOperationException(
+                    $"Required profile file not found in standards pack: {profile}");
+            }
+
+            var target = ResolveRequiredProjectFile(projectRoot, profile, "profile");
+            if (!seenTargets.Add(target))
+                continue;
+
+            AddFile(result, "profile", source, target);
+            copied++;
+        }
+
+        return copied;
     }
 
     private static void AddFile(
@@ -271,11 +302,47 @@ public static class StandardsInstaller
         return candidate;
     }
 
+    private static string ResolveRequiredPackFile(string sourceRoot, string path, string kind)
+    {
+        if (Path.IsPathFullyQualified(path))
+            throw new InvalidOperationException($"{kind} path must be relative in standards pack: {path}");
+
+        var candidate = Path.GetFullPath(Path.Combine(sourceRoot, NormalizeSubPath(path)));
+        if (!IsUnderDirectory(sourceRoot, candidate))
+            throw new InvalidOperationException($"{kind} path escapes the standards pack: {path}");
+
+        return candidate;
+    }
+
+    private static string ResolveRequiredProjectFile(string projectRoot, string path, string kind)
+    {
+        if (Path.IsPathFullyQualified(path))
+            throw new InvalidOperationException($"{kind} path must be relative to the project: {path}");
+
+        var candidate = Path.GetFullPath(Path.Combine(projectRoot, NormalizeSubPath(path)));
+        if (!IsUnderDirectory(projectRoot, candidate))
+            throw new InvalidOperationException($"{kind} path escapes the project directory: {path}");
+
+        return candidate;
+    }
+
     private static string? FirstExisting(params string[] paths) =>
         paths.FirstOrDefault(File.Exists);
 
     private static string? FirstExistingDirectory(params string[] paths) =>
         paths.FirstOrDefault(Directory.Exists);
+
+    private static string DeterminePackRoot(string rootDirectory, string manifestPath)
+    {
+        var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(manifestPath));
+        if (manifestDirectory != null
+            && string.Equals(Path.GetFileName(manifestDirectory), ".revitcli", PathComparison))
+        {
+            return Path.GetDirectoryName(manifestDirectory) ?? Path.GetFullPath(rootDirectory);
+        }
+
+        return Path.GetFullPath(rootDirectory);
+    }
 
     private static string NormalizeSubPath(string subPath) =>
         subPath.Replace('/', Path.DirectorySeparatorChar)
@@ -288,6 +355,23 @@ public static class StandardsInstaller
         return full.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
             ? full
             : full + Path.DirectorySeparatorChar;
+    }
+
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    private static bool IsUnderDirectory(string directory, string path)
+    {
+        var root = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var candidate = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return string.Equals(candidate, root, PathComparison) ||
+               candidate.StartsWith(root + Path.DirectorySeparatorChar, PathComparison);
     }
 
     private static void DeleteDirectoryRobust(string path)
@@ -325,6 +409,7 @@ public static class StandardsInstaller
     }
 
     private sealed record StandardsPackLayout(
+        string RootDirectory,
         string ManifestPath,
         string? ProfilePath,
         IReadOnlyList<string> WorkflowPaths);

@@ -67,6 +67,10 @@ public sealed class ExamplesCommandTests
         var text = output.ToString();
         Assert.Equal(0, exitCode);
         Assert.Contains("revitcli inspect params doors --name \"Fire*\" --writable-only --missing-only", text);
+        Assert.Contains("revitcli plan apply .revitcli/plans/fire-rating.json --yes --max-changes 250 --high-impact-threshold 50 --confirm-high-impact", text);
+        Assert.Contains("revitcli rollback .revitcli/plans/fire-rating.json.receipt.json --dry-run", text);
+        Assert.Contains("revitcli rollback .revitcli/plans/fire-rating.json.receipt.json --yes --max-changes 250", text);
+        Assert.Contains("summarize it in Chinese before apply", text);
     }
 
     [Fact]

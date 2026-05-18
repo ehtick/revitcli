@@ -790,7 +790,7 @@ public static class CompletionsCommand
             "                    ;;",
                 "                rollback)",
                 "                    _arguments \\",
-                "                        '1:baseline file:_files' \\",
+                "                        '1:rollback artifact file:_files' \\",
                 "                        '--dry-run[Preview rollback without applying]' \\",
                 "                        '--yes[Confirm rollback apply in non-interactive mode]' \\",
                 "                        '--max-changes[Maximum number of rollback writes]'",

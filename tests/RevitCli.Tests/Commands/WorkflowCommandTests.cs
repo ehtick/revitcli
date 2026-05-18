@@ -131,6 +131,85 @@ steps:
     }
 
     [Fact]
+    public async Task Validate_UnknownTopLevelCommand_ReturnsFailure()
+    {
+        var path = Path.Combine(_root, "bad.yml");
+        WriteWorkflow(path, """
+name: bad
+steps:
+  - run: revitcli made-up --dry-run
+    mode: dry-run
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        var text = output.ToString();
+        Assert.Equal(1, exitCode);
+        Assert.Contains("unknown RevitCli command 'made-up'", text);
+        Assert.Contains("existing CLI commands", text);
+    }
+
+    [Fact]
+    public async Task Validate_UnknownGroupedSubcommand_ReturnsFailure()
+    {
+        var path = Path.Combine(_root, "bad.yml");
+        WriteWorkflow(path, """
+name: bad
+steps:
+  - run: revitcli workflow made-up
+    mode: read-only
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        var text = output.ToString();
+        Assert.Equal(1, exitCode);
+        Assert.Contains("unknown RevitCli command 'workflow made-up'", text);
+        Assert.Contains("existing CLI commands", text);
+    }
+
+    [Fact]
+    public async Task Validate_UnknownNestedSubcommand_ReturnsFailure()
+    {
+        var path = Path.Combine(_root, "bad.yml");
+        WriteWorkflow(path, """
+name: bad
+steps:
+  - run: revitcli sheets index delete
+    mode: read-only
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        var text = output.ToString();
+        Assert.Equal(1, exitCode);
+        Assert.Contains("unknown RevitCli command 'sheets index delete'", text);
+        Assert.Contains("existing CLI commands", text);
+    }
+
+    [Fact]
+    public async Task Validate_MutatingWithoutApproval_ReturnsFailure()
+    {
+        var path = Path.Combine(_root, "bad.yml");
+        WriteWorkflow(path, """
+name: bad
+steps:
+  - run: revitcli history capture --source manual
+    mode: mutating
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("steps[0].requiresApproval", output.ToString());
+        Assert.Contains("must declare requiresApproval: true", output.ToString());
+    }
+
+    [Fact]
     public async Task Validate_JsonOutput_IncludesIssues()
     {
         var path = Path.Combine(_root, "bad.yml");
@@ -471,6 +550,38 @@ steps:
         Assert.Equal(1, exitCode);
         Assert.False(invoked);
         Assert.Contains("run.--yes", output.ToString());
+    }
+
+    [Fact]
+    public async Task Run_UnknownTopLevelCommand_ReturnsFailureBeforeRunner()
+    {
+        var path = Path.Combine(_root, "bad.yml");
+        WriteWorkflow(path, """
+name: bad
+steps:
+  - run: revitcli made-up --dry-run
+    mode: dry-run
+""");
+        var output = new StringWriter();
+        var invoked = false;
+
+        var exitCode = await WorkflowCommand.ExecuteRunAsync(
+            path,
+            null,
+            dryRun: false,
+            yes: true,
+            continueOnError: false,
+            outputFormat: "table",
+            output,
+            runner: (_, _) =>
+            {
+                invoked = true;
+                return Task.FromResult(0);
+            });
+
+        Assert.Equal(1, exitCode);
+        Assert.False(invoked);
+        Assert.Contains("unknown RevitCli command 'made-up'", output.ToString());
     }
 
     [Fact]
