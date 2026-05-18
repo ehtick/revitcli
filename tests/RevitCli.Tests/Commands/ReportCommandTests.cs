@@ -178,8 +178,13 @@ public sealed class ReportCommandTests : IDisposable
         Assert.Contains("| Delivery Receipts | `present` | 1 entries; valid true; 0 missing receipts |", text);
         Assert.Contains("| Standards Validation | `present` | valid true; pack 2026.4.0; 0 errors |", text);
         Assert.Contains("| Weekly Reports | `present` | 1 reports; latest", text);
+        Assert.Contains("## Suggested Workflow Drafts", text);
+        Assert.Contains("```yaml", text);
+        Assert.Contains("name: suggested-workflow-1", text);
+        Assert.Contains("run: 'revitcli check issue'", text);
         Assert.Contains("revitcli workflow suggest --output yaml", text);
         Assert.Contains("revitcli workflow receipts --failed-only --output markdown", text);
+        Assert.False(File.Exists(Path.Combine(_root, ".revitcli", "workflows", "suggested-workflow-1.yml")));
     }
 
     [Fact]
@@ -208,7 +213,14 @@ public sealed class ReportCommandTests : IDisposable
         var root = json.RootElement;
         Assert.Equal("knowledge-report.v1", root.GetProperty("schemaVersion").GetString());
         Assert.Equal(2, root.GetProperty("history").GetProperty("snapshotCount").GetInt32());
-        Assert.Equal(1, root.GetProperty("journal").GetProperty("repeatedWorkflowSuggestionCount").GetInt32());
+        var journal = root.GetProperty("journal");
+        Assert.Equal(1, journal.GetProperty("repeatedWorkflowSuggestionCount").GetInt32());
+        var workflow = Assert.Single(journal.GetProperty("suggestedWorkflows").EnumerateArray());
+        Assert.Equal("suggested-workflow-1", workflow.GetProperty("name").GetString());
+        Assert.Equal(2, workflow.GetProperty("stepCount").GetInt32());
+        Assert.Equal(0, workflow.GetProperty("mutatingStepCount").GetInt32());
+        Assert.False(workflow.GetProperty("requiresApproval").GetBoolean());
+        Assert.Contains("revitcli publish issue --dry-run", workflow.GetProperty("yaml").GetString());
         Assert.Equal(1, root.GetProperty("workflowReceipts").GetProperty("failedCount").GetInt32());
         Assert.Equal(1, root.GetProperty("deliveries").GetProperty("entryCount").GetInt32());
         Assert.True(root.GetProperty("standards").GetProperty("valid").GetBoolean());

@@ -610,6 +610,9 @@ public static class ReportCommand
             summary.CommandEntryCount = suggestions.CommandEntryCount;
             summary.RepeatedWorkflowSuggestionCount = suggestions.Suggestions.Count;
             summary.FirstSuggestedWorkflowName = suggestions.Suggestions.FirstOrDefault()?.Name;
+            summary.SuggestedWorkflows = suggestions.Suggestions
+                .Select(ToKnowledgeSuggestedWorkflow)
+                .ToList();
             summary.Actions = stats.Actions
                 .Take(5)
                 .Select(item => new KnowledgeNamedCount(item.Action, item.Count, item.AffectedElementCount))
@@ -920,6 +923,16 @@ public static class ReportCommand
         AppendKnowledgeCounts(sb, "Top categories", report.Journal.Categories);
         AppendKnowledgeCounts(sb, "Top operators", report.Journal.Operators);
 
+        if (report.Journal.SuggestedWorkflows.Count > 0)
+        {
+            sb.AppendLine("Suggested workflow drafts:");
+            foreach (var workflow in report.Journal.SuggestedWorkflows)
+            {
+                sb.AppendLine(
+                    $"  - {workflow.Name}: repeated={workflow.Count}; steps={workflow.StepCount}; mutating={workflow.MutatingStepCount}; approval={workflow.RequiresApproval.ToString().ToLowerInvariant()}");
+            }
+        }
+
         sb.AppendLine("Reuse hints:");
         foreach (var hint in report.ReuseHints)
         {
@@ -967,6 +980,27 @@ public static class ReportCommand
             AppendKnowledgeCountsMarkdown(sb, "Operators", report.Journal.Operators);
         }
 
+        if (report.Journal.SuggestedWorkflows.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Suggested Workflow Drafts");
+            foreach (var workflow in report.Journal.SuggestedWorkflows)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"### {EscapeMarkdownText(workflow.Name)}");
+                sb.AppendLine();
+                sb.AppendLine($"- Repeated: `{workflow.Count}`");
+                sb.AppendLine($"- First journal line: `{workflow.FirstLine}`");
+                sb.AppendLine($"- Steps: `{workflow.StepCount}`");
+                sb.AppendLine($"- Mutating steps: `{workflow.MutatingStepCount}`");
+                sb.AppendLine($"- Requires approval: `{workflow.RequiresApproval.ToString().ToLowerInvariant()}`");
+                sb.AppendLine();
+                sb.AppendLine("```yaml");
+                sb.AppendLine(workflow.Yaml);
+                sb.AppendLine("```");
+            }
+        }
+
         sb.AppendLine();
         sb.AppendLine("## Reuse Hints");
         foreach (var hint in report.ReuseHints)
@@ -1000,6 +1034,20 @@ public static class ReportCommand
 
     private static int CountDeliveryOutcome(DeliveryManifestStats stats, string outcome) =>
         stats.Outcomes.FirstOrDefault(item => string.Equals(item.Name, outcome, StringComparison.OrdinalIgnoreCase))?.Count ?? 0;
+
+    private static KnowledgeSuggestedWorkflow ToKnowledgeSuggestedWorkflow(WorkflowSuggestion suggestion)
+    {
+        var mutatingStepCount = suggestion.Steps.Count(step =>
+            string.Equals(step.Mode, "mutating", StringComparison.OrdinalIgnoreCase));
+        return new KnowledgeSuggestedWorkflow(
+            suggestion.Name,
+            suggestion.Count,
+            suggestion.FirstLine,
+            suggestion.Steps.Count,
+            mutatingStepCount,
+            suggestion.Steps.Any(step => step.RequiresApproval),
+            suggestion.Yaml);
+    }
 
     private static void AddKnowledgeIssue(List<KnowledgeIssue> issues, string severity, string source, string message) =>
         issues.Add(new KnowledgeIssue(severity, source, message));
@@ -1385,6 +1433,9 @@ public sealed class KnowledgeJournalSummary
 
     [JsonPropertyName("operators")]
     public List<KnowledgeNamedCount> Operators { get; set; } = new();
+
+    [JsonPropertyName("suggestedWorkflows")]
+    public List<KnowledgeSuggestedWorkflow> SuggestedWorkflows { get; set; } = new();
 }
 
 public sealed class KnowledgeWorkflowReceiptSummary
@@ -1508,6 +1559,15 @@ public sealed record KnowledgeNamedCount(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("count")] int Count,
     [property: JsonPropertyName("affectedElementCount")] int AffectedElementCount);
+
+public sealed record KnowledgeSuggestedWorkflow(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("count")] int Count,
+    [property: JsonPropertyName("firstLine")] int FirstLine,
+    [property: JsonPropertyName("stepCount")] int StepCount,
+    [property: JsonPropertyName("mutatingStepCount")] int MutatingStepCount,
+    [property: JsonPropertyName("requiresApproval")] bool RequiresApproval,
+    [property: JsonPropertyName("yaml")] string Yaml);
 
 public sealed record KnowledgeHint(
     [property: JsonPropertyName("code")] string Code,

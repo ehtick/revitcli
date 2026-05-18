@@ -36,6 +36,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   validation, and saved weekly reports into table, JSON, or Markdown review
   notes. It only emits reuse hints and does not write workflows, standards, or
   any LLM/MCP runtime state.
+- Knowledge reports now include review-only workflow YAML drafts from repeated
+  journal command sequences, making the v3.x local knowledge-capture path
+  complete without adding hidden writes or runtime dependencies.
 
 ## [2.3.0] - 2026-05-17
 

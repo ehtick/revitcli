@@ -188,8 +188,9 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 ### Reports — local project summaries
 
 - `report weekly` reads `.revitcli/history` and `.revitcli/journal.jsonl` without contacting Revit
-- `report knowledge` reads local history, journal commands, workflow receipts, delivery manifests/receipts, standards validation, and saved weekly reports to surface reusable review hints
+- `report knowledge` reads local history, journal commands, workflow receipts, delivery manifests/receipts, standards validation, and saved weekly reports to surface reusable review hints and workflow YAML drafts
 - Knowledge hints are drafts for human review, such as `workflow suggest`, failed workflow receipt triage, delivery verification, or standards validation; the command never writes workflows or standards
+- Suggested workflow YAML in knowledge reports is review evidence only; save and validate it manually before using it as a real workflow
 - Output formats: table, JSON, and Markdown
 - `--report .revitcli/reports/weekly.md` writes a Markdown report for review handoff
 
@@ -470,6 +471,7 @@ docs/superpowers/          # Design specs and implementation plans
 - [x] v2.2 release integrity: installer hardening, real multi-version smoke, release checklist
 - [x] v2.3 Codex CLI-assisted architect workflow: inspect/discover, safe batch plans, delivery workflows, standards packs
 - [x] v3.0 project standards workbench: office standards packs bootstrap profiles, workflows, outputs, family rules, and terminal validation
+- [x] v3.x review and knowledge capture: local reports, journal-derived workflow drafts, recipes, and handoff-ready review evidence
 - [ ] v4 terminal workbench: dashboard/workbench polish, deeper workflow review, and long-running Revit automation ergonomics
 
 See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.

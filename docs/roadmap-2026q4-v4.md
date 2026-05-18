@@ -86,7 +86,7 @@ Reference guide:
 | v2.4 | Safe Batch Plans | Complete: bulk edits become plan -> review -> apply -> receipt -> rollback workflows. |
 | v2.5 | Delivery Workflows | Complete: pre-issue checks, exports, snapshots, and receipts become reusable terminal workflows. |
 | v3.0 | Project Standards Workbench | Complete: profiles, workflows, family rules, and reports become office-standard packs. |
-| v3.x | Review & Knowledge Capture | Repeated terminal work becomes suggested scripts/workflows after human approval. |
+| v3.x | Review & Knowledge Capture | Complete: repeated terminal work becomes suggested scripts/workflows after human approval. |
 | v4.0 | Architect Terminal BIM Workbench | RevitCli is a stable local command platform that Codex CLI can safely operate for recurring architectural BIM tasks. |
 
 ## 6. v2.2 - Terminal Trust Release
@@ -369,8 +369,9 @@ Candidate tracks:
 - `report knowledge`: consolidate reusable local project memory from history,
   journal command repetition, workflow receipts, delivery manifests/receipts,
   standards validation, and saved weekly reports. First terminal-only slice
-  shipped with table/JSON/Markdown output and deterministic reuse hints only;
-  it does not write workflows, standards, or any LLM/MCP runtime state.
+  shipped with table/JSON/Markdown output, deterministic reuse hints, and
+  review-only workflow YAML drafts from repeated journal command sequences; it
+  does not write workflows, standards, or any LLM/MCP runtime state.
 - `codex recipes`: documented prompt-to-command examples, stored as
   docs/templates rather than executable hidden logic. First template pack
   shipped under `docs/templates/codex-recipes/` with an `examples recipes`
@@ -380,6 +381,14 @@ Constraint:
 
 - Suggestions are drafts. The architect approves before new standards,
   workflows, or fix recipes are written.
+
+Completion status: complete as of 2026-05-18. The v3.x terminal path now covers
+journal browsing/stats/review, deterministic diff review, journal-derived
+workflow YAML suggestions, weekly reports, knowledge reports that consolidate
+local artifacts and expose review-only workflow drafts, and documented Codex
+recipe templates. RevitCli remains a local CLI artifact reader and suggestion
+surface; it does not embed an LLM, MCP workflow, dashboard dependency, or hidden
+write path for suggested workflows.
 
 ## 12. v4.0 - Architect Terminal BIM Workbench
 
