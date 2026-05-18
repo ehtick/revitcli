@@ -366,6 +366,11 @@ Candidate tracks:
 - `report weekly`: generate a terminal/Markdown summary from history,
   score, diff, and journal. First local slice shipped for table/json/markdown
   weekly reports from `.revitcli/history` and `.revitcli/journal.jsonl`.
+- `report knowledge`: consolidate reusable local project memory from history,
+  journal command repetition, workflow receipts, delivery manifests/receipts,
+  standards validation, and saved weekly reports. First terminal-only slice
+  shipped with table/JSON/Markdown output and deterministic reuse hints only;
+  it does not write workflows, standards, or any LLM/MCP runtime state.
 - `codex recipes`: documented prompt-to-command examples, stored as
   docs/templates rather than executable hidden logic. First template pack
   shipped under `docs/templates/codex-recipes/` with an `examples recipes`

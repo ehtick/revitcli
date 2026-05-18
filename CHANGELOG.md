@@ -29,6 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Standards bootstrap docs now show the full dry-run, install, local standards,
   workflow, and family-rule check path for new projects.
 
+### Added — v3.x review and knowledge capture
+
+- `revitcli report knowledge` summarizes local history, journal command
+  repetition, workflow receipts, delivery manifests/receipts, standards
+  validation, and saved weekly reports into table, JSON, or Markdown review
+  notes. It only emits reuse hints and does not write workflows, standards, or
+  any LLM/MCP runtime state.
+
 ## [2.3.0] - 2026-05-17
 
 ### Release

@@ -34,6 +34,7 @@ revitcli workflow suggest --output yaml                       # draft workflow f
 revitcli workflow receipts --output markdown                  # review workflow run receipts
 revitcli examples recipes                                     # show Codex CLI recipe templates
 revitcli report weekly --report .revitcli/reports/weekly.md  # local weekly report
+revitcli report knowledge --output markdown                  # summarize reusable local project knowledge
 revitcli standards install ../office-standards --dry-run --output markdown # preview standards bootstrap
 revitcli standards install ../office-standards              # bootstrap a new project
 revitcli standards validate --output markdown                # check local office standards
@@ -83,7 +84,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli sheets verify` / `index` | Verify sheet numbering, required sheets, and local sheet-frame expectations |
 | `revitcli examples <topic>` | Show copy-paste examples for common architect workflows |
 | `revitcli workflow validate` / `simulate` / `run` / `suggest` / `receipts` | Check, run, draft, and review reusable terminal workflow YAML with approval gates |
-| `revitcli report weekly` | Generate local history / score / diff / journal weekly reports |
+| `revitcli report weekly` / `knowledge` | Generate local weekly reports and project knowledge summaries from RevitCli artifacts |
 | `revitcli deliverables list` / `stats` / `verify` / `bundle` | Review delivery manifest entries, receipt traceability, and package handoff zips |
 | `revitcli standards install` / `validate` | Install and validate required profiles, workflows, outputs, schedules, and family rules |
 | `revitcli release verify` | Check local release files, version/tag consistency, CI guardrails, and smoke documentation; use `--output markdown` for handoff notes |
@@ -187,6 +188,8 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 ### Reports — local project summaries
 
 - `report weekly` reads `.revitcli/history` and `.revitcli/journal.jsonl` without contacting Revit
+- `report knowledge` reads local history, journal commands, workflow receipts, delivery manifests/receipts, standards validation, and saved weekly reports to surface reusable review hints
+- Knowledge hints are drafts for human review, such as `workflow suggest`, failed workflow receipt triage, delivery verification, or standards validation; the command never writes workflows or standards
 - Output formats: table, JSON, and Markdown
 - `--report .revitcli/reports/weekly.md` writes a Markdown report for review handoff
 
