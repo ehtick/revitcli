@@ -150,7 +150,7 @@ public class DoctorCommandTests
         Assert.True(root.GetProperty("success").GetBoolean());
         Assert.True(root.GetProperty("valid").GetBoolean());
         Assert.Equal(2026, root.GetProperty("targetRevitYear").GetInt32());
-        Assert.Equal("http://localhost:17839", root.GetProperty("serverUrl").GetString());
+        Assert.Equal("http://127.0.0.1:17839", root.GetProperty("serverUrl").GetString());
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("status").GetString() == "ok" &&
             check.GetProperty("message").GetString()!.Contains("Connected to Revit 2026", StringComparison.Ordinal));

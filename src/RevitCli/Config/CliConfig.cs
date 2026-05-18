@@ -9,7 +9,7 @@ namespace RevitCli.Config;
 public class CliConfig
 {
     [JsonPropertyName("serverUrl")]
-    public string ServerUrl { get; set; } = $"http://localhost:{ServerInfo.DefaultPort}";
+    public string ServerUrl { get; set; } = $"http://127.0.0.1:{ServerInfo.DefaultPort}";
 
     [JsonPropertyName("defaultOutput")]
     public string DefaultOutput { get; set; } = "table";

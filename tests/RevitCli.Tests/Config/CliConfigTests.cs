@@ -11,7 +11,7 @@ public class CliConfigTests
     public void Load_NoFile_ReturnsDefaults()
     {
         var config = new CliConfig();
-        Assert.Equal("http://localhost:17839", config.ServerUrl);
+        Assert.Equal("http://127.0.0.1:17839", config.ServerUrl);
         Assert.Equal("table", config.DefaultOutput);
         Assert.Equal(".", config.ExportDir);
         Assert.Null(config.Revit2026InstallDir);

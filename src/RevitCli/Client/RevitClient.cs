@@ -12,7 +12,7 @@ namespace RevitCli.Client;
 public class RevitClient : IDisposable
 {
     public const int DefaultPort = ServerInfo.DefaultPort;
-    public const string DefaultBaseUrl = "http://localhost:17839";
+    public const string DefaultBaseUrl = "http://127.0.0.1:17839";
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
 
     private readonly HttpClient _http;
@@ -89,7 +89,7 @@ public class RevitClient : IDisposable
                     {
                         using var proc = System.Diagnostics.Process.GetProcessById(info.Pid);
                         if (!proc.HasExited)
-                            return ($"http://localhost:{info.Port}", info.Token ?? "");
+                            return ($"http://127.0.0.1:{info.Port}", info.Token ?? "");
                     }
                     catch (System.ArgumentException) { /* process not found */ }
                     catch (System.ComponentModel.Win32Exception) { /* access denied — treat as unavailable */ }

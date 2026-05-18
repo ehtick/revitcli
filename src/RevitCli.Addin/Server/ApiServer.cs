@@ -166,7 +166,7 @@ public class ApiServer : IDisposable
     {
         var token = _token;
         return new WebServer(o => o
-                .WithUrlPrefix($"http://localhost:{port}/")
+                .WithUrlPrefix($"http://127.0.0.1:{port}/")
                 .WithMode(HttpListenerMode.EmbedIO))
             .WithModule(new TokenAuthModule(token))
             .WithWebApi("/api", m => m
