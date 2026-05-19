@@ -2,12 +2,21 @@ using System;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace RevitCli.Commands;
 
 public static class ExamplesCommand
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
     private sealed record ExampleTopic(
         string Name,
         string Summary,
@@ -18,7 +27,7 @@ public static class ExamplesCommand
     {
         new(
             "inspect",
-            "Discover categories, parameters, schedules, and sheets before planning work.",
+            "Discover categories, parameters, schedules, sheets, local workflows, and saved plans before planning work.",
             new[]
             {
                 "revitcli inspect categories",
@@ -26,7 +35,9 @@ public static class ExamplesCommand
                 "revitcli inspect params doors --writable-only --missing-only",
                 "revitcli inspect schedules",
                 "revitcli inspect schedules --issues-only --output markdown",
-                "revitcli inspect sheets --issues-only --output markdown"
+                "revitcli inspect sheets --issues-only --output markdown",
+                "revitcli inspect workflows --output markdown",
+                "revitcli inspect plans --output markdown"
             },
             "Find what can be exported or checked in this model using read-only commands."),
         new(
@@ -54,7 +65,8 @@ public static class ExamplesCommand
                 "revitcli schedule list --output markdown",
                 "revitcli schedule export --name \"Door Schedule\" --output csv",
                 "revitcli schedule export --name \"Door Schedule\" --output markdown",
-                "revitcli schedule export --category doors --fields all --output json"
+                "revitcli schedule export --category doors --fields all --output json",
+                "revitcli schedule create --category Doors --fields \"Mark,Level\" --name \"Door Review\" --dry-run --output json"
             },
             "Export the door schedule to CSV and report any missing schedule fields."),
         new(
@@ -125,6 +137,28 @@ public static class ExamplesCommand
             },
             "Review the latest model changes and tell me which ones need human attention."),
         new(
+            "workbench",
+            "Discover and verify the v4 terminal workbench contract before delegating tasks.",
+            new[]
+            {
+                "revitcli workbench contract --output json",
+                "revitcli workbench contract --output markdown",
+                "revitcli workbench verify --output json",
+                "revitcli workbench verify --output markdown",
+                "revitcli workbench receipts --output json",
+                "revitcli workbench paths --output json",
+                "revitcli workbench exits --output json",
+                "revitcli workbench extensions --output json",
+                "revitcli workbench outputs --output json",
+                "revitcli workbench safeguards --output json",
+                "revitcli workbench project --output json",
+                "revitcli workbench handoff --output markdown",
+                "revitcli score --history 30d --output json",
+                "revitcli examples workflow --output json",
+                "revitcli workflow review .revitcli/workflows/pre-issue.yml --output markdown"
+            },
+            "Show the stable RevitCli workbench contract and receipt index, verify it locally, then choose the safest command path for this task."),
+        new(
             "workflow",
             "Validate, simulate, run, and review reusable terminal workflow YAML.",
             new[]
@@ -134,11 +168,16 @@ public static class ExamplesCommand
                 "revitcli workflow validate",
                 "revitcli workflow validate .revitcli/workflows/pre-issue.yml",
                 "revitcli workflow simulate .revitcli/workflows/pre-issue.yml",
+                "revitcli workflow review .revitcli/workflows/pre-issue.yml --output markdown",
                 "revitcli workflow run .revitcli/workflows/pre-issue.yml --dry-run",
+                "revitcli workflow run .revitcli/workflows/pre-issue.yml --yes --timeout-ms 600000",
                 "revitcli workflow run .revitcli/workflows/pre-issue.yml --yes",
                 "revitcli workflow simulate .revitcli/workflows/pre-issue.yml --output json",
                 "revitcli workflow suggest --output yaml",
                 "revitcli workflow receipts --output markdown",
+                "revitcli workflow receipts --min-duration-ms 60000 --output markdown",
+                "revitcli workflow receipts --sort duration --output json",
+                "revitcli workflow receipts --window 24h --sort duration --output markdown",
                 "revitcli workflow examples",
                 "revitcli workflow examples export-package --output markdown"
             },
@@ -238,6 +277,7 @@ public static class ExamplesCommand
     };
 
     internal static string[] TopicNames => Topics.Select(topic => topic.Name).ToArray();
+    internal static string[] OutputFormats => new[] { "table", "json", "markdown" };
 
     public static Command Create()
     {
@@ -245,26 +285,56 @@ public static class ExamplesCommand
             "topic",
             () => null,
             $"Example topic: {string.Join(", ", TopicNames)}");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
 
         var command = new Command("examples", "Show copy-paste examples for common architect workflows")
         {
-            topicArg
+            topicArg,
+            outputOpt
         };
 
-        command.SetHandler(async (string? topic) =>
+        command.SetHandler(async (string? topic, string outputFormat) =>
         {
-            Environment.ExitCode = await ExecuteAsync(Console.Out, topic);
-        }, topicArg);
+            Environment.ExitCode = await ExecuteAsync(Console.Out, topic, outputFormat);
+        }, topicArg, outputOpt);
 
         return command;
     }
 
-    public static async Task<int> ExecuteAsync(TextWriter output, string? topic)
+    public static async Task<int> ExecuteAsync(TextWriter output, string? topic, string outputFormat = "table")
     {
+        var normalizedOutput = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedOutput is not ("table" or "json" or "markdown"))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
+        var selectedTopics = SelectTopics(topic, output).ToArray();
+        if (selectedTopics.Length == 0)
+            return 1;
+
+        if (normalizedOutput == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(
+                new ExampleRecipesEnvelope(
+                    "example-recipes.v1",
+                    string.IsNullOrWhiteSpace(topic) ? null : selectedTopics[0].Name,
+                    selectedTopics.Select(ToContract).ToArray()),
+                JsonOptions));
+            return 0;
+        }
+
+        if (normalizedOutput == "markdown")
+        {
+            await WriteMarkdownAsync(output, topic, selectedTopics);
+            return 0;
+        }
+
         if (string.IsNullOrWhiteSpace(topic))
         {
             await output.WriteLineAsync("Available example topics:");
-            foreach (var item in Topics)
+            foreach (var item in selectedTopics)
             {
                 await output.WriteLineAsync($"  {item.Name,-10} {item.Summary}");
             }
@@ -274,15 +344,30 @@ public static class ExamplesCommand
             return 0;
         }
 
+        var match = selectedTopics[0];
+        await WriteTopicAsync(output, match);
+        return 0;
+    }
+
+    private static ExampleTopic[] SelectTopics(string? topic, TextWriter output)
+    {
+        if (string.IsNullOrWhiteSpace(topic))
+            return Topics;
+
         var match = Topics.FirstOrDefault(item =>
             string.Equals(item.Name, topic, StringComparison.OrdinalIgnoreCase));
         if (match is null)
         {
-            await output.WriteLineAsync($"Unknown example topic: {topic}");
-            await output.WriteLineAsync($"Available: {string.Join(", ", TopicNames)}");
-            return 1;
+            output.WriteLine($"Unknown example topic: {topic}");
+            output.WriteLine($"Available: {string.Join(", ", TopicNames)}");
+            return Array.Empty<ExampleTopic>();
         }
 
+        return new[] { match };
+    }
+
+    private static async Task WriteTopicAsync(TextWriter output, ExampleTopic match)
+    {
         await output.WriteLineAsync($"# {match.Name}");
         await output.WriteLineAsync(match.Summary);
         await output.WriteLineAsync();
@@ -298,7 +383,59 @@ public static class ExamplesCommand
             await output.WriteLineAsync("Codex prompt:");
             await output.WriteLineAsync($"  {match.CodexPrompt}");
         }
-
-        return 0;
     }
+
+    private static async Task WriteMarkdownAsync(TextWriter output, string? topic, ExampleTopic[] selectedTopics)
+    {
+        if (string.IsNullOrWhiteSpace(topic))
+        {
+            await output.WriteLineAsync("# RevitCli Example Recipes");
+            await output.WriteLineAsync();
+            await output.WriteLineAsync("| Topic | Summary |");
+            await output.WriteLineAsync("|---|---|");
+            foreach (var item in selectedTopics)
+            {
+                await output.WriteLineAsync($"| `{item.Name}` | {EscapeTableCell(item.Summary)} |");
+            }
+
+            return;
+        }
+
+        var match = selectedTopics[0];
+        await output.WriteLineAsync($"# {match.Name}");
+        await output.WriteLineAsync();
+        await output.WriteLineAsync(match.Summary);
+        await output.WriteLineAsync();
+        await output.WriteLineAsync("## Commands");
+        await output.WriteLineAsync();
+        foreach (var command in match.Commands)
+        {
+            await output.WriteLineAsync($"- `{command}`");
+        }
+
+        if (!string.IsNullOrWhiteSpace(match.CodexPrompt))
+        {
+            await output.WriteLineAsync();
+            await output.WriteLineAsync("## Codex Prompt");
+            await output.WriteLineAsync();
+            await output.WriteLineAsync(match.CodexPrompt);
+        }
+    }
+
+    private static string EscapeTableCell(string value) =>
+        value.Replace("|", "\\|", StringComparison.Ordinal);
+
+    private static ExampleTopicContract ToContract(ExampleTopic topic) =>
+        new(topic.Name, topic.Summary, topic.Commands, topic.CodexPrompt);
+
+    public sealed record ExampleRecipesEnvelope(
+        string SchemaVersion,
+        string? Topic,
+        IReadOnlyList<ExampleTopicContract> Topics);
+
+    public sealed record ExampleTopicContract(
+        string Name,
+        string Summary,
+        IReadOnlyList<string> Commands,
+        string? CodexPrompt);
 }

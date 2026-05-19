@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RevitCli.Commands;
 
 namespace RevitCli.Tests.Commands;
@@ -17,6 +18,7 @@ public sealed class ExamplesCommandTests
         Assert.Contains("inspect", text);
         Assert.Contains("sheets", text);
         Assert.Contains("workflow", text);
+        Assert.Contains("workbench", text);
         Assert.Contains("report", text);
         Assert.Contains("deliverables", text);
         Assert.Contains("standards", text);
@@ -55,6 +57,8 @@ public sealed class ExamplesCommandTests
         Assert.Contains("revitcli inspect params doors --writable-only --missing-only", text);
         Assert.Contains("revitcli inspect schedules --issues-only --output markdown", text);
         Assert.Contains("revitcli inspect sheets --issues-only --output markdown", text);
+        Assert.Contains("revitcli inspect workflows --output markdown", text);
+        Assert.Contains("revitcli inspect plans --output markdown", text);
     }
 
     [Fact]
@@ -88,6 +92,7 @@ public sealed class ExamplesCommandTests
         Assert.Contains("revitcli schedule list --output markdown", text);
         Assert.Contains("revitcli schedule export --name \"Door Schedule\" --output csv", text);
         Assert.Contains("revitcli schedule export --name \"Door Schedule\" --output markdown", text);
+        Assert.Contains("revitcli schedule create --category Doors --fields \"Mark,Level\" --name \"Door Review\" --dry-run --output json", text);
     }
 
     [Fact]
@@ -133,10 +138,40 @@ public sealed class ExamplesCommandTests
         Assert.Contains("revitcli workflow init all", text);
         Assert.Contains("revitcli workflow validate", text);
         Assert.Contains("revitcli workflow simulate .revitcli/workflows/pre-issue.yml", text);
+        Assert.Contains("revitcli workflow review .revitcli/workflows/pre-issue.yml --output markdown", text);
         Assert.Contains("revitcli workflow run .revitcli/workflows/pre-issue.yml --dry-run", text);
         Assert.Contains("revitcli workflow suggest --output yaml", text);
         Assert.Contains("revitcli workflow receipts --output markdown", text);
+        Assert.Contains("revitcli workflow receipts --min-duration-ms 60000 --output markdown", text);
+        Assert.Contains("revitcli workflow receipts --sort duration --output json", text);
+        Assert.Contains("revitcli workflow receipts --window 24h --sort duration --output markdown", text);
         Assert.Contains("revitcli workflow examples export-package --output markdown", text);
+        Assert.Contains("Codex prompt:", text);
+    }
+
+    [Fact]
+    public async Task Execute_WorkbenchTopic_PrintsContractAndVerifierCommands()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "workbench");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# workbench", text);
+        Assert.Contains("revitcli workbench contract --output json", text);
+        Assert.Contains("revitcli workbench verify --output markdown", text);
+        Assert.Contains("revitcli workbench receipts --output json", text);
+        Assert.Contains("revitcli workbench paths --output json", text);
+        Assert.Contains("revitcli workbench exits --output json", text);
+        Assert.Contains("revitcli workbench extensions --output json", text);
+        Assert.Contains("revitcli workbench outputs --output json", text);
+        Assert.Contains("revitcli workbench safeguards --output json", text);
+        Assert.Contains("revitcli workbench project --output json", text);
+        Assert.Contains("revitcli workbench handoff --output markdown", text);
+        Assert.Contains("revitcli score --history 30d --output json", text);
+        Assert.Contains("revitcli examples workflow --output json", text);
+        Assert.Contains("revitcli workflow review .revitcli/workflows/pre-issue.yml --output markdown", text);
         Assert.Contains("Codex prompt:", text);
     }
 
@@ -217,6 +252,69 @@ public sealed class ExamplesCommandTests
         Assert.Contains("docs/templates/codex-recipes/sheet-frame-verify.md", text);
         Assert.Contains("revitcli workflow suggest --output yaml", text);
         Assert.Contains("Codex prompt:", text);
+    }
+
+    [Fact]
+    public async Task Execute_OutputJson_PrintsRecipeEnvelopeForTopic()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "workflow", "json");
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(output.ToString());
+        var root = document.RootElement;
+        Assert.Equal("example-recipes.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("workflow", root.GetProperty("topic").GetString());
+        var topic = Assert.Single(root.GetProperty("topics").EnumerateArray());
+        Assert.Equal("workflow", topic.GetProperty("name").GetString());
+        Assert.Contains(
+            topic.GetProperty("commands").EnumerateArray(),
+            command => command.GetString() == "revitcli workflow simulate .revitcli/workflows/pre-issue.yml --output json");
+        Assert.Contains("risk modes", topic.GetProperty("codexPrompt").GetString());
+    }
+
+    [Fact]
+    public async Task Execute_OutputJson_NoTopic_PrintsAllRecipeTopics()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, null, "json");
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(output.ToString());
+        var root = document.RootElement;
+        Assert.Equal("example-recipes.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("topic").ValueKind);
+        var topics = root.GetProperty("topics").EnumerateArray().ToArray();
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "publish");
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "journal");
+    }
+
+    [Fact]
+    public async Task Execute_OutputMarkdown_PrintsHandoffRecipe()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "deliverables", "markdown");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# deliverables", text);
+        Assert.Contains("## Commands", text);
+        Assert.Contains("- `revitcli deliverables bundle --dry-run --output markdown`", text);
+        Assert.Contains("## Codex Prompt", text);
+    }
+
+    [Fact]
+    public async Task Execute_UnknownOutput_ReturnsFailure()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "workflow", "yaml");
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal("Error: --output must be 'table', 'json', or 'markdown'." + Environment.NewLine, output.ToString());
     }
 
     [Fact]

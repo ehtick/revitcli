@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Commands;
 using RevitCli.History;
@@ -126,6 +127,59 @@ public class ScoreCommandTests : IDisposable
         Assert.Contains("new", lines[0]);
         Assert.Contains("resolved", lines[0]);
         Assert.Contains("unchanged", lines[0]);
+    }
+
+    [Fact]
+    public async Task History_Json_PrintsStableModelHealthEnvelope()
+    {
+        var store = new HistoryStore(HistoryDir);
+        await store.InitAsync();
+        await store.AppendAsync(MakeSnapshot(3), "manual", DateTimeOffset.UtcNow - TimeSpan.FromHours(1));
+
+        var writer = new StringWriter();
+        var exit = await ScoreCommand.ExecuteHistoryAsync("7d", HistoryDir, writer, "json");
+
+        Assert.Equal(0, exit);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var root = document.RootElement;
+        Assert.Equal("model-health-history.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.Equal("7d", root.GetProperty("window").GetString());
+        Assert.Equal(1, root.GetProperty("rowCount").GetInt32());
+
+        var row = root.GetProperty("rows").EnumerateArray().Single();
+        Assert.Equal(100, row.GetProperty("score").GetInt32());
+        Assert.Equal("A", row.GetProperty("letter").GetString());
+        Assert.Equal(3, row.GetProperty("unchangedCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task History_Markdown_PrintsHandoffTable()
+    {
+        var store = new HistoryStore(HistoryDir);
+        await store.InitAsync();
+        await store.AppendAsync(MakeSnapshot(2), "manual", DateTimeOffset.UtcNow - TimeSpan.FromHours(1));
+
+        var writer = new StringWriter();
+        var exit = await ScoreCommand.ExecuteHistoryAsync("7d", HistoryDir, writer, "markdown");
+
+        var text = writer.ToString();
+        Assert.Equal(0, exit);
+        Assert.Contains("# Model Health History", text);
+        Assert.Contains("Schema: `model-health-history.v1`", text);
+        Assert.Contains("| Date | Score | Letter | New | Resolved | Unchanged |", text);
+        Assert.Contains("| 100 | A |", text);
+    }
+
+    [Fact]
+    public async Task History_UnknownOutput_ReturnsOneBeforeReadingStore()
+    {
+        var writer = new StringWriter();
+
+        var exit = await ScoreCommand.ExecuteHistoryAsync("7d", HistoryDir, writer, "yaml");
+
+        Assert.Equal(1, exit);
+        Assert.Equal("Error: --output must be 'table', 'json', or 'markdown'." + Environment.NewLine, writer.ToString());
     }
 
     [Fact]

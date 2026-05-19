@@ -15,11 +15,12 @@ revitcli release verify --tag vX.Y.Z --output markdown
 ```
 
 `release verify` checks local release files, `RevitCliVersion`, changelog and
-README release notes, Ubuntu CLI/Shared CI guardrails, installer hardening
-markers, release packaging workflow markers, and smoke documentation. Markdown
-output is intended for maintainer handoff notes. It does not run live Revit
-smoke. Ubuntu CI also runs `release verify --output json` after the portable
-CLI/Shared build so release guardrails fail before merge.
+README release notes, Ubuntu CLI/Shared CI guardrails, v4 workbench verification
+in CI, installer hardening markers, release packaging workflow markers, and
+smoke documentation. Markdown output is intended for maintainer handoff notes.
+It does not run live Revit smoke. Ubuntu CI also runs `release verify --output json`
+and `workbench verify --dir . --output json` after the portable CLI/Shared build
+so release and workbench guardrails fail before merge.
 
 If the dashboard changed:
 
@@ -42,7 +43,7 @@ Revit 2026 is installed outside `%ProgramFiles%`, pass the local path:
 
 ```powershell
 .\scripts\install.ps1 -RevitYears 2026 `
-  -Revit2026InstallDir "D:\revit2026" `
+  -Revit2026InstallDir "D:\revit2026\Revit 2026" `
   -Force
 ```
 
@@ -74,8 +75,15 @@ Run the scripted smoke on a controlled model:
 .\scripts\smoke-revit.ps1 -Version 2026 `
   -ElementId 12345 `
   -Category walls `
-  -Filter "Mark = W-01"
+  -Filter "Mark = W-01" `
+  -V4Workbench `
+  -V4ProjectDir .
 ```
+
+The smoke report records every command attempt. A single retry is allowed only
+for explicit transient add-in communication timeouts on read-only or dry-run
+commands; ordinary command failures and write/rollback failures remain
+blocking.
 
 For 2024/2025, record gaps if a runner or local install is unavailable. Do not
 claim live support beyond the versions that passed smoke. Use

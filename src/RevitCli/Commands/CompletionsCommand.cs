@@ -14,10 +14,12 @@ public static class CompletionsCommand
     private static readonly string[] RevitYears = { "2024", "2025", "2026" };
     private static readonly string[] CheckOptions = { "--profile", "--output", "--report", "--no-save" };
     private static readonly string[] CheckOutputFormats = { "table", "json", "html", "sarif", "pr-comment" };
+    private static readonly string[] ScoreOptions = { "--history", "--dir", "--output" };
+    private static readonly string[] ScoreOutputFormats = ScoreCommand.OutputFormats;
     private static readonly string[] QueryOptions = { "--filter", "--id", "--output" };
-    private static readonly string[] InspectSubcommands = { "categories", "params", "schedules", "sheets" };
+    private static readonly string[] InspectSubcommands = { "categories", "params", "schedules", "sheets", "workflows", "plans" };
     private static readonly string[] InspectOptions =
-        { "--output", "--include-empty", "--category", "--name", "--writable-only", "--missing-only", "--ready-only", "--empty-only", "--sheets", "--issues-only" };
+        { "--output", "--dir", "--include-empty", "--category", "--name", "--writable-only", "--missing-only", "--ready-only", "--empty-only", "--sheets", "--issues-only" };
     private static readonly string[] InspectOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] ExportOptions = { "--format", "--sheets", "--views", "--output-dir", "--dry-run", "--output" };
     private static readonly string[] ExportOutputFormats = { "table", "json" };
@@ -38,11 +40,15 @@ public static class CompletionsCommand
     private static readonly string[] RollbackOptions = { "--dry-run", "--yes", "--max-changes" };
     private static readonly string[] DiffOptions = { "--output", "--report", "--categories", "--max-rows", "--review" };
     private static readonly string[] DiffOutputFormats = { "table", "json", "markdown" };
-    private static readonly string[] WorkflowSubcommands = { "init", "validate", "simulate", "run", "suggest", "examples", "receipts" };
+    private static readonly string[] WorkbenchSubcommands = { "contract", "verify", "receipts", "paths", "exits", "extensions", "outputs", "safeguards", "project", "handoff" };
+    private static readonly string[] WorkbenchOptions = { "contract", "verify", "receipts", "paths", "exits", "extensions", "outputs", "safeguards", "project", "handoff", "--dir", "--output" };
+    private static readonly string[] WorkbenchOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] WorkflowSubcommands = { "init", "validate", "simulate", "review", "run", "suggest", "examples", "receipts" };
     private static readonly string[] WorkflowOptions =
-        { "--dir", "--journal", "--output", "--dry-run", "--yes", "--continue-on-error", "--force", "--min-count", "--max-steps", "--limit", "--failed-only" };
-    private static readonly string[] WorkflowOutputFormats = { "table", "json", "yaml", "markdown" };
-    private static readonly string[] ReportSubcommands = { "weekly" };
+        { "--dir", "--journal", "--output", "--dry-run", "--yes", "--continue-on-error", "--timeout-ms", "--force", "--min-count", "--max-steps", "--limit", "--failed-only", "--name", "--min-duration-ms", "--sort", "--window" };
+    private static readonly string[] WorkflowReportOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] WorkflowSuggestOutputFormats = { "table", "json", "yaml" };
+    private static readonly string[] ReportSubcommands = { "weekly", "knowledge" };
     private static readonly string[] ReportOptions = { "--window", "--dir", "--history-dir", "--journal", "--output", "--report" };
     private static readonly string[] ReportOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] DeliverablesSubcommands = { "list", "stats", "verify", "bundle" };
@@ -60,9 +66,10 @@ public static class CompletionsCommand
     private static readonly string[] SheetsOutputFormats = { "table", "json", "markdown", "yaml" };
     private static readonly string[] ScheduleSubcommands = { "list", "export", "create" };
     private static readonly string[] ScheduleOptions =
-        { "--category", "--name", "--fields", "--filter", "--sort", "--sort-desc", "--output", "--template", "--place-on-sheet" };
+        { "--category", "--name", "--fields", "--filter", "--sort", "--sort-desc", "--output", "--template", "--place-on-sheet", "--dry-run", "--receipt-dir" };
     private static readonly string[] ScheduleListOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] ScheduleExportOutputFormats = { "table", "json", "csv", "markdown" };
+    private static readonly string[] ScheduleCreateOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] FamilySubcommands = { "ls", "validate", "purge", "export" };
     private static readonly string[] FamilyOptions =
     {
@@ -75,6 +82,8 @@ public static class CompletionsCommand
         { "--dir", "--journal", "--signature", "--key", "--until", "--limit", "--high-impact-threshold", "--action", "--category", "--operator", "--user", "--output" };
     private static readonly string[] JournalOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] ExampleTopics = ExamplesCommand.TopicNames;
+    private static readonly string[] ExampleOptions = ExamplesCommand.TopicNames.Concat(new[] { "--output" }).ToArray();
+    private static readonly string[] ExampleOutputFormats = ExamplesCommand.OutputFormats;
     private static readonly string[] PublishOptions =
         { "--profile", "--dry-run", "--output", "--since", "--since-mode", "--update-baseline" };
     private static readonly string[] PublishOutputFormats = { "table", "json" };
@@ -84,6 +93,36 @@ public static class CompletionsCommand
     private static readonly string[] OnMissingValues = { "error", "warn", "skip" };
     private static readonly string[] OnDuplicateValues = { "error", "first", "all" };
     private static readonly string[] EncodingValues = { "auto", "utf-8", "gbk" };
+
+    internal static IReadOnlyList<string> WorkbenchCompletionSubcommands => WorkbenchSubcommands;
+
+    internal static IReadOnlyList<string> WorkbenchCompletionOptions => WorkbenchOptions;
+
+    internal static IReadOnlyList<string> WorkbenchCompletionOutputFormats => WorkbenchOutputFormats;
+
+    internal static IReadOnlyList<string> InspectCompletionSubcommands => InspectSubcommands;
+
+    internal static IReadOnlyList<string> InspectCompletionOptions => InspectOptions;
+
+    internal static IReadOnlyList<string> InspectCompletionOutputFormats => InspectOutputFormats;
+
+    internal static IReadOnlyList<string> WorkflowCompletionSubcommands => WorkflowSubcommands;
+
+    internal static IReadOnlyList<string> WorkflowCompletionOptions => WorkflowOptions;
+
+    internal static IReadOnlyList<string> WorkflowReportCompletionOutputFormats => WorkflowReportOutputFormats;
+
+    internal static IReadOnlyList<string> WorkflowSuggestCompletionOutputFormats => WorkflowSuggestOutputFormats;
+
+    internal static IReadOnlyList<string> ScheduleCompletionSubcommands => ScheduleSubcommands;
+
+    internal static IReadOnlyList<string> ScheduleCompletionOptions => ScheduleOptions;
+
+    internal static IReadOnlyList<string> ScheduleListCompletionOutputFormats => ScheduleListOutputFormats;
+
+    internal static IReadOnlyList<string> ScheduleExportCompletionOutputFormats => ScheduleExportOutputFormats;
+
+    internal static IReadOnlyList<string> ScheduleCreateCompletionOutputFormats => ScheduleCreateOutputFormats;
 
     public static Command Create()
     {
@@ -126,6 +165,8 @@ public static class CompletionsCommand
         var revitYears = JoinWords(RevitYears);
         var checkOptions = JoinWords(CheckOptions);
         var checkOutputFormats = JoinWords(CheckOutputFormats);
+        var scoreOptions = JoinWords(ScoreOptions);
+        var scoreOutputFormats = JoinWords(ScoreOutputFormats);
         var queryOptions = JoinWords(QueryOptions);
         var inspectWords = JoinWords(InspectSubcommands.Concat(InspectOptions));
         var inspectOptions = JoinWords(InspectOptions);
@@ -139,9 +180,12 @@ public static class CompletionsCommand
         var rollbackOptions = JoinWords(RollbackOptions);
         var diffOptions = JoinWords(DiffOptions);
         var diffOutputFormats = JoinWords(DiffOutputFormats);
+        var workbenchWords = JoinWords(WorkbenchOptions);
+        var workbenchOutputFormats = JoinWords(WorkbenchOutputFormats);
         var workflowWords = JoinWords(WorkflowSubcommands.Concat(WorkflowOptions));
         var workflowOptions = JoinWords(WorkflowOptions);
-        var workflowOutputFormats = JoinWords(WorkflowOutputFormats);
+        var workflowReportOutputFormats = JoinWords(WorkflowReportOutputFormats);
+        var workflowSuggestOutputFormats = JoinWords(WorkflowSuggestOutputFormats);
         var reportWords = JoinWords(ReportSubcommands.Concat(ReportOptions));
         var reportOptions = JoinWords(ReportOptions);
         var reportOutputFormats = JoinWords(ReportOutputFormats);
@@ -161,13 +205,15 @@ public static class CompletionsCommand
         var scheduleOptions = JoinWords(ScheduleOptions);
         var scheduleListOutputFormats = JoinWords(ScheduleListOutputFormats);
         var scheduleExportOutputFormats = JoinWords(ScheduleExportOutputFormats);
+        var scheduleCreateOutputFormats = JoinWords(ScheduleCreateOutputFormats);
         var familyWords = JoinWords(FamilySubcommands.Concat(FamilyOptions));
         var familyOptions = JoinWords(FamilyOptions);
         var familyOutputFormats = JoinWords(FamilyOutputFormats);
         var familyRules = JoinWords(FamilyValidator.AllRuleIds);
         var journalWords = JoinWords(JournalSubcommands.Concat(JournalOptions));
         var journalOutputFormats = JoinWords(JournalOutputFormats);
-        var exampleTopics = JoinWords(ExampleTopics);
+        var exampleWords = JoinWords(ExampleOptions);
+        var exampleOutputFormats = JoinWords(ExampleOutputFormats);
         var publishOptions = JoinWords(PublishOptions);
         var publishOutputFormats = JoinWords(PublishOutputFormats);
         var sinceModes = JoinWords(SinceModes);
@@ -234,6 +280,19 @@ public static class CompletionsCommand
             "                    ;;",
             "            esac",
             $"            COMPREPLY=($(compgen -W \"{checkOptions}\" -- \"$cur\"))",
+            "            ;;",
+            "        score)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{scoreOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --dir)",
+            "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            $"            COMPREPLY=($(compgen -W \"{scoreOptions}\" -- \"$cur\"))",
             "            ;;",
             "        query)",
             "            case \"$prev\" in",
@@ -405,10 +464,27 @@ public static class CompletionsCommand
             "                    ;;",
             "            esac",
             "            ;;",
+            "        workbench)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{workbenchOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{workbenchWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{workbenchWords}\" -- \"$cur\"))",
+            "            ;;",
             "        workflow)",
             "            case \"$prev\" in",
             "                --output)",
-            $"                    COMPREPLY=($(compgen -W \"{workflowOutputFormats}\" -- \"$cur\"))",
+            "                    if [ \"$subcmd\" = \"suggest\" ]; then",
+            $"                        COMPREPLY=($(compgen -W \"{workflowSuggestOutputFormats}\" -- \"$cur\"))",
+            "                    else",
+            $"                        COMPREPLY=($(compgen -W \"{workflowReportOutputFormats}\" -- \"$cur\"))",
+            "                    fi",
             "                    return",
             "                    ;;",
             "                --dir)",
@@ -541,6 +617,8 @@ public static class CompletionsCommand
             "                --output)",
             "                    if [ \"$subcmd\" = \"list\" ]; then",
             $"                        COMPREPLY=($(compgen -W \"{scheduleListOutputFormats}\" -- \"$cur\"))",
+            "                    elif [ \"$subcmd\" = \"create\" ]; then",
+            $"                        COMPREPLY=($(compgen -W \"{scheduleCreateOutputFormats}\" -- \"$cur\"))",
             "                    else",
             $"                        COMPREPLY=($(compgen -W \"{scheduleExportOutputFormats}\" -- \"$cur\"))",
             "                    fi",
@@ -592,7 +670,13 @@ public static class CompletionsCommand
             $"            COMPREPLY=($(compgen -W \"{journalWords}\" -- \"$cur\"))",
             "            ;;",
             "        examples)",
-            $"            COMPREPLY=($(compgen -W \"{exampleTopics}\" -- \"$cur\"))",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{exampleOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "            esac",
+            $"            COMPREPLY=($(compgen -W \"{exampleWords}\" -- \"$cur\"))",
             "            ;;",
             "        interactive)",
             "            COMPREPLY=()",
@@ -610,6 +694,7 @@ public static class CompletionsCommand
         var doctorOutputFormats = JoinWords(DoctorOutputFormats);
         var revitYears = JoinWords(RevitYears);
         var checkOutputFormats = JoinWords(CheckOutputFormats);
+        var scoreOutputFormats = JoinWords(ScoreOutputFormats);
         var outputFormats = JoinWords(QueryCommand.ValidOutputFormats);
         var inspectSubcommands = JoinWords(InspectSubcommands);
         var inspectOutputFormats = JoinWords(InspectOutputFormats);
@@ -623,8 +708,11 @@ public static class CompletionsCommand
         var auditRules = JoinWords(AuditCommand.AvailableRules);
         var fixOptions = JoinWords(FixOptions);
         var diffOutputFormats = JoinWords(DiffOutputFormats);
+        var workbenchSubcommands = JoinWords(WorkbenchSubcommands);
+        var workbenchOutputFormats = JoinWords(WorkbenchOutputFormats);
         var workflowSubcommands = JoinWords(WorkflowSubcommands);
-        var workflowOutputFormats = JoinWords(WorkflowOutputFormats);
+        var workflowReportOutputFormats = JoinWords(WorkflowReportOutputFormats);
+        var workflowSuggestOutputFormats = JoinWords(WorkflowSuggestOutputFormats);
         var reportSubcommands = JoinWords(ReportSubcommands);
         var reportOutputFormats = JoinWords(ReportOutputFormats);
         var deliverablesSubcommands = JoinWords(DeliverablesSubcommands);
@@ -636,13 +724,16 @@ public static class CompletionsCommand
         var sheetsSubcommands = JoinWords(SheetsSubcommands);
         var sheetsOutputFormats = JoinWords(SheetsOutputFormats);
         var scheduleSubcommands = JoinWords(ScheduleSubcommands);
-        var scheduleOutputFormats = JoinWords(ScheduleExportOutputFormats);
+        var scheduleListOutputFormats = JoinWords(ScheduleListOutputFormats);
+        var scheduleExportOutputFormats = JoinWords(ScheduleExportOutputFormats);
+        var scheduleCreateOutputFormats = JoinWords(ScheduleCreateOutputFormats);
         var familySubcommands = JoinWords(FamilySubcommands);
         var familyOutputFormats = JoinWords(FamilyOutputFormats);
         var familyRules = JoinWords(FamilyValidator.AllRuleIds);
         var journalSubcommands = JoinWords(JournalSubcommands);
         var journalOutputFormats = JoinWords(JournalOutputFormats);
         var exampleTopics = JoinWords(ExampleTopics);
+        var exampleOutputFormats = JoinWords(ExampleOutputFormats);
         var publishOutputFormats = JoinWords(PublishOutputFormats);
 
         return JoinLines(
@@ -680,6 +771,12 @@ public static class CompletionsCommand
             $"                        '--output[Output format]:format:({checkOutputFormats})' \\",
             "                        '--report[Save report to file]:file:_files' \\",
             "                        '--no-save[Do not save results for diff comparison]'",
+            "                    ;;",
+            "                score)",
+            "                    _arguments \\",
+            "                        '--history[History window, e.g. 7d or 30d]:duration:' \\",
+            "                        '--dir[History directory]:dir:_directories' \\",
+            $"                        '--output[Output format]:format:({scoreOutputFormats})'",
             "                    ;;",
                 "                query)",
                 "                    _arguments \\",
@@ -805,23 +902,58 @@ public static class CompletionsCommand
                 "                        '--max-rows[Rows shown per section]:n:' \\",
                 "                        '--review[Render anomaly/notable/routine review]'",
                 "                    ;;",
+                "                workbench)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {workbenchSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--dir[Project directory]:dir:_directories' \\",
+                $"                            '--output[Output format]:format:({workbenchOutputFormats})'",
+                "                    fi",
+                "                    ;;",
                 "                workflow)",
                 "                    if (( CURRENT == 3 )); then",
             $"                        _values 'subcommand' {workflowSubcommands}",
                 "                    else",
+                "                        if [[ \"$words[3]\" == \"suggest\" ]]; then",
+                "                            _arguments \\",
+                "                                '2:workflow file:_files' \\",
+                "                                '--dir[Base directory]:dir:_directories' \\",
+                "                                '--journal[Journal JSONL file]:file:_files' \\",
+            $"                                '--output[Output format]:format:({workflowSuggestOutputFormats})' \\",
+                "                                '--dry-run[Print workflow run plan without executing steps]' \\",
+                "                                '--yes[Allow approved mutating steps to run]' \\",
+                "                                '--continue-on-error[Continue after a failed workflow step]' \\",
+                "                                '--timeout-ms[Maximum milliseconds per executed workflow step]:ms:' \\",
+                "                                '--force[Overwrite existing workflow files during init]' \\",
+                "                                '--min-count[Minimum repeated sequence count]:n:' \\",
+                "                                '--max-steps[Maximum suggested step count]:n:' \\",
+                "                                '--limit[Maximum suggestions or receipts]:n:' \\",
+                "                                '--failed-only[Only show failed workflow receipts]' \\",
+                "                                '--name[Only show receipts for workflow name]:name:' \\",
+                "                                '--min-duration-ms[Only show workflow receipts at or above duration]:ms:' \\",
+                "                                '--sort[Sort workflow receipts]:sort:(completed duration)' \\",
+                "                                '--window[Only show workflow receipts in a recent window]:window:'",
+                "                        else",
                 "                        _arguments \\",
                 "                            '2:workflow file:_files' \\",
                 "                            '--dir[Base directory]:dir:_directories' \\",
                 "                            '--journal[Journal JSONL file]:file:_files' \\",
-                $"                            '--output[Output format]:format:({workflowOutputFormats})' \\",
+            $"                            '--output[Output format]:format:({workflowReportOutputFormats})' \\",
                 "                            '--dry-run[Print workflow run plan without executing steps]' \\",
                 "                            '--yes[Allow approved mutating steps to run]' \\",
                 "                            '--continue-on-error[Continue after a failed workflow step]' \\",
+                "                            '--timeout-ms[Maximum milliseconds per executed workflow step]:ms:' \\",
                 "                            '--force[Overwrite existing workflow files during init]' \\",
                 "                            '--min-count[Minimum repeated sequence count]:n:' \\",
                 "                            '--max-steps[Maximum suggested step count]:n:' \\",
                 "                            '--limit[Maximum suggestions or receipts]:n:' \\",
-                "                            '--failed-only[Only show failed workflow receipts]'",
+                "                            '--failed-only[Only show failed workflow receipts]' \\",
+                "                            '--name[Only show receipts for workflow name]:name:' \\",
+                "                            '--min-duration-ms[Only show workflow receipts at or above duration]:ms:' \\",
+                "                            '--sort[Sort workflow receipts]:sort:(completed duration)' \\",
+                "                            '--window[Only show workflow receipts in a recent window]:window:'",
+                "                        fi",
                 "                    fi",
                 "                    ;;",
                 "                report)",
@@ -891,6 +1023,7 @@ public static class CompletionsCommand
                 "                    if (( CURRENT == 3 )); then",
             $"                        _values 'subcommand' {scheduleSubcommands}",
                 "                    else",
+                "                        if [[ \"$words[3]\" == \"list\" ]]; then",
                 "                        _arguments \\",
                 "                            '--category[Element category]:category:' \\",
                 "                            '--name[Schedule name]:name:' \\",
@@ -898,9 +1031,38 @@ public static class CompletionsCommand
                 "                            '--filter[Filter expression]:filter:' \\",
                 "                            '--sort[Sort by field]:field:' \\",
                 "                            '--sort-desc[Sort descending]' \\",
-            $"                            '--output[Output format]:format:({scheduleOutputFormats})' \\",
+            $"                            '--output[Output format]:format:({scheduleListOutputFormats})' \\",
                 "                            '--template[Schedule template name]:template:' \\",
-                "                            '--place-on-sheet[Sheet pattern]:sheet:'",
+                "                            '--place-on-sheet[Sheet pattern]:sheet:' \\",
+                "                            '--dry-run[Preview schedule creation without writing]' \\",
+                "                            '--receipt-dir[Directory for schedule-create receipts]:dir:_directories'",
+                "                        elif [[ \"$words[3]\" == \"create\" ]]; then",
+                "                        _arguments \\",
+                "                            '--category[Element category]:category:' \\",
+                "                            '--name[Schedule name]:name:' \\",
+                "                            '--fields[Comma-separated field names]:fields:' \\",
+                "                            '--filter[Filter expression]:filter:' \\",
+                "                            '--sort[Sort by field]:field:' \\",
+                "                            '--sort-desc[Sort descending]' \\",
+            $"                            '--output[Output format]:format:({scheduleCreateOutputFormats})' \\",
+                "                            '--template[Schedule template name]:template:' \\",
+                "                            '--place-on-sheet[Sheet pattern]:sheet:' \\",
+                "                            '--dry-run[Preview schedule creation without writing]' \\",
+                "                            '--receipt-dir[Directory for schedule-create receipts]:dir:_directories'",
+                "                        else",
+                "                        _arguments \\",
+                "                            '--category[Element category]:category:' \\",
+                "                            '--name[Schedule name]:name:' \\",
+                "                            '--fields[Comma-separated field names]:fields:' \\",
+                "                            '--filter[Filter expression]:filter:' \\",
+                "                            '--sort[Sort by field]:field:' \\",
+                "                            '--sort-desc[Sort descending]' \\",
+            $"                            '--output[Output format]:format:({scheduleExportOutputFormats})' \\",
+                "                            '--template[Schedule template name]:template:' \\",
+                "                            '--place-on-sheet[Sheet pattern]:sheet:' \\",
+                "                            '--dry-run[Preview schedule creation without writing]' \\",
+                "                            '--receipt-dir[Directory for schedule-create receipts]:dir:_directories'",
+                "                        fi",
                 "                    fi",
                 "                    ;;",
                 "                family)",
@@ -942,7 +1104,9 @@ public static class CompletionsCommand
                 $"                        '--output[Output format]:format:({journalOutputFormats})'",
                 "                    ;;",
                 "                examples)",
-                $"                    _arguments '1:topic:({exampleTopics})'",
+                "                    _arguments \\",
+                $"                        '1:topic:({exampleTopics})' \\",
+                $"                        '--output[Output format]:format:({exampleOutputFormats})'",
                 "                    ;;",
                 "                import)",
             "                    _arguments \\",
@@ -972,6 +1136,7 @@ public static class CompletionsCommand
         var statusOptions = FormatPowerShellArray(StatusOptions);
         var doctorOptions = FormatPowerShellArray(DoctorOptions);
         var checkOptions = FormatPowerShellArray(CheckOptions);
+        var scoreOptions = FormatPowerShellArray(ScoreOptions);
         var queryOptions = FormatPowerShellArray(QueryOptions);
         var inspectOptions = FormatPowerShellArray(InspectSubcommands.Concat(InspectOptions));
         var exportOptions = FormatPowerShellArray(ExportOptions);
@@ -981,6 +1146,7 @@ public static class CompletionsCommand
         var fixOptions = FormatPowerShellArray(FixOptions);
         var rollbackOptions = FormatPowerShellArray(RollbackOptions);
         var diffOptions = FormatPowerShellArray(DiffOptions);
+        var workbenchOptions = FormatPowerShellArray(WorkbenchOptions);
         var workflowOptions = FormatPowerShellArray(WorkflowSubcommands.Concat(WorkflowOptions));
         var reportOptions = FormatPowerShellArray(ReportSubcommands.Concat(ReportOptions));
         var deliverablesOptions = FormatPowerShellArray(DeliverablesSubcommands.Concat(DeliverablesOptions));
@@ -990,7 +1156,8 @@ public static class CompletionsCommand
         var scheduleOptions = FormatPowerShellArray(ScheduleSubcommands.Concat(ScheduleOptions));
         var familyOptions = FormatPowerShellArray(FamilySubcommands.Concat(FamilyOptions));
         var journalOptions = FormatPowerShellArray(JournalSubcommands.Concat(JournalOptions));
-        var exampleTopics = FormatPowerShellArray(ExampleTopics);
+        var exampleOptions = FormatPowerShellArray(ExampleOptions);
+        var exampleOutputFormats = FormatPowerShellArray(ExampleOutputFormats);
         var publishOptions = FormatPowerShellArray(PublishOptions);
         var publishOutputFormats = FormatPowerShellArray(PublishOutputFormats);
         var sinceModes = FormatPowerShellArray(SinceModes);
@@ -1002,19 +1169,26 @@ public static class CompletionsCommand
         var doctorOutputFormats = FormatPowerShellArray(DoctorOutputFormats);
         var revitYears = FormatPowerShellArray(RevitYears);
         var checkOutputFormats = FormatPowerShellArray(CheckOutputFormats);
+        var scoreOutputFormats = FormatPowerShellArray(ScoreOutputFormats);
         var outputFormats = FormatPowerShellArray(QueryCommand.ValidOutputFormats);
         var inspectOutputFormats = FormatPowerShellArray(InspectOutputFormats);
         var planOutputFormats = FormatPowerShellArray(PlanOutputFormats);
         var exportOutputFormats = FormatPowerShellArray(ExportOutputFormats);
         var diffOutputFormats = FormatPowerShellArray(DiffOutputFormats);
-        var workflowOutputFormats = FormatPowerShellArray(WorkflowOutputFormats);
+        var workbenchSubcommands = FormatPowerShellArray(WorkbenchSubcommands);
+        var workbenchOutputFormats = FormatPowerShellArray(WorkbenchOutputFormats);
+        var workflowSubcommands = FormatPowerShellArray(WorkflowSubcommands);
+        var workflowReportOutputFormats = FormatPowerShellArray(WorkflowReportOutputFormats);
+        var workflowSuggestOutputFormats = FormatPowerShellArray(WorkflowSuggestOutputFormats);
         var reportOutputFormats = FormatPowerShellArray(ReportOutputFormats);
         var deliverablesOutputFormats = FormatPowerShellArray(DeliverablesOutputFormats);
         var standardsOutputFormats = FormatPowerShellArray(StandardsOutputFormats);
         var releaseOutputFormats = FormatPowerShellArray(ReleaseOutputFormats);
         var sheetsOutputFormats = FormatPowerShellArray(SheetsOutputFormats);
         var scheduleSubcommands = FormatPowerShellArray(ScheduleSubcommands);
-        var scheduleOutputFormats = FormatPowerShellArray(ScheduleExportOutputFormats);
+        var scheduleListOutputFormats = FormatPowerShellArray(ScheduleListOutputFormats);
+        var scheduleExportOutputFormats = FormatPowerShellArray(ScheduleExportOutputFormats);
+        var scheduleCreateOutputFormats = FormatPowerShellArray(ScheduleCreateOutputFormats);
         var familyOutputFormats = FormatPowerShellArray(FamilyOutputFormats);
         var familyRules = FormatPowerShellArray(FamilyValidator.AllRuleIds);
         var journalOutputFormats = FormatPowerShellArray(JournalOutputFormats);
@@ -1036,6 +1210,7 @@ public static class CompletionsCommand
             $"        'status' = @({statusOptions})",
             $"        'doctor' = @({doctorOptions})",
             $"        'check' = @({checkOptions})",
+            $"        'score' = @({scoreOptions})",
             $"        'query' = @({queryOptions})",
             $"        'inspect' = @({inspectOptions})",
             $"        'export' = @({exportOptions})",
@@ -1045,6 +1220,7 @@ public static class CompletionsCommand
             $"        'fix' = @({fixOptions})",
             $"        'rollback' = @({rollbackOptions})",
             $"        'diff' = @({diffOptions})",
+            $"        'workbench' = @({workbenchOptions})",
             $"        'workflow' = @({workflowOptions})",
             $"        'report' = @({reportOptions})",
             $"        'deliverables' = @({deliverablesOptions})",
@@ -1054,7 +1230,7 @@ public static class CompletionsCommand
             $"        'schedule' = @({scheduleOptions})",
             $"        'family' = @({familyOptions})",
             $"        'journal' = @({journalOptions})",
-            $"        'examples' = @({exampleTopics})",
+            $"        'examples' = @({exampleOptions})",
             $"        'publish' = @({publishOptions})",
             $"        'import' = @({importOptions})",
             "    }",
@@ -1070,22 +1246,30 @@ public static class CompletionsCommand
             $"    $doctorOutputFormats = @({doctorOutputFormats})",
             $"    $revitYears = @({revitYears})",
             $"    $checkOutputFormats = @({checkOutputFormats})",
+            $"    $scoreOutputFormats = @({scoreOutputFormats})",
             $"    $outputFormats = @({outputFormats})",
             $"    $inspectOutputFormats = @({inspectOutputFormats})",
             $"    $planOutputFormats = @({planOutputFormats})",
             $"    $exportOutputFormats = @({exportOutputFormats})",
             $"    $diffOutputFormats = @({diffOutputFormats})",
-            $"    $workflowOutputFormats = @({workflowOutputFormats})",
+            $"    $workbenchSubcommands = @({workbenchSubcommands})",
+            $"    $workbenchOutputFormats = @({workbenchOutputFormats})",
+            $"    $workflowSubcommands = @({workflowSubcommands})",
+            $"    $workflowReportOutputFormats = @({workflowReportOutputFormats})",
+            $"    $workflowSuggestOutputFormats = @({workflowSuggestOutputFormats})",
             $"    $reportOutputFormats = @({reportOutputFormats})",
             $"    $deliverablesOutputFormats = @({deliverablesOutputFormats})",
             $"    $standardsOutputFormats = @({standardsOutputFormats})",
             $"    $releaseOutputFormats = @({releaseOutputFormats})",
             $"    $sheetsOutputFormats = @({sheetsOutputFormats})",
             $"    $scheduleSubcommands = @({scheduleSubcommands})",
-            $"    $scheduleOutputFormats = @({scheduleOutputFormats})",
+            $"    $scheduleListOutputFormats = @({scheduleListOutputFormats})",
+            $"    $scheduleExportOutputFormats = @({scheduleExportOutputFormats})",
+            $"    $scheduleCreateOutputFormats = @({scheduleCreateOutputFormats})",
             $"    $familyOutputFormats = @({familyOutputFormats})",
             $"    $familyRules = @({familyRules})",
             $"    $journalOutputFormats = @({journalOutputFormats})",
+            $"    $exampleOutputFormats = @({exampleOutputFormats})",
             $"    $exportFormats = @({exportFormats})",
             $"    $configSubcommands = @({configSubcommands})",
             $"    $configKeys = @({configKeys})",
@@ -1182,6 +1366,19 @@ public static class CompletionsCommand
             "            }",
             "",
             "            New-RevitCliCompletionResults -Values $commandOptions['check'] -ToolTip 'Option'",
+            "            return",
+            "        }",
+            "        'score' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $scoreOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--dir') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['score'] -ToolTip 'Option'",
             "            return",
             "        }",
         "        'query' {",
@@ -1315,9 +1512,26 @@ public static class CompletionsCommand
             "            New-RevitCliCompletionResults -Values $commandOptions['diff'] -ToolTip 'Diff option'",
             "            return",
             "        }",
-            "        'workflow' {",
+            "        'workbench' {",
             "            if ($previous -eq '--output') {",
-            "                New-RevitCliCompletionResults -Values $workflowOutputFormats -ToolTip 'Output format'",
+            "                New-RevitCliCompletionResults -Values $workbenchOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values $workbenchSubcommands -ToolTip 'Workbench subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['workbench'] -ToolTip 'Workbench option'",
+            "            return",
+            "        }",
+        "        'workflow' {",
+            "            if ($previous -eq '--output') {",
+            "                if ($tokens.Count -ge 3 -and $tokens[2] -eq 'suggest') {",
+            "                    New-RevitCliCompletionResults -Values $workflowSuggestOutputFormats -ToolTip 'Output format'",
+            "                } else {",
+            "                    New-RevitCliCompletionResults -Values $workflowReportOutputFormats -ToolTip 'Output format'",
+            "                }",
             "                return",
             "            }",
             "            if ($previous -eq '--dir') {",
@@ -1329,7 +1543,7 @@ public static class CompletionsCommand
             "                return",
             "            }",
             "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
-                "                New-RevitCliCompletionResults -Values @('init', 'validate', 'simulate', 'run', 'suggest', 'examples', 'receipts') -ToolTip 'Workflow subcommand'",
+            "                New-RevitCliCompletionResults -Values $workflowSubcommands -ToolTip 'Workflow subcommand'",
             "                return",
             "            }",
             "            if (($tokens.Count -le 4 -or ($tokens.Count -eq 5 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
@@ -1433,9 +1647,15 @@ public static class CompletionsCommand
             "            New-RevitCliCompletionResults -Values $commandOptions['sheets'] -ToolTip 'Sheets option'",
             "            return",
             "        }",
-            "        'schedule' {",
+        "        'schedule' {",
             "            if ($previous -eq '--output') {",
-            "                New-RevitCliCompletionResults -Values $scheduleOutputFormats -ToolTip 'Output format'",
+            "                if ($tokens.Count -ge 3 -and $tokens[2] -eq 'list') {",
+            "                    New-RevitCliCompletionResults -Values $scheduleListOutputFormats -ToolTip 'Output format'",
+            "                } elseif ($tokens.Count -ge 3 -and $tokens[2] -eq 'create') {",
+            "                    New-RevitCliCompletionResults -Values $scheduleCreateOutputFormats -ToolTip 'Output format'",
+            "                } else {",
+            "                    New-RevitCliCompletionResults -Values $scheduleExportOutputFormats -ToolTip 'Output format'",
+            "                }",
             "                return",
             "            }",
             "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
@@ -1479,7 +1699,11 @@ public static class CompletionsCommand
             "            New-RevitCliCompletionResults -Values $commandOptions['journal'] -ToolTip 'Journal subcommand or option'",
             "            return",
             "        }",
-            "        'examples' {",
+        "        'examples' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $exampleOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
             "            New-RevitCliCompletionResults -Values $commandOptions['examples'] -ToolTip 'Example topic'",
             "            return",
             "        }",

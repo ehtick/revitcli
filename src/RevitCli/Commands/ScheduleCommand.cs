@@ -72,17 +72,36 @@ public static class ScheduleCommand
         var nameOpt = new Option<string?>("--name", "Name for the new ViewSchedule");
         var placeOpt = new Option<string?>("--place-on-sheet", "Sheet pattern to place schedule on");
         var templateOpt = new Option<string?>("--template", "Schedule template name from .revitcli.yml");
+        var dryRunOpt = new Option<bool>("--dry-run", "Preview the schedule create request without writing to Revit");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+        var receiptDirOpt = new Option<string?>(
+            "--receipt-dir",
+            () => Path.Combine(".revitcli", "receipts"),
+            "Directory for schedule-create receipts after real writes");
 
         var cmd = new Command("create", "Create a new ViewSchedule in the Revit model")
         {
-            categoryOpt, fieldsOpt, filterOpt, sortOpt, sortDescOpt, nameOpt, placeOpt, templateOpt
+            categoryOpt, fieldsOpt, filterOpt, sortOpt, sortDescOpt, nameOpt, placeOpt,
+            templateOpt, dryRunOpt, outputOpt, receiptDirOpt
         };
 
-        cmd.SetHandler(async (category, fields, filter, sort, sortDesc, name, placeOnSheet, template) =>
+        cmd.SetHandler(async ctx =>
         {
+            var category = ctx.ParseResult.GetValueForOption(categoryOpt);
+            var fields = ctx.ParseResult.GetValueForOption(fieldsOpt);
+            var filter = ctx.ParseResult.GetValueForOption(filterOpt);
+            var sort = ctx.ParseResult.GetValueForOption(sortOpt);
+            var sortDesc = ctx.ParseResult.GetValueForOption(sortDescOpt);
+            var name = ctx.ParseResult.GetValueForOption(nameOpt);
+            var placeOnSheet = ctx.ParseResult.GetValueForOption(placeOpt);
+            var template = ctx.ParseResult.GetValueForOption(templateOpt);
+            var dryRun = ctx.ParseResult.GetValueForOption(dryRunOpt);
+            var outputFormat = ctx.ParseResult.GetValueForOption(outputOpt)!;
+            var receiptDir = ctx.ParseResult.GetValueForOption(receiptDirOpt);
             Environment.ExitCode = await ExecuteCreateAsync(
-                client, category, fields, filter, sort, sortDesc, name, placeOnSheet, template, Console.Out);
-        }, categoryOpt, fieldsOpt, filterOpt, sortOpt, sortDescOpt, nameOpt, placeOpt, templateOpt);
+                client, category, fields, filter, sort, sortDesc, name, placeOnSheet, template,
+                dryRun, outputFormat, receiptDir, Console.Out);
+        });
 
         return cmd;
     }
@@ -237,6 +256,23 @@ public static class ScheduleCommand
         string? filter, string? sort, bool sortDesc,
         string? name, string? placeOnSheet, string? templateName, TextWriter output)
     {
+        return await ExecuteCreateAsync(
+            client, category, fields, filter, sort, sortDesc, name, placeOnSheet, templateName,
+            dryRun: false, outputFormat: "table", receiptDir: null, output);
+    }
+
+    public static async Task<int> ExecuteCreateAsync(
+        RevitClient client, string? category, string? fields,
+        string? filter, string? sort, bool sortDesc,
+        string? name, string? placeOnSheet, string? templateName,
+        bool dryRun, string outputFormat, string? receiptDir, TextWriter output)
+    {
+        if (!TryNormalizeCreateOutput(outputFormat, out var normalizedOutput))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
         var request = new ScheduleCreateRequest { SortDescending = sortDesc };
 
         if (templateName != null)
@@ -244,7 +280,12 @@ public static class ScheduleCommand
             var template = LoadTemplate(templateName);
             if (template == null)
             {
-                await output.WriteLineAsync($"Error: schedule template '{templateName}' not found in .revitcli.yml.");
+                await WriteScheduleCreateErrorAsync(
+                    output,
+                    normalizedOutput,
+                    $"schedule template '{templateName}' not found in .revitcli.yml.",
+                    dryRun,
+                    willWrite: !dryRun);
                 return 1;
             }
             request.Category = category ?? template.Category;
@@ -267,29 +308,103 @@ public static class ScheduleCommand
 
         if (string.IsNullOrWhiteSpace(request.Category))
         {
-            await output.WriteLineAsync("Error: --category is required (or use --template).");
+            await WriteScheduleCreateErrorAsync(
+                output,
+                normalizedOutput,
+                "--category is required (or use --template).",
+                dryRun,
+                willWrite: !dryRun);
             return 1;
         }
 
         if (string.IsNullOrWhiteSpace(request.Name))
         {
-            await output.WriteLineAsync("Error: --name is required (or use --template with a name defined).");
+            await WriteScheduleCreateErrorAsync(
+                output,
+                normalizedOutput,
+                "--name is required (or use --template with a name defined).",
+                dryRun,
+                willWrite: !dryRun);
             return 1;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Filter))
+        {
+            await WriteScheduleCreateErrorAsync(
+                output,
+                normalizedOutput,
+                "--filter on schedule create is not supported. Use schedule export --filter instead.",
+                dryRun,
+                willWrite: !dryRun);
+            return 1;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Sort) && !CreateFieldsIncludeSort(request.Fields, request.Sort))
+        {
+            await WriteScheduleCreateErrorAsync(
+                output,
+                normalizedOutput,
+                "--sort field must be included in --fields, or use --fields all.",
+                dryRun,
+                willWrite: !dryRun);
+            return 1;
+        }
+
+        if (dryRun)
+        {
+            var preview = CreateScheduleCreateOutput(
+                request,
+                dryRun: true,
+                receiptRequired: false,
+                receiptPath: null,
+                result: null);
+            await output.WriteLineAsync(FormatScheduleCreateOutput(preview, normalizedOutput));
+            return 0;
         }
 
         var result = await client.CreateScheduleAsync(request);
         if (!result.Success)
         {
-            await output.WriteLineAsync($"Error: {result.Error}");
+            await WriteScheduleCreateErrorAsync(
+                output,
+                normalizedOutput,
+                result.Error ?? "Unknown error",
+                dryRun: false,
+                willWrite: true);
             return 1;
         }
 
         var r = result.Data!;
-        await output.WriteLineAsync($"Schedule '{r.Name}' created (ViewId: {r.ViewId}, {r.FieldCount} fields, {r.RowCount} rows).");
-        if (r.PlacedOnSheet != null)
-            await output.WriteLineAsync($"Placed on sheet: {r.PlacedOnSheet}");
+        var savedReceiptPath = string.IsNullOrWhiteSpace(receiptDir)
+            ? null
+            : TrySaveScheduleCreateReceipt(request, r, receiptDir);
+        var createOutput = CreateScheduleCreateOutput(
+            request,
+            dryRun: false,
+            receiptRequired: !string.IsNullOrWhiteSpace(receiptDir),
+            savedReceiptPath,
+            r);
+        await output.WriteLineAsync(FormatScheduleCreateOutput(createOutput, normalizedOutput));
 
         return 0;
+    }
+
+    private static bool TryNormalizeCreateOutput(string? outputFormat, out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(outputFormat)
+            ? "table"
+            : outputFormat.Trim().ToLowerInvariant();
+
+        return normalized is "table" or "json" or "markdown";
+    }
+
+    private static bool CreateFieldsIncludeSort(IReadOnlyList<string>? fields, string sort)
+    {
+        if (fields is not { Count: > 0 })
+            return false;
+        if (fields.Count == 1 && string.Equals(fields[0], "all", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return fields.Any(field => string.Equals(field, sort, StringComparison.OrdinalIgnoreCase));
     }
 
     private static List<string>? ParseFields(string? fields)
@@ -319,6 +434,246 @@ public static class ScheduleCommand
             _ => data.Rows.Count == 0 ? "No data." : FormatTable(data),
         };
     }
+
+    private static ScheduleCreateOutput CreateScheduleCreateOutput(
+        ScheduleCreateRequest request,
+        bool dryRun,
+        bool receiptRequired,
+        string? receiptPath,
+        ScheduleCreateResult? result)
+    {
+        var fields = request.Fields?.ToArray() ?? Array.Empty<string>();
+        var warnings = new List<string>();
+        if (fields.Length == 0)
+            warnings.Add("No fields were specified; Revit will create the schedule with zero requested fields.");
+        if (!string.IsNullOrWhiteSpace(request.PlaceOnSheet))
+            warnings.Add("Sheet placement is resolved during the real create after the schedule view is created.");
+        if (receiptRequired && receiptPath == null)
+            warnings.Add("Schedule was created but the receipt could not be saved; review stderr for the receipt write error.");
+
+        return new ScheduleCreateOutput(
+            "schedule-create.v1",
+            Success: true,
+            DryRun: dryRun,
+            WillWrite: !dryRun,
+            ReceiptRequired: receiptRequired,
+            ReceiptSaved: receiptPath != null,
+            request.Category,
+            request.Name,
+            fields,
+            request.Filter,
+            request.Sort,
+            request.SortDescending,
+            request.PlaceOnSheet,
+            BuildScheduleCreateCommand(request, includeDryRun: false),
+            receiptPath,
+            result,
+            warnings);
+    }
+
+    private static string FormatScheduleCreateOutput(ScheduleCreateOutput output, string format)
+    {
+        return format.ToLowerInvariant() switch
+        {
+            "json" => JsonSerializer.Serialize(output, PrettyJson),
+            "markdown" => RenderScheduleCreateMarkdown(output),
+            _ => RenderScheduleCreateTable(output)
+        };
+    }
+
+    private static async Task WriteScheduleCreateErrorAsync(
+        TextWriter output,
+        string format,
+        string message,
+        bool dryRun,
+        bool willWrite)
+    {
+        if (format == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(
+                new ScheduleCreateErrorOutput(
+                    "schedule-create.v1",
+                    Success: false,
+                    DryRun: dryRun,
+                    WillWrite: willWrite,
+                    message),
+                PrettyJson));
+            return;
+        }
+
+        if (format == "markdown")
+        {
+            await output.WriteLineAsync(RenderScheduleCreateErrorMarkdown(message, dryRun, willWrite));
+            return;
+        }
+
+        await output.WriteLineAsync($"Error: {message}");
+    }
+
+    private static string RenderScheduleCreateTable(ScheduleCreateOutput output)
+    {
+        var writer = new StringWriter();
+        if (output.DryRun)
+        {
+            writer.WriteLine($"Schedule create dry-run ({output.SchemaVersion})");
+            writer.WriteLine($"Name: {output.Name}");
+            writer.WriteLine($"Category: {output.Category}");
+            writer.WriteLine($"Fields: {FormatFieldList(output.Fields)}");
+            writer.WriteLine($"Sort: {FormatNullable(output.Sort)}{(output.SortDescending ? " desc" : "")}");
+            writer.WriteLine($"Place on sheet: {FormatNullable(output.PlaceOnSheet)}");
+            writer.WriteLine("Writes: no");
+            writer.WriteLine($"Approval command: {output.ApprovalCommand}");
+        }
+        else
+        {
+            var result = output.Result!;
+            writer.WriteLine($"Schedule '{result.Name}' created (ViewId: {result.ViewId}, {result.FieldCount} fields, {result.RowCount} rows).");
+            if (result.PlacedOnSheet != null)
+                writer.WriteLine($"Placed on sheet: {result.PlacedOnSheet}");
+            if (output.ReceiptPath != null)
+                writer.WriteLine($"Receipt saved to {output.ReceiptPath}");
+        }
+
+        foreach (var warning in output.Warnings)
+            writer.WriteLine($"Warning: {warning}");
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderScheduleCreateMarkdown(ScheduleCreateOutput output)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Schedule Create");
+        writer.WriteLine();
+        writer.WriteLine($"- Schema: `{output.SchemaVersion}`");
+        writer.WriteLine($"- Dry-run: `{output.DryRun.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Will write: `{output.WillWrite.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Receipt required: `{output.ReceiptRequired.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Receipt saved: `{output.ReceiptSaved.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Name: `{EscapeMarkdownText(output.Name)}`");
+        writer.WriteLine($"- Category: `{EscapeMarkdownText(output.Category)}`");
+        writer.WriteLine($"- Fields: `{EscapeMarkdownText(FormatFieldList(output.Fields))}`");
+        writer.WriteLine($"- Sort: `{EscapeMarkdownText(FormatNullable(output.Sort))}{(output.SortDescending ? " desc" : "")}`");
+        writer.WriteLine($"- Place on sheet: `{EscapeMarkdownText(FormatNullable(output.PlaceOnSheet))}`");
+        if (output.ReceiptPath != null)
+            writer.WriteLine($"- Receipt: `{EscapeMarkdownText(output.ReceiptPath)}`");
+        writer.WriteLine($"- Approval command: `{EscapeMarkdownText(output.ApprovalCommand)}`");
+
+        if (output.Result != null)
+        {
+            writer.WriteLine();
+            writer.WriteLine("| ViewId | Field count | Row count | Placed on sheet |");
+            writer.WriteLine("|---:|---:|---:|---|");
+            writer.WriteLine(
+                $"| {output.Result.ViewId} | {output.Result.FieldCount} | {output.Result.RowCount} | {EscapeTableCell(output.Result.PlacedOnSheet)} |");
+        }
+
+        if (output.Warnings.Count > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("## Warnings");
+            foreach (var warning in output.Warnings)
+                writer.WriteLine($"- {EscapeMarkdownText(warning)}");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderScheduleCreateErrorMarkdown(string message, bool dryRun, bool willWrite)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Schedule Create");
+        writer.WriteLine();
+        writer.WriteLine("- Schema: `schedule-create.v1`");
+        writer.WriteLine("- Status: `FAIL`");
+        writer.WriteLine($"- Dry-run: `{dryRun.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Will write: `{willWrite.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Error: {EscapeMarkdownText(message)}");
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string? TrySaveScheduleCreateReceipt(
+        ScheduleCreateRequest request,
+        ScheduleCreateResult result,
+        string receiptDir)
+    {
+        try
+        {
+            var fullDir = Path.GetFullPath(receiptDir);
+            Directory.CreateDirectory(fullDir);
+            var path = Path.Combine(fullDir, $"schedule-create-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
+            var receipt = new ScheduleCreateReceipt(
+                "schedule-create-receipt.v1",
+                DateTimeOffset.UtcNow,
+                BuildScheduleCreateCommand(request, includeDryRun: false),
+                request.Category,
+                request.Name,
+                request.Fields?.ToArray() ?? Array.Empty<string>(),
+                request.Sort,
+                request.SortDescending,
+                request.PlaceOnSheet,
+                result);
+            File.WriteAllText(path, JsonSerializer.Serialize(receipt, PrettyJson));
+            return path;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            Console.Error.WriteLine($"[RevitCli] Schedule create receipt write failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string BuildScheduleCreateCommand(ScheduleCreateRequest request, bool includeDryRun)
+    {
+        var parts = new List<string>
+        {
+            "revitcli",
+            "schedule",
+            "create",
+            "--category",
+            QuoteArg(request.Category),
+            "--name",
+            QuoteArg(request.Name)
+        };
+        if (request.Fields is { Count: > 0 })
+        {
+            parts.Add("--fields");
+            parts.Add(QuoteArg(string.Join(",", request.Fields)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Sort))
+        {
+            parts.Add("--sort");
+            parts.Add(QuoteArg(request.Sort));
+        }
+
+        if (request.SortDescending)
+            parts.Add("--sort-desc");
+
+        if (!string.IsNullOrWhiteSpace(request.PlaceOnSheet))
+        {
+            parts.Add("--place-on-sheet");
+            parts.Add(QuoteArg(request.PlaceOnSheet));
+        }
+
+        if (includeDryRun)
+            parts.Add("--dry-run");
+
+        parts.Add("--output");
+        parts.Add("json");
+        return string.Join(" ", parts);
+    }
+
+    private static string QuoteArg(string value) =>
+        value.Any(char.IsWhiteSpace) || value.Contains('"', StringComparison.Ordinal)
+            ? $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+            : value;
+
+    private static string FormatFieldList(IReadOnlyList<string> fields) =>
+        fields.Count == 0 ? "(none)" : string.Join(", ", fields);
+
+    private static string FormatNullable(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "(none)" : value;
 
     private static string RenderScheduleListMarkdown(IReadOnlyList<ScheduleInfo> schedules)
     {
@@ -440,6 +795,44 @@ public static class ScheduleCommand
         return EscapeMarkdownText(string.IsNullOrWhiteSpace(value) ? "-" : value)
             .Replace("|", "\\|", StringComparison.Ordinal);
     }
+
+    private sealed record ScheduleCreateOutput(
+        [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("dryRun")] bool DryRun,
+        [property: JsonPropertyName("willWrite")] bool WillWrite,
+        [property: JsonPropertyName("receiptRequired")] bool ReceiptRequired,
+        [property: JsonPropertyName("receiptSaved")] bool ReceiptSaved,
+        [property: JsonPropertyName("category")] string Category,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("fields")] IReadOnlyList<string> Fields,
+        [property: JsonPropertyName("filter")] string? Filter,
+        [property: JsonPropertyName("sort")] string? Sort,
+        [property: JsonPropertyName("sortDescending")] bool SortDescending,
+        [property: JsonPropertyName("placeOnSheet")] string? PlaceOnSheet,
+        [property: JsonPropertyName("approvalCommand")] string ApprovalCommand,
+        [property: JsonPropertyName("receiptPath")] string? ReceiptPath,
+        [property: JsonPropertyName("result")] ScheduleCreateResult? Result,
+        [property: JsonPropertyName("warnings")] IReadOnlyList<string> Warnings);
+
+    private sealed record ScheduleCreateReceipt(
+        [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+        [property: JsonPropertyName("timestampUtc")] DateTimeOffset TimestampUtc,
+        [property: JsonPropertyName("command")] string Command,
+        [property: JsonPropertyName("category")] string Category,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("fields")] IReadOnlyList<string> Fields,
+        [property: JsonPropertyName("sort")] string? Sort,
+        [property: JsonPropertyName("sortDescending")] bool SortDescending,
+        [property: JsonPropertyName("placeOnSheet")] string? PlaceOnSheet,
+        [property: JsonPropertyName("result")] ScheduleCreateResult Result);
+
+    private sealed record ScheduleCreateErrorOutput(
+        [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("dryRun")] bool DryRun,
+        [property: JsonPropertyName("willWrite")] bool WillWrite,
+        [property: JsonPropertyName("error")] string Error);
 
     private sealed record ScheduleListErrorOutput(
         [property: JsonPropertyName("success")] bool Success,

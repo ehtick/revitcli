@@ -28,6 +28,7 @@ internal static class CliCommandCatalog
         ("coverage", "Show parameter fill rates by category"),
         ("inspect", "Discover model data for safe terminal workflows"),
         ("examples", "Show copy-paste examples for common architect workflows"),
+        ("workbench", "Show stable terminal workbench contract for Codex CLI"),
         ("workflow", "Create, validate, run, and review terminal workflow YAML files"),
         ("report", "Generate local project reports from history and journal data"),
         ("deliverables", "Review local delivery manifests and receipts"),
@@ -65,10 +66,23 @@ internal static class CliCommandCatalog
         ("inspect params <category>", "List parameters seen in a category"),
         ("inspect sheets", "List sheets with export dry-run commands"),
         ("inspect schedules", "List schedules with filters, readiness, and export commands"),
+        ("inspect workflows", "List local workflow YAML files and next review commands"),
+        ("inspect plans", "List saved mutation plans with dry-run apply and rollback commands"),
         ("examples <topic>", "Show copy-paste commands for common workflows"),
+        ("workbench contract", "Show stable command, output, dry-run, receipt, and exit-code contract"),
+        ("workbench verify", "Verify terminal workbench command contract and recipe readiness"),
+        ("workbench receipts", "Show receipt schemas, paths, dry-runs, and review commands"),
+        ("workbench paths", "Show flat callable command paths with risk and output contracts"),
+        ("workbench exits", "Show predictable exit-code notes for callable command paths"),
+        ("workbench extensions", "Show terminal-first extension points and validation commands"),
+        ("workbench outputs", "Show readable table and compact JSON output contracts"),
+        ("workbench safeguards", "Show dry-run, approval, receipt, and review paths for risky commands"),
+        ("workbench project", "Inspect local workbench project artifacts and review commands"),
+        ("workbench handoff", "Print a local terminal handoff summary for Codex CLI"),
         ("workflow init <template>", "Create .revitcli/workflows YAML from built-in templates"),
         ("workflow validate [file]", "Validate .revitcli/workflows YAML without running commands"),
         ("workflow simulate <file>", "Print workflow steps and risk modes without running commands"),
+        ("workflow review <file>", "Review workflow readiness, approval gates, and handoff evidence"),
         ("workflow run <file>", "Run workflow steps (--dry-run, --yes, --continue-on-error)"),
         ("workflow suggest", "Suggest workflow YAML from repeated journal command sequences"),
         ("workflow examples", "Show architect prompts and acceptance command paths for workflow templates"),
@@ -87,7 +101,7 @@ internal static class CliCommandCatalog
         ("sheets index show", "Show the local sheet index declaration"),
         ("schedule list", "List existing schedules in the model"),
         ("schedule export", "Export schedule data (--category, --name, --fields, --output)"),
-        ("schedule create", "Create a ViewSchedule (--category, --fields, --name)"),
+        ("schedule create", "Preview or create a ViewSchedule (--dry-run, --output, --receipt-dir)"),
         ("import <file> --category <cat> --match-by <param>", "Batch-write params from CSV (--dry-run, --on-missing, --on-duplicate)"),
         ("history capture", "Append a snapshot to .revitcli/history/ (--source, --exclude-fixes)"),
         ("history list", "List recent snapshots (--include-fixes, --limit)"),
@@ -95,7 +109,7 @@ internal static class CliCommandCatalog
         ("diff <from> <to>", "Diff two snapshot JSON files (--review, --output table|json|markdown)"),
         ("history diff <fromRef> <toRef>", "Diff two history snapshots (--review, --output table|json|markdown)"),
         ("history trend [--metric <name>]", "ASCII sparkline of a metric over time (--window, --width)"),
-        ("score --history <duration>", "Per-day score time series across the history window"),
+        ("score --history <duration>", "Per-day score time series across the history window (--output table|json|markdown)"),
         ("ci doctor", "Detect CI provider and print a workflow template"),
         ("profile validate", "Schema/reference checker for .revitcli.yml"),
         ("profile show --resolve", "Print merged effective profile (yaml|json)"),
@@ -150,6 +164,7 @@ internal static class CliCommandCatalog
         root.AddCommand(CoverageCommand.Create(client));
         root.AddCommand(InspectCommand.Create(client));
         root.AddCommand(ExamplesCommand.Create());
+        root.AddCommand(WorkbenchCommand.Create());
         root.AddCommand(WorkflowCommand.Create());
         root.AddCommand(ReportCommand.Create());
         root.AddCommand(DeliverablesCommand.Create());

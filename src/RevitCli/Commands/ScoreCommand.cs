@@ -4,6 +4,8 @@ using System.CommandLine;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.History;
@@ -15,6 +17,17 @@ namespace RevitCli.Commands;
 
 public static class ScoreCommand
 {
+    internal const string ScoreSchemaVersion = "model-health-score.v1";
+    internal const string HistorySchemaVersion = "model-health-history.v1";
+    internal static readonly string[] OutputFormats = { "table", "json", "markdown" };
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
     private static readonly Dictionary<string, int> RuleWeights = new(StringComparer.OrdinalIgnoreCase)
     {
         ["room-bounds"] = 15,
@@ -34,24 +47,26 @@ public static class ScoreCommand
         var historyOpt = new Option<string?>("--history",
             "Render a per-day score time series over a window (e.g. 7d, 30d). Reads .revitcli/history/.");
         var dirOpt = new Option<string?>("--dir", "Override history directory (paired with --history)");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
 
         var command = new Command("score", "Calculate model health score (0-100)")
         {
             historyOpt,
             dirOpt,
+            outputOpt,
         };
 
-        command.SetHandler(async (string? history, string? dir) =>
+        command.SetHandler(async (string? history, string? dir, string outputFormat) =>
         {
             if (!string.IsNullOrWhiteSpace(history))
             {
-                Environment.ExitCode = await ExecuteHistoryAsync(history, dir, Console.Out);
+                Environment.ExitCode = await ExecuteHistoryAsync(history, dir, Console.Out, outputFormat);
                 return;
             }
 
             if (!ConsoleHelper.IsInteractive)
             {
-                Environment.ExitCode = await ExecuteAsync(client, Console.Out);
+                Environment.ExitCode = await ExecuteAsync(client, Console.Out, outputFormat);
                 return;
             }
 
@@ -69,22 +84,40 @@ public static class ScoreCommand
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"  Model Health Score: [{color} bold]{result}[/] / 100  [{color}]({grade})[/]");
             AnsiConsole.WriteLine();
-        }, historyOpt, dirOpt);
+        }, historyOpt, dirOpt, outputOpt);
 
         return command;
     }
 
-    public static async Task<int> ExecuteAsync(RevitClient client, TextWriter output)
+    public static Task<int> ExecuteAsync(RevitClient client, TextWriter output) =>
+        ExecuteAsync(client, output, "table");
+
+    public static async Task<int> ExecuteAsync(RevitClient client, TextWriter output, string outputFormat)
     {
+        if (!TryNormalizeOutputFormat(outputFormat, out var normalized))
+        {
+            await WriteOutputFormatErrorAsync(output);
+            return 1;
+        }
+
         var score = await RunScore(client);
         if (score < 0)
         {
-            await output.WriteLineAsync("Error: could not calculate score. Is Revit connected?");
+            await WriteErrorAsync(output, normalized, ScoreSchemaVersion, "live-audit",
+                "could not calculate score. Is Revit connected?");
             return 1;
         }
 
         var grade = LetterGrade(score);
-        await output.WriteLineAsync($"Model Health Score: {score}/100 ({grade})");
+        var report = new ModelHealthScoreReport(
+            ScoreSchemaVersion,
+            DateTimeOffset.UtcNow,
+            true,
+            "live-audit",
+            score,
+            grade,
+            null);
+        await WriteScoreReportAsync(output, normalized, report);
         return 0;
     }
 
@@ -94,11 +127,24 @@ public static class ScoreCommand
     /// (see <see cref="SnapshotScore"/>) so this works without a live Revit
     /// connection.
     /// </summary>
+    public static Task<int> ExecuteHistoryAsync(
+        string window,
+        string? overrideDir,
+        TextWriter output) =>
+        ExecuteHistoryAsync(window, overrideDir, output, "table");
+
     public static async Task<int> ExecuteHistoryAsync(
         string window,
         string? overrideDir,
-        TextWriter output)
+        TextWriter output,
+        string outputFormat)
     {
+        if (!TryNormalizeOutputFormat(outputFormat, out var normalized))
+        {
+            await WriteOutputFormatErrorAsync(output);
+            return 1;
+        }
+
         TimeSpan windowSpan;
         try
         {
@@ -106,7 +152,7 @@ public static class ScoreCommand
         }
         catch (FormatException ex)
         {
-            await output.WriteLineAsync($"Error: {ex.Message}");
+            await WriteErrorAsync(output, normalized, HistorySchemaVersion, "history", ex.Message);
             return 1;
         }
 
@@ -119,14 +165,14 @@ public static class ScoreCommand
         }
         catch (ArgumentException ex)
         {
-            await output.WriteLineAsync($"Error: {ex.Message}");
+            await WriteErrorAsync(output, normalized, HistorySchemaVersion, "history", ex.Message);
             return 1;
         }
 
         if (!Directory.Exists(store.RootDirectory))
         {
-            await output.WriteLineAsync(
-                $"Error: history store not initialised. Run 'revitcli history init' (looked in {store.RootDirectory}).");
+            await WriteErrorAsync(output, normalized, HistorySchemaVersion, "history",
+                $"history store not initialised. Run 'revitcli history init' (looked in {store.RootDirectory}).");
             return 1;
         }
 
@@ -137,7 +183,8 @@ public static class ScoreCommand
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            await output.WriteLineAsync($"Error: failed to read history: {ex.Message}");
+            await WriteErrorAsync(output, normalized, HistorySchemaVersion, "history",
+                $"failed to read history: {ex.Message}");
             return 1;
         }
 
@@ -152,12 +199,6 @@ public static class ScoreCommand
             .Select(g => g.OrderByDescending(x => x.At).ThenByDescending(x => x.Meta.Id, StringComparer.Ordinal).First())
             .OrderBy(x => x.At)
             .ToList();
-
-        if (perDay.Count == 0)
-        {
-            await output.WriteLineAsync($"No snapshots in window ({window}).");
-            return 0;
-        }
 
         // Load each day's snapshot once; compute score and inter-day diffs.
         var rows = new List<HistoryScoreRow>(perDay.Count);
@@ -200,7 +241,14 @@ public static class ScoreCommand
             }
         }
 
-        await WriteHistoryTableAsync(rows, output);
+        var report = new ModelHealthHistoryReport(
+            HistorySchemaVersion,
+            DateTimeOffset.UtcNow,
+            true,
+            window,
+            store.RootDirectory,
+            rows);
+        await WriteHistoryReportAsync(output, normalized, report);
         return 0;
     }
 
@@ -420,6 +468,11 @@ public static class ScoreCommand
 
     private static async Task WriteHistoryTableAsync(IReadOnlyList<HistoryScoreRow> rows, TextWriter output)
     {
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
         const string dateHeader = "date";
         const string scoreHeader = "score";
         const string letterHeader = "letter";
@@ -452,12 +505,11 @@ public static class ScoreCommand
         foreach (var row in rows)
         {
             var scoreText = row.Score?.ToString(CultureInfo.InvariantCulture) ?? "-";
-            var letterText = row.Score.HasValue ? LetterGrade(row.Score.Value) : "-";
             await output.WriteLineAsync(string.Join("  ", new[]
             {
                 row.Date.PadRight(dateW),
                 scoreText.PadLeft(scoreW),
-                letterText.PadRight(letterW),
+                row.Letter.PadRight(letterW),
                 row.NewCount.ToString(CultureInfo.InvariantCulture).PadLeft(newW),
                 row.ResolvedCount.ToString(CultureInfo.InvariantCulture).PadLeft(resolvedW),
                 row.UnchangedCount.ToString(CultureInfo.InvariantCulture).PadLeft(unchangedW),
@@ -470,7 +522,142 @@ public static class ScoreCommand
         int? Score,
         int NewCount,
         int ResolvedCount,
-        int UnchangedCount);
+        int UnchangedCount)
+    {
+        public string Letter => Score.HasValue ? LetterGrade(Score.Value) : "-";
+    }
+
+    internal sealed record ModelHealthScoreReport(
+        string SchemaVersion,
+        DateTimeOffset GeneratedAt,
+        bool Success,
+        string Source,
+        int? Score,
+        string? Letter,
+        string? Error);
+
+    internal sealed record ModelHealthHistoryReport(
+        string SchemaVersion,
+        DateTimeOffset GeneratedAt,
+        bool Success,
+        string Window,
+        string HistoryDirectory,
+        IReadOnlyList<HistoryScoreRow> Rows)
+    {
+        public int RowCount => Rows.Count;
+    }
+
+    internal sealed record ModelHealthErrorReport(
+        string SchemaVersion,
+        DateTimeOffset GeneratedAt,
+        bool Success,
+        string Source,
+        string Error);
+
+    private static bool TryNormalizeOutputFormat(string? outputFormat, out string normalized)
+    {
+        normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
+        return OutputFormats.Contains(normalized, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static Task WriteOutputFormatErrorAsync(TextWriter output) =>
+        output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+
+    private static async Task WriteErrorAsync(
+        TextWriter output,
+        string outputFormat,
+        string schemaVersion,
+        string source,
+        string message)
+    {
+        if (outputFormat == "json")
+        {
+            var report = new ModelHealthErrorReport(
+                schemaVersion,
+                DateTimeOffset.UtcNow,
+                false,
+                source,
+                message);
+            await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+            return;
+        }
+
+        await output.WriteLineAsync($"Error: {message}");
+    }
+
+    private static async Task WriteScoreReportAsync(
+        TextWriter output,
+        string outputFormat,
+        ModelHealthScoreReport report)
+    {
+        switch (outputFormat)
+        {
+            case "json":
+                await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+                break;
+            case "markdown":
+                await output.WriteLineAsync("# Model Health Score");
+                await output.WriteLineAsync();
+                await output.WriteLineAsync($"Schema: `{report.SchemaVersion}`");
+                await output.WriteLineAsync($"Source: `{report.Source}`");
+                await output.WriteLineAsync($"Score: **{report.Score}/100 ({report.Letter})**");
+                break;
+            default:
+                await output.WriteLineAsync($"Model Health Score: {report.Score}/100 ({report.Letter})");
+                break;
+        }
+    }
+
+    private static async Task WriteHistoryReportAsync(
+        TextWriter output,
+        string outputFormat,
+        ModelHealthHistoryReport report)
+    {
+        switch (outputFormat)
+        {
+            case "json":
+                await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+                break;
+            case "markdown":
+                await WriteHistoryMarkdownAsync(output, report);
+                break;
+            default:
+                if (report.Rows.Count == 0)
+                {
+                    await output.WriteLineAsync($"No snapshots in window ({report.Window}).");
+                }
+                else
+                {
+                    await WriteHistoryTableAsync(report.Rows, output);
+                }
+                break;
+        }
+    }
+
+    private static async Task WriteHistoryMarkdownAsync(TextWriter output, ModelHealthHistoryReport report)
+    {
+        await output.WriteLineAsync("# Model Health History");
+        await output.WriteLineAsync();
+        await output.WriteLineAsync($"Schema: `{report.SchemaVersion}`");
+        await output.WriteLineAsync($"Window: `{report.Window}`");
+        await output.WriteLineAsync($"Rows: {report.RowCount}");
+        await output.WriteLineAsync();
+
+        if (report.Rows.Count == 0)
+        {
+            await output.WriteLineAsync($"No snapshots in window `{report.Window}`.");
+            return;
+        }
+
+        await output.WriteLineAsync("| Date | Score | Letter | New | Resolved | Unchanged |");
+        await output.WriteLineAsync("|---|---:|---|---:|---:|---:|");
+        foreach (var row in report.Rows)
+        {
+            var score = row.Score?.ToString(CultureInfo.InvariantCulture) ?? "-";
+            await output.WriteLineAsync(
+                $"| {row.Date} | {score} | {row.Letter} | {row.NewCount} | {row.ResolvedCount} | {row.UnchangedCount} |");
+        }
+    }
 
     private static async Task<int> RunScore(RevitClient client)
     {

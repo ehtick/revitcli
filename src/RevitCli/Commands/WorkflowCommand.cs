@@ -1,6 +1,7 @@
 using System;
 using System.CommandLine;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -14,6 +15,9 @@ namespace RevitCli.Commands;
 
 public static class WorkflowCommand
 {
+    private const int WorkflowTimeoutExitCode = 124;
+    private const long MaxWorkflowTimeoutMs = int.MaxValue;
+
     private static readonly (string Name, string File, string Description)[] Templates =
     {
         ("pre-issue", "pre-issue.yml", "Pre-issue checks, dry-run publish, and history capture"),
@@ -124,6 +128,13 @@ public static class WorkflowCommand
             }),
     };
 
+    internal static IReadOnlyList<(string Name, string File, string Description)> BuiltInTemplates => Templates;
+
+    internal static IReadOnlyList<string> BuiltInAcceptanceWorkflowNames =>
+        AcceptanceExamples.Select(example => example.Workflow).ToArray();
+
+    internal static string? FindBuiltInWorkflowTemplatesDirectory() => FindWorkflowTemplatesDir();
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
@@ -136,6 +147,7 @@ public static class WorkflowCommand
         command.AddCommand(CreateInitCommand());
         command.AddCommand(CreateValidateCommand());
         command.AddCommand(CreateSimulateCommand());
+        command.AddCommand(CreateReviewCommand());
         command.AddCommand(CreateRunCommand());
         command.AddCommand(CreateSuggestCommand());
         command.AddCommand(CreateExamplesCommand());
@@ -220,6 +232,7 @@ public static class WorkflowCommand
         var dryRunOpt = new Option<bool>("--dry-run", "Print the execution plan without running steps");
         var yesOpt = new Option<bool>("--yes", "Allow approved mutating steps to run");
         var continueOpt = new Option<bool>("--continue-on-error", "Continue after a step exits non-zero");
+        var timeoutOpt = new Option<long>("--timeout-ms", () => 0, "Maximum milliseconds per executed step; 0 disables timeouts");
         var outputOpt = new Option<string>("--output", () => "table", "Output format: table | json | markdown");
 
         var command = new Command("run", "Run workflow steps after validation")
@@ -229,6 +242,7 @@ public static class WorkflowCommand
             dryRunOpt,
             yesOpt,
             continueOpt,
+            timeoutOpt,
             outputOpt,
         };
 
@@ -238,6 +252,7 @@ public static class WorkflowCommand
             bool dryRun,
             bool yes,
             bool continueOnError,
+            long timeoutMs,
             string outputFormat) =>
         {
             Environment.ExitCode = await ExecuteRunAsync(
@@ -247,8 +262,9 @@ public static class WorkflowCommand
                 yes,
                 continueOnError,
                 outputFormat,
-                Console.Out);
-        }, fileArg, dirOpt, dryRunOpt, yesOpt, continueOpt, outputOpt);
+                Console.Out,
+                timeoutMs: timeoutMs);
+        }, fileArg, dirOpt, dryRunOpt, yesOpt, continueOpt, timeoutOpt, outputOpt);
 
         return command;
     }
@@ -269,6 +285,27 @@ public static class WorkflowCommand
         command.SetHandler(async (string file, string? dir, string outputFormat) =>
         {
             Environment.ExitCode = await ExecuteSimulateAsync(file, dir, outputFormat, Console.Out);
+        }, fileArg, dirOpt, outputOpt);
+
+        return command;
+    }
+
+    private static Command CreateReviewCommand()
+    {
+        var fileArg = new Argument<string>("file", "Workflow YAML file to review");
+        var dirOpt = new Option<string?>("--dir", "Base directory for relative workflow paths");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table | json | markdown");
+
+        var command = new Command("review", "Review workflow readiness, approval gates, and handoff evidence")
+        {
+            fileArg,
+            dirOpt,
+            outputOpt,
+        };
+
+        command.SetHandler(async (string file, string? dir, string outputFormat) =>
+        {
+            Environment.ExitCode = await ExecuteReviewAsync(file, dir, outputFormat, Console.Out);
         }, fileArg, dirOpt, outputOpt);
 
         return command;
@@ -319,6 +356,10 @@ public static class WorkflowCommand
         var dirOpt = new Option<string?>("--dir", "Project directory; defaults to current directory");
         var limitOpt = new Option<int>("--limit", () => 10, "Maximum workflow receipts to show");
         var failedOnlyOpt = new Option<bool>("--failed-only", "Only show failed workflow runs");
+        var nameOpt = new Option<string?>("--name", "Only show receipts for a workflow name");
+        var minDurationOpt = new Option<long>("--min-duration-ms", () => 0, "Only show receipts at or above a duration in milliseconds");
+        var sortOpt = new Option<string>("--sort", () => "completed", "Sort receipts: completed | duration");
+        var windowOpt = new Option<string?>("--window", "Only show receipts completed inside a recent window, e.g. 24h, 7d, 60m");
         var outputOpt = new Option<string>("--output", () => "table", "Output format: table | json | markdown");
 
         var command = new Command("receipts", "Review local workflow-run receipts")
@@ -326,6 +367,10 @@ public static class WorkflowCommand
             dirOpt,
             limitOpt,
             failedOnlyOpt,
+            nameOpt,
+            minDurationOpt,
+            sortOpt,
+            windowOpt,
             outputOpt,
         };
 
@@ -333,10 +378,23 @@ public static class WorkflowCommand
             string? dir,
             int limit,
             bool failedOnly,
+            string? name,
+            long minDurationMs,
+            string sort,
+            string? window,
             string outputFormat) =>
         {
-            Environment.ExitCode = await ExecuteReceiptsAsync(dir, limit, failedOnly, outputFormat, Console.Out);
-        }, dirOpt, limitOpt, failedOnlyOpt, outputOpt);
+            Environment.ExitCode = await ExecuteReceiptsAsync(
+                dir,
+                limit,
+                failedOnly,
+                name,
+                outputFormat,
+                Console.Out,
+                minDurationMs,
+                sort,
+                window);
+        }, dirOpt, limitOpt, failedOnlyOpt, nameOpt, minDurationOpt, sortOpt, windowOpt, outputOpt);
 
         return command;
     }
@@ -347,6 +405,12 @@ public static class WorkflowCommand
         string outputFormat,
         TextWriter output)
     {
+        if (!IsWorkflowReportOutputFormat(outputFormat))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
         IReadOnlyList<string> files;
         try
         {
@@ -462,8 +526,13 @@ public static class WorkflowCommand
         string? projectDirectory,
         int limit,
         bool failedOnly,
+        string? nameFilter,
         string outputFormat,
-        TextWriter output)
+        TextWriter output,
+        long? minDurationMs = null,
+        string sort = "completed",
+        string? window = null,
+        DateTimeOffset? nowUtc = null)
     {
         var format = (outputFormat ?? "table").Trim().ToLowerInvariant();
         if (format is not ("table" or "json" or "markdown"))
@@ -478,10 +547,49 @@ public static class WorkflowCommand
             return 1;
         }
 
+        if (minDurationMs is < 0)
+        {
+            await output.WriteLineAsync("Error: --min-duration-ms must be at least 0.");
+            return 1;
+        }
+
+        var normalizedSort = string.IsNullOrWhiteSpace(sort)
+            ? "completed"
+            : sort.Trim().ToLowerInvariant();
+        if (normalizedSort is not ("completed" or "duration"))
+        {
+            await output.WriteLineAsync("Error: --sort must be 'completed' or 'duration'.");
+            return 1;
+        }
+
+        DateTimeOffset? sinceUtc = null;
+        var normalizedWindow = string.IsNullOrWhiteSpace(window) ? null : window.Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedWindow))
+        {
+            try
+            {
+                var span = HistoryCommand.ParseWindow(normalizedWindow);
+                sinceUtc = (nowUtc ?? DateTimeOffset.UtcNow) - span;
+            }
+            catch (FormatException ex)
+            {
+                await output.WriteLineAsync($"Error: {ex.Message}");
+                return 1;
+            }
+        }
+
         WorkflowReceiptListReport report;
         try
         {
-            report = WorkflowReceiptReader.Read(projectDirectory, limit, failedOnly);
+            report = WorkflowReceiptReader.Read(
+                projectDirectory,
+                limit,
+                failedOnly,
+                nameFilter,
+                minDurationMs,
+                normalizedSort,
+                sinceUtc,
+                normalizedWindow);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -585,6 +693,12 @@ public static class WorkflowCommand
         string outputFormat,
         TextWriter output)
     {
+        if (!IsWorkflowReportOutputFormat(outputFormat))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
         LoadedWorkflow loaded;
         try
         {
@@ -614,6 +728,363 @@ public static class WorkflowCommand
         return report.CanRun ? 0 : 1;
     }
 
+    public static async Task<int> ExecuteReviewAsync(
+        string file,
+        string? baseDirectory,
+        string outputFormat,
+        TextWriter output)
+    {
+        var format = (outputFormat ?? "table").Trim().ToLowerInvariant();
+        if (format is not ("table" or "json" or "markdown"))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
+        LoadedWorkflow loaded;
+        try
+        {
+            var files = WorkflowLoader.Discover(file, baseDirectory);
+            loaded = WorkflowLoader.Load(files[0]);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or YamlDotNet.Core.YamlException)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        var simulation = WorkflowValidator.Simulate(loaded);
+        var review = BuildWorkflowReview(loaded, simulation, baseDirectory);
+        switch (format)
+        {
+            case "json":
+                await output.WriteLineAsync(JsonSerializer.Serialize(review, JsonOpts));
+                break;
+            case "markdown":
+                await output.WriteLineAsync(RenderReviewMarkdown(review));
+                break;
+            default:
+                await output.WriteLineAsync(RenderReviewTable(review));
+                break;
+        }
+
+        return review.CanRun ? 0 : 1;
+    }
+
+    private static WorkflowReviewReport BuildWorkflowReview(
+        LoadedWorkflow loaded,
+        WorkflowSimulationReport simulation,
+        string? baseDirectory)
+    {
+        var path = ShortPath(loaded.Path);
+        var projectRoot = ResolveWorkflowProjectRoot(loaded.Path, baseDirectory);
+        var acceptance = AcceptanceExamples.FirstOrDefault(example =>
+            string.Equals(example.Workflow, simulation.Name, StringComparison.OrdinalIgnoreCase));
+        var mutatingCount = simulation.Steps.Count(step =>
+            string.Equals(step.Mode, "mutating", StringComparison.OrdinalIgnoreCase));
+        var dryRunCount = simulation.Steps.Count(step =>
+            string.Equals(step.Mode, "dry-run", StringComparison.OrdinalIgnoreCase));
+        var approvalCount = simulation.Steps.Count(step => step.RequiresApproval);
+        var recommendedCommands = new List<string>
+        {
+            $"revitcli workflow validate {QuoteArgument(path)} --output markdown",
+            $"revitcli workflow simulate {QuoteArgument(path)} --output markdown",
+            $"revitcli workflow run {QuoteArgument(path)} --dry-run --output markdown"
+        };
+        if (mutatingCount > 0)
+            recommendedCommands.Add($"revitcli workflow run {QuoteArgument(path)} --yes --output markdown");
+
+        var projectDirOption = ProjectDirOption(baseDirectory);
+        var preRunHandoffCommands = new List<string>
+        {
+            $"revitcli workbench verify{projectDirOption} --output json",
+            $"revitcli workbench handoff{projectDirOption} --output markdown",
+            $"revitcli inspect workflows{projectDirOption} --output markdown"
+        };
+        var workflowName = QuoteArgument(simulation.Name);
+        var postRunReceiptCommands = new List<string>
+        {
+            $"revitcli workflow receipts --name {workflowName} --output markdown",
+            $"revitcli workflow receipts --name {workflowName} --failed-only --output markdown",
+            $"revitcli workflow receipts --name {workflowName} --window 24h --output markdown",
+            $"revitcli workflow receipts --name {workflowName} --min-duration-ms 60000 --sort duration --output markdown"
+        };
+
+        var artifactReadiness = BuildWorkflowArtifactReadiness(projectRoot, simulation.Steps);
+        var handoffNotes = new List<string>
+        {
+            "Review validation and simulation output before any approved run.",
+            "Use --dry-run first; use --yes only after explicit human approval.",
+            "After approved runs, use the post-run receipt commands to review failed, recent, or slow workflow executions."
+        };
+        if (simulation.Issues.Count > 0)
+            handoffNotes.Add("Resolve workflow validation issues before reuse.");
+        var incompleteArtifactCount = artifactReadiness.Count(artifact =>
+            !string.Equals(artifact.Status, "present", StringComparison.OrdinalIgnoreCase));
+        if (incompleteArtifactCount > 0)
+            handoffNotes.Add($"{incompleteArtifactCount} inferred project artifact(s) are missing or empty; review project artifact readiness before approval.");
+        if (approvalCount > 0)
+            handoffNotes.Add($"{approvalCount} step(s) require explicit approval metadata.");
+
+        return new WorkflowReviewReport
+        {
+            Path = loaded.Path,
+            Name = simulation.Name,
+            Description = simulation.Description,
+            ProjectDirectory = projectRoot,
+            CanRun = simulation.CanRun,
+            StepCount = simulation.StepCount,
+            MutatingStepCount = mutatingCount,
+            DryRunStepCount = dryRunCount,
+            ApprovalRequiredCount = approvalCount,
+            ModeCounts = new Dictionary<string, int>(simulation.ModeCounts, StringComparer.OrdinalIgnoreCase),
+            Issues = simulation.Issues.ToList(),
+            Steps = simulation.Steps.ToList(),
+            ArtifactReadiness = artifactReadiness,
+            PreRunHandoffCommands = preRunHandoffCommands,
+            RecommendedCommands = recommendedCommands,
+            PostRunReceiptCommands = postRunReceiptCommands,
+            Evidence = acceptance?.Evidence.ToArray() ?? Array.Empty<string>(),
+            HandoffNotes = handoffNotes
+        };
+    }
+
+    private static List<WorkflowArtifactReadiness> BuildWorkflowArtifactReadiness(
+        string projectRoot,
+        IReadOnlyList<WorkflowStepSimulation> steps)
+    {
+        var matched = new Dictionary<string, SortedSet<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var step in steps)
+        {
+            foreach (var artifact in RequiredArtifactsForCommand(step.Run))
+            {
+                if (!matched.TryGetValue(artifact, out var indexes))
+                {
+                    indexes = new SortedSet<int>();
+                    matched[artifact] = indexes;
+                }
+
+                indexes.Add(step.Index);
+            }
+        }
+
+        return matched
+            .OrderBy(item => ArtifactSortOrder(item.Key))
+            .Select(item => CreateArtifactReadiness(projectRoot, item.Key, item.Value.ToArray()))
+            .ToList();
+    }
+
+    private static IReadOnlyList<string> RequiredArtifactsForCommand(string run)
+    {
+        var command = NormalizeWorkflowCommand(run);
+        var artifacts = new List<string>();
+        if (StartsWithCommand(command, "profile") ||
+            StartsWithCommand(command, "check") ||
+            StartsWithCommand(command, "publish"))
+        {
+            artifacts.Add("profile");
+        }
+
+        if (StartsWithCommand(command, "standards"))
+            artifacts.Add("standards");
+
+        if (StartsWithCommand(command, "workflow receipts"))
+        {
+            artifacts.Add("workflow-receipts");
+        }
+        else if (StartsWithCommand(command, "workflow"))
+        {
+            artifacts.Add("workflows");
+        }
+
+        if (StartsWithCommand(command, "history"))
+            artifacts.Add("history");
+
+        if (StartsWithCommand(command, "journal"))
+            artifacts.Add("journal");
+
+        if (StartsWithCommand(command, "deliverables"))
+        {
+            artifacts.Add("delivery-manifest");
+            artifacts.Add("delivery-receipts");
+        }
+
+        if (StartsWithCommand(command, "plan"))
+            artifacts.Add("plans");
+
+        if (StartsWithCommand(command, "report") && command.Contains(" --report", StringComparison.OrdinalIgnoreCase))
+            artifacts.Add("reports");
+
+        return artifacts.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static WorkflowArtifactReadiness CreateArtifactReadiness(
+        string projectRoot,
+        string name,
+        IReadOnlyList<int> matchedSteps)
+    {
+        var artifact = ArtifactMetadata(projectRoot, name);
+        var status = ArtifactStatus(projectRoot, artifact.RelativePath, artifact.IsFile, artifact.Patterns, out var count);
+        return new WorkflowArtifactReadiness
+        {
+            Name = name,
+            Status = status,
+            Count = count,
+            RelativePath = NormalizeRelativePath(artifact.RelativePath),
+            ReviewCommand = artifact.ReviewCommand,
+            WorkingDirectory = projectRoot,
+            MatchedSteps = matchedSteps.ToArray(),
+            Notes = artifact.Notes
+        };
+    }
+
+    private static WorkflowArtifactMetadata ArtifactMetadata(string projectRoot, string name)
+    {
+        var projectDirOption = ProjectDirOption(projectRoot);
+        return name switch
+        {
+            "profile" => new(
+                ".revitcli.yml",
+                IsFile: true,
+                Array.Empty<string>(),
+                "revitcli profile validate",
+                "Profile-driven checks, publish pipelines, and safety defaults."),
+            "standards" => new(
+                Path.Combine(".revitcli", "standards.yml"),
+                IsFile: true,
+                Array.Empty<string>(),
+                $"revitcli standards validate{projectDirOption} --output markdown",
+                "Installed local standards manifest."),
+            "workflows" => new(
+                Path.Combine(".revitcli", "workflows"),
+                IsFile: false,
+                new[] { "*.yml", "*.yaml" },
+                $"revitcli inspect workflows{projectDirOption} --output markdown",
+                "Reusable workflow YAML files."),
+            "workflow-receipts" => new(
+                Path.Combine(".revitcli", "workflows", "receipts"),
+                IsFile: false,
+                new[] { "*.json" },
+                $"revitcli workflow receipts{projectDirOption} --output markdown",
+                "Saved workflow-run receipts for deadline triage."),
+            "history" => new(
+                Path.Combine(".revitcli", "history"),
+                IsFile: false,
+                new[] { "snapshot-*.json.gz" },
+                $"revitcli history list --dir {QuoteArgument(Path.Combine(projectRoot, ".revitcli", "history"))} --limit 5",
+                "Local model snapshot timeline."),
+            "journal" => new(
+                Path.Combine(".revitcli", "journal.jsonl"),
+                IsFile: true,
+                Array.Empty<string>(),
+                $"revitcli journal review{projectDirOption} --output markdown",
+                "Local operation journal."),
+            "delivery-manifest" => new(
+                Path.Combine(".revitcli", "deliveries", "manifest.jsonl"),
+                IsFile: true,
+                Array.Empty<string>(),
+                $"revitcli deliverables list{projectDirOption} --output markdown",
+                "Delivery manifest entries for exported outputs."),
+            "delivery-receipts" => new(
+                Path.Combine(".revitcli", "receipts"),
+                IsFile: false,
+                new[] { "*.json" },
+                $"revitcli deliverables verify{projectDirOption} --output markdown",
+                "Publish and delivery receipts."),
+            "plans" => new(
+                Path.Combine(".revitcli", "plans"),
+                IsFile: false,
+                new[] { "*.json" },
+                $"revitcli inspect plans{projectDirOption} --output markdown",
+                "Saved mutation plans."),
+            "reports" => new(
+                Path.Combine(".revitcli", "reports"),
+                IsFile: false,
+                new[] { "*.*" },
+                $"revitcli report knowledge{projectDirOption} --output markdown",
+                "Saved local reports and review handoffs."),
+            _ => new(name, IsFile: false, new[] { "*.*" }, "", "")
+        };
+    }
+
+    private static string ArtifactStatus(
+        string projectRoot,
+        string relativePath,
+        bool isFile,
+        IReadOnlyList<string> patterns,
+        out int count)
+    {
+        var path = Path.Combine(projectRoot, relativePath);
+        if (isFile)
+        {
+            if (!File.Exists(path))
+            {
+                count = 0;
+                return "missing";
+            }
+
+            count = relativePath.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)
+                ? CountNonEmptyLines(path)
+                : 1;
+            return count == 0 ? "empty" : "present";
+        }
+
+        if (!Directory.Exists(path))
+        {
+            count = 0;
+            return "missing";
+        }
+
+        count = patterns
+            .SelectMany(pattern => Directory.EnumerateFiles(path, pattern, SearchOption.TopDirectoryOnly))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        return count == 0 ? "empty" : "present";
+    }
+
+    private static int CountNonEmptyLines(string path)
+    {
+        try
+        {
+            return File.ReadLines(path).Count(line => !string.IsNullOrWhiteSpace(line));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _ = ex;
+            return 0;
+        }
+    }
+
+    private static string NormalizeWorkflowCommand(string run)
+    {
+        var command = (run ?? string.Empty).Trim();
+        if (command.StartsWith("revitcli ", StringComparison.OrdinalIgnoreCase))
+            command = command["revitcli ".Length..].TrimStart();
+        return command;
+    }
+
+    private static bool StartsWithCommand(string command, string expected) =>
+        command.Equals(expected, StringComparison.OrdinalIgnoreCase) ||
+        command.StartsWith(expected + " ", StringComparison.OrdinalIgnoreCase);
+
+    private static int ArtifactSortOrder(string name) => name switch
+    {
+        "profile" => 0,
+        "standards" => 1,
+        "workflows" => 2,
+        "workflow-receipts" => 3,
+        "history" => 4,
+        "journal" => 5,
+        "delivery-manifest" => 6,
+        "delivery-receipts" => 7,
+        "plans" => 8,
+        "reports" => 9,
+        _ => 100
+    };
+
+    private static string NormalizeRelativePath(string value) =>
+        value.Replace('\\', '/');
+
     public static async Task<int> ExecuteRunAsync(
         string file,
         string? baseDirectory,
@@ -622,8 +1093,27 @@ public static class WorkflowCommand
         bool continueOnError,
         string outputFormat,
         TextWriter output,
+        long timeoutMs = 0,
         Func<WorkflowStepSimulation, TextWriter, Task<int>>? runner = null)
     {
+        if (!IsWorkflowReportOutputFormat(outputFormat))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
+        if (timeoutMs < 0)
+        {
+            await output.WriteLineAsync("Error: --timeout-ms must be at least 0.");
+            return 1;
+        }
+
+        if (timeoutMs > MaxWorkflowTimeoutMs)
+        {
+            await output.WriteLineAsync($"Error: --timeout-ms must be no more than {MaxWorkflowTimeoutMs}.");
+            return 1;
+        }
+
         LoadedWorkflow loaded;
         try
         {
@@ -642,11 +1132,12 @@ public static class WorkflowCommand
         {
             Path = simulation.Path,
             Name = simulation.Name,
-            Command = BuildWorkflowRunCommand(loaded.Path, dryRun, yes, continueOnError, outputFormat),
+            Command = BuildWorkflowRunCommand(loaded.Path, dryRun, yes, continueOnError, timeoutMs, outputFormat),
             StartedAtUtc = startedAt,
             Operator = Environment.UserName,
             Machine = Environment.MachineName,
             DryRun = dryRun,
+            TimeoutMs = timeoutMs,
             CanRun = simulation.CanRun,
             Issues = simulation.Issues.ToList(),
         };
@@ -680,16 +1171,31 @@ public static class WorkflowCommand
             return 0;
         }
 
-        var stepRunner = runner ?? RunProcessAsync;
         foreach (var step in simulation.Steps)
         {
-            var exitCode = await stepRunner(step, output);
-            var status = exitCode == 0 ? "ok" : "failed";
-            report.Steps.Add(ToRunStepResult(step, status, exitCode));
+            var stepStartedAt = DateTimeOffset.UtcNow;
+            var execution = await RunWorkflowStepAsync(step, output, timeoutMs, runner);
+            var stepCompletedAt = DateTimeOffset.UtcNow;
+            var status = execution.TimedOut ? "timed-out" : execution.ExitCode == 0 ? "ok" : "failed";
+            report.Steps.Add(ToRunStepResult(
+                step,
+                status,
+                execution.ExitCode,
+                stepStartedAt,
+                stepCompletedAt,
+                execution.TimedOut));
 
-            if (exitCode != 0)
+            if (execution.TimedOut)
             {
-                report.ExitCode = exitCode;
+                report.Issues.Add(new WorkflowValidationIssue(
+                    WorkflowValidationSeverity.Error,
+                    $"steps[{step.Index}].timeout",
+                    $"workflow step {step.Index} exceeded --timeout-ms {timeoutMs}."));
+            }
+
+            if (execution.ExitCode != 0)
+            {
+                report.ExitCode = execution.ExitCode;
                 if (!continueOnError)
                 {
                     foreach (var skipped in simulation.Steps.Skip(step.Index))
@@ -955,6 +1461,147 @@ public static class WorkflowCommand
         return writer.ToString().TrimEnd();
     }
 
+    private static string RenderReviewTable(WorkflowReviewReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine($"Workflow review: {report.Name}");
+        writer.WriteLine($"Project: {report.ProjectDirectory}");
+        writer.WriteLine($"Can run: {(report.CanRun ? "yes" : "no")}");
+        writer.WriteLine($"Steps: {report.StepCount}; dry-run: {report.DryRunStepCount}; mutating: {report.MutatingStepCount}; approvals: {report.ApprovalRequiredCount}");
+        if (report.Issues.Count > 0)
+        {
+            writer.WriteLine("Issues:");
+            foreach (var issue in report.Issues)
+                writer.WriteLine($"  {issue.Severity.ToString().ToUpperInvariant()} {issue.Path}: {issue.Message}");
+        }
+
+        writer.WriteLine("Pre-run handoff commands:");
+        foreach (var command in report.PreRunHandoffCommands)
+            writer.WriteLine($"  {command}");
+
+        writer.WriteLine("Project artifact readiness:");
+        if (report.ArtifactReadiness.Count == 0)
+        {
+            writer.WriteLine("  (no local project artifacts inferred from workflow steps)");
+        }
+        else
+        {
+            foreach (var artifact in report.ArtifactReadiness)
+            {
+                writer.WriteLine(
+                    $"  {artifact.Status.ToUpperInvariant(),-7} {artifact.Name,-18} steps={string.Join(",", artifact.MatchedSteps)} review=\"{artifact.ReviewCommand}\"");
+            }
+        }
+
+        writer.WriteLine("Recommended commands:");
+        foreach (var command in report.RecommendedCommands)
+            writer.WriteLine($"  {command}");
+
+        writer.WriteLine("Post-run receipt triage:");
+        foreach (var command in report.PostRunReceiptCommands)
+            writer.WriteLine($"  {command}");
+
+        if (report.Evidence.Count > 0)
+            writer.WriteLine($"Evidence: {string.Join(", ", report.Evidence)}");
+
+        writer.WriteLine("Handoff notes:");
+        foreach (var note in report.HandoffNotes)
+            writer.WriteLine($"  - {note}");
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderReviewMarkdown(WorkflowReviewReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine($"# Workflow Review: {EscapeMarkdownText(report.Name)}");
+        writer.WriteLine();
+        writer.WriteLine($"- Can run: {(report.CanRun ? "yes" : "no")}");
+        writer.WriteLine($"- Project directory: `{EscapeInlineCode(report.ProjectDirectory)}`");
+        writer.WriteLine($"- Steps: {report.StepCount}");
+        writer.WriteLine($"- Dry-run steps: {report.DryRunStepCount}");
+        writer.WriteLine($"- Mutating steps: {report.MutatingStepCount}");
+        writer.WriteLine($"- Approval-required steps: {report.ApprovalRequiredCount}");
+        if (!string.IsNullOrWhiteSpace(report.Description))
+            writer.WriteLine($"- Description: {EscapeMarkdownText(report.Description)}");
+
+        writer.WriteLine();
+        writer.WriteLine("## Pre-run Handoff");
+        writer.WriteLine();
+        writer.WriteLine("```powershell");
+        foreach (var command in report.PreRunHandoffCommands)
+            writer.WriteLine(command);
+        writer.WriteLine("```");
+
+        writer.WriteLine();
+        writer.WriteLine("## Project Artifact Readiness");
+        writer.WriteLine();
+        if (report.ArtifactReadiness.Count == 0)
+        {
+            writer.WriteLine("- No local project artifacts were inferred from workflow steps.");
+        }
+        else
+        {
+            writer.WriteLine("| Artifact | Status | Count | Path | Matched steps | Review | Notes |");
+            writer.WriteLine("|---|---|---:|---|---|---|---|");
+            foreach (var artifact in report.ArtifactReadiness)
+            {
+                writer.WriteLine(
+                    $"| `{artifact.Name}` | `{artifact.Status}` | {artifact.Count} | `{artifact.RelativePath}` | `{string.Join(", ", artifact.MatchedSteps)}` | `{artifact.ReviewCommand}` | {EscapeMarkdownText(artifact.Notes)} |");
+            }
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("## Recommended Commands");
+        writer.WriteLine();
+        writer.WriteLine("```powershell");
+        foreach (var command in report.RecommendedCommands)
+            writer.WriteLine(command);
+        writer.WriteLine("```");
+
+        writer.WriteLine();
+        writer.WriteLine("## Post-run Receipt Triage");
+        writer.WriteLine();
+        writer.WriteLine("```powershell");
+        foreach (var command in report.PostRunReceiptCommands)
+            writer.WriteLine(command);
+        writer.WriteLine("```");
+
+        writer.WriteLine();
+        writer.WriteLine("## Issues");
+        if (report.Issues.Count == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var issue in report.Issues)
+            {
+                writer.WriteLine(
+                    $"- `{issue.Severity.ToString().ToUpperInvariant()}` `{EscapeInlineCode(issue.Path)}`: {EscapeMarkdownText(issue.Message)}");
+            }
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("## Evidence");
+        if (report.Evidence.Count == 0)
+        {
+            writer.WriteLine("- No built-in acceptance evidence matched this workflow name.");
+        }
+        else
+        {
+            foreach (var evidence in report.Evidence)
+                writer.WriteLine($"- {EscapeMarkdownText(evidence)}");
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("## Handoff Notes");
+        foreach (var note in report.HandoffNotes)
+            writer.WriteLine($"- {EscapeMarkdownText(note)}");
+
+        return writer.ToString().TrimEnd();
+    }
+
     private static void AddRunGateIssues(
         WorkflowSimulationReport simulation,
         bool dryRun,
@@ -987,8 +1634,12 @@ public static class WorkflowCommand
     private static WorkflowRunStepResult ToRunStepResult(
         WorkflowStepSimulation step,
         string status,
-        int? exitCode) =>
-        new()
+        int? exitCode,
+        DateTimeOffset? startedAtUtc = null,
+        DateTimeOffset? completedAtUtc = null,
+        bool timedOut = false)
+    {
+        var result = new WorkflowRunStepResult
         {
             Index = step.Index,
             Name = step.Name,
@@ -997,7 +1648,18 @@ public static class WorkflowCommand
             RequiresApproval = step.RequiresApproval,
             Status = status,
             ExitCode = exitCode,
+            TimedOut = timedOut,
         };
+
+        if (startedAtUtc.HasValue && completedAtUtc.HasValue)
+        {
+            result.StartedAtUtc = startedAtUtc.Value.ToString("o");
+            result.CompletedAtUtc = completedAtUtc.Value.ToString("o");
+            result.DurationMs = Math.Max(0, (long)(completedAtUtc.Value - startedAtUtc.Value).TotalMilliseconds);
+        }
+
+        return result;
+    }
 
     private static async Task WriteRunReportAsync(
         WorkflowRunReport report,
@@ -1024,6 +1686,9 @@ public static class WorkflowCommand
         writer.WriteLine($"Workflow run: {report.Name}");
         writer.WriteLine($"Mode: {(report.DryRun ? "dry-run" : "execute")}");
         writer.WriteLine($"Can run: {(report.CanRun ? "yes" : "no")}");
+        writer.WriteLine($"Duration: {FormatDurationMs(report.DurationMs)}");
+        if (report.TimeoutMs > 0)
+            writer.WriteLine($"Step timeout: {FormatDurationMs(report.TimeoutMs)}");
         if (!string.IsNullOrWhiteSpace(report.ReceiptPath))
             writer.WriteLine($"Receipt: {report.ReceiptPath}");
         if (report.Issues.Count > 0)
@@ -1039,7 +1704,8 @@ public static class WorkflowCommand
         foreach (var step in report.Steps)
         {
             var exitText = step.ExitCode.HasValue ? $" exit={step.ExitCode.Value}" : "";
-            writer.WriteLine($"  {step.Index}. {step.Status.ToUpperInvariant()} [{step.Mode}] {step.Run}{exitText}");
+            var durationText = step.DurationMs.HasValue ? $" duration={FormatDurationMs(step.DurationMs)}" : "";
+            writer.WriteLine($"  {step.Index}. {step.Status.ToUpperInvariant()} [{step.Mode}] {step.Run}{exitText}{durationText}");
         }
 
         writer.WriteLine($"Exit code: {report.ExitCode}");
@@ -1055,6 +1721,9 @@ public static class WorkflowCommand
         writer.WriteLine($"- Can run: {(report.CanRun ? "yes" : "no")}");
         writer.WriteLine($"- Success: {(report.Success ? "yes" : "no")}");
         writer.WriteLine($"- Exit code: {report.ExitCode}");
+        writer.WriteLine($"- Duration: `{FormatDurationMs(report.DurationMs)}`");
+        if (report.TimeoutMs > 0)
+            writer.WriteLine($"- Step timeout: `{FormatDurationMs(report.TimeoutMs)}`");
         if (!string.IsNullOrWhiteSpace(report.ReceiptPath))
             writer.WriteLine($"- Receipt: `{EscapeInlineCode(report.ReceiptPath)}`");
 
@@ -1078,8 +1747,9 @@ public static class WorkflowCommand
         foreach (var step in report.Steps)
         {
             var exitText = step.ExitCode.HasValue ? $", exit={step.ExitCode.Value}" : "";
+            var durationText = step.DurationMs.HasValue ? $", duration={FormatDurationMs(step.DurationMs)}" : "";
             writer.WriteLine(
-                $"- {step.Index}. `{EscapeInlineCode(step.Status.ToUpperInvariant())}` `{EscapeInlineCode(step.Mode)}`{exitText}: `{EscapeInlineCode(step.Run)}`");
+                $"- {step.Index}. `{EscapeInlineCode(step.Status.ToUpperInvariant())}` `{EscapeInlineCode(step.Mode)}`{exitText}{durationText}: `{EscapeInlineCode(step.Run)}`");
         }
 
         return writer.ToString().TrimEnd();
@@ -1091,6 +1761,13 @@ public static class WorkflowCommand
         writer.WriteLine("Workflow receipts");
         writer.WriteLine($"Directory: {report.ReceiptDirectory}");
         writer.WriteLine($"Filter: {(report.FailedOnly ? "failed-only" : "all")}");
+        if (!string.IsNullOrWhiteSpace(report.NameFilter))
+            writer.WriteLine($"Workflow: {report.NameFilter}");
+        if (report.MinDurationMs.HasValue)
+            writer.WriteLine($"Min duration: {FormatDurationMs(report.MinDurationMs.Value)}");
+        if (!string.IsNullOrWhiteSpace(report.Window))
+            writer.WriteLine($"Window: {report.Window} since {report.SinceUtc}");
+        writer.WriteLine($"Sort: {report.Sort}");
         writer.WriteLine($"Receipts: {report.ReturnedCount} of {report.ReceiptCount}");
 
         if (!report.Exists)
@@ -1108,7 +1785,7 @@ public static class WorkflowCommand
             {
                 var status = receipt.Success ? "OK" : "FAIL";
                 writer.WriteLine(
-                    $"  {status,-4} exit={receipt.ExitCode,-3} steps={receipt.StepCount,-3} failed={receipt.FailedStepCount,-3} issues={receipt.IssueCount,-3} {FormatReceiptTimestamp(receipt)} {receipt.Name} ({ShortPath(receipt.Path)})");
+                    $"  {status,-4} exit={receipt.ExitCode,-3} steps={receipt.StepCount,-3} failed={receipt.FailedStepCount,-3} issues={receipt.IssueCount,-3} dur={FormatDurationMs(receipt.DurationMs),-8} {FormatReceiptTimestamp(receipt)} {receipt.Name} ({ShortPath(receipt.Path)})");
             }
         }
 
@@ -1124,6 +1801,13 @@ public static class WorkflowCommand
         writer.WriteLine($"- Status: `{(report.Success ? "OK" : "FAIL")}`");
         writer.WriteLine($"- Directory: `{EscapeInlineCode(report.ReceiptDirectory)}`");
         writer.WriteLine($"- Filter: `{(report.FailedOnly ? "failed-only" : "all")}`");
+        if (!string.IsNullOrWhiteSpace(report.NameFilter))
+            writer.WriteLine($"- Workflow: `{EscapeInlineCode(report.NameFilter)}`");
+        if (report.MinDurationMs.HasValue)
+            writer.WriteLine($"- Min duration: `{FormatDurationMs(report.MinDurationMs.Value)}`");
+        if (!string.IsNullOrWhiteSpace(report.Window))
+            writer.WriteLine($"- Window: `{EscapeInlineCode(report.Window)}` since `{EscapeInlineCode(report.SinceUtc)}`");
+        writer.WriteLine($"- Sort: `{EscapeInlineCode(report.Sort)}`");
         writer.WriteLine($"- Receipts: `{report.ReturnedCount}` of `{report.ReceiptCount}`");
         writer.WriteLine();
 
@@ -1139,13 +1823,13 @@ public static class WorkflowCommand
         else
         {
             writer.WriteLine();
-            writer.WriteLine("| Completed | Status | Exit | Steps | Failed | Issues | Workflow | Receipt |");
-            writer.WriteLine("|---|---|---:|---:|---:|---:|---|---|");
+            writer.WriteLine("| Completed | Duration | Status | Exit | Steps | Failed | Issues | Workflow | Receipt |");
+            writer.WriteLine("|---|---:|---|---:|---:|---:|---:|---|---|");
             foreach (var receipt in report.Receipts)
             {
                 var status = receipt.Success ? "OK" : "FAIL";
                 writer.WriteLine(
-                    $"| {EscapeTableCell(FormatReceiptTimestamp(receipt))} | {status} | {receipt.ExitCode} | {receipt.StepCount} | {receipt.FailedStepCount} | {receipt.IssueCount} | {EscapeTableCell(receipt.Name)} | {EscapeTableCell(ShortPath(receipt.Path))} |");
+                    $"| {EscapeTableCell(FormatReceiptTimestamp(receipt))} | {FormatDurationMs(receipt.DurationMs)} | {status} | {receipt.ExitCode} | {receipt.StepCount} | {receipt.FailedStepCount} | {receipt.IssueCount} | {EscapeTableCell(receipt.Name)} | {EscapeTableCell(ShortPath(receipt.Path))} |");
             }
         }
 
@@ -1193,10 +1877,19 @@ public static class WorkflowCommand
 
     private static void CompleteRunReport(WorkflowRunReport report)
     {
-        report.CompletedAtUtc = DateTime.UtcNow.ToString("o");
+        var completedAt = DateTimeOffset.UtcNow;
+        report.CompletedAtUtc = completedAt.ToString("o");
+        if (DateTimeOffset.TryParse(report.StartedAtUtc, out var startedAt))
+            report.DurationMs = Math.Max(0, (long)(completedAt - startedAt).TotalMilliseconds);
         report.Success = report.CanRun && report.ExitCode == 0 &&
             report.Issues.All(issue => issue.Severity != WorkflowValidationSeverity.Error);
     }
+
+    private static string FormatDurationMs(long? durationMs) =>
+        durationMs.HasValue ? FormatDurationMs(durationMs.Value) : "-";
+
+    private static string FormatDurationMs(long durationMs) =>
+        $"{Math.Max(0, durationMs)}ms";
 
     private static void TrySaveWorkflowRunReceipt(
         string workflowPath,
@@ -1253,6 +1946,7 @@ public static class WorkflowCommand
         bool dryRun,
         bool yes,
         bool continueOnError,
+        long timeoutMs,
         string outputFormat)
     {
         var parts = new List<string>
@@ -1269,6 +1963,12 @@ public static class WorkflowCommand
             parts.Add("--yes");
         if (continueOnError)
             parts.Add("--continue-on-error");
+        if (timeoutMs > 0)
+        {
+            parts.Add("--timeout-ms");
+            parts.Add(timeoutMs.ToString(CultureInfo.InvariantCulture));
+        }
+
         if (!string.Equals(outputFormat, "table", StringComparison.OrdinalIgnoreCase))
         {
             parts.Add("--output");
@@ -1283,6 +1983,20 @@ public static class WorkflowCommand
         return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
 
+    private static string ProjectDirOption(string? baseDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            return string.Empty;
+        }
+
+        var projectDirectory = Path.GetFullPath(baseDirectory);
+        var currentDirectory = Path.GetFullPath(Directory.GetCurrentDirectory());
+        return string.Equals(projectDirectory, currentDirectory, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : $" --dir {QuoteArgument(projectDirectory)}";
+    }
+
     private static string Slugify(string value)
     {
         var chars = value
@@ -1295,7 +2009,37 @@ public static class WorkflowCommand
         return string.IsNullOrWhiteSpace(slug) ? "workflow" : slug;
     }
 
+    private static async Task<WorkflowStepExecutionResult> RunWorkflowStepAsync(
+        WorkflowStepSimulation step,
+        TextWriter output,
+        long timeoutMs,
+        Func<WorkflowStepSimulation, TextWriter, Task<int>>? runner)
+    {
+        if (runner == null)
+            return await RunProcessWithTimeoutAsync(step, output, timeoutMs);
+
+        if (timeoutMs <= 0)
+            return new WorkflowStepExecutionResult(await runner(step, output), TimedOut: false);
+
+        var runnerTask = runner(step, output);
+        var timeoutTask = Task.Delay(TimeSpan.FromMilliseconds(timeoutMs));
+        var completed = await Task.WhenAny(runnerTask, timeoutTask);
+        if (completed == runnerTask)
+            return new WorkflowStepExecutionResult(await runnerTask, TimedOut: false);
+
+        return new WorkflowStepExecutionResult(WorkflowTimeoutExitCode, TimedOut: true);
+    }
+
     internal static async Task<int> RunProcessAsync(WorkflowStepSimulation step, TextWriter output)
+    {
+        var result = await RunProcessWithTimeoutAsync(step, output, timeoutMs: 0);
+        return result.ExitCode;
+    }
+
+    private static async Task<WorkflowStepExecutionResult> RunProcessWithTimeoutAsync(
+        WorkflowStepSimulation step,
+        TextWriter output,
+        long timeoutMs)
     {
         IReadOnlyList<string> tokens;
         try
@@ -1305,12 +2049,12 @@ public static class WorkflowCommand
         catch (FormatException ex)
         {
             await output.WriteLineAsync($"Error: {ex.Message}");
-            return 1;
+            return new WorkflowStepExecutionResult(1, TimedOut: false);
         }
 
         if (tokens.Count == 0)
         {
-            return 1;
+            return new WorkflowStepExecutionResult(1, TimedOut: false);
         }
 
         var startInfo = new ProcessStartInfo
@@ -1332,12 +2076,39 @@ public static class WorkflowCommand
             if (process == null)
             {
                 await output.WriteLineAsync($"Error: failed to start workflow step {step.Index}: {step.Run}");
-                return 1;
+                return new WorkflowStepExecutionResult(1, TimedOut: false);
             }
 
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            var timedOut = false;
+            try
+            {
+                if (timeoutMs > 0)
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs));
+                    await process.WaitForExitAsync(cts.Token);
+                }
+                else
+                {
+                    await process.WaitForExitAsync();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                timedOut = true;
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Process already exited between timeout and kill.
+                }
+
+                await process.WaitForExitAsync();
+            }
+
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
 
@@ -1351,12 +2122,17 @@ public static class WorkflowCommand
                 await output.WriteLineAsync(stderr.TrimEnd());
             }
 
-            return process.ExitCode;
+            if (timedOut)
+            {
+                return new WorkflowStepExecutionResult(WorkflowTimeoutExitCode, TimedOut: true);
+            }
+
+            return new WorkflowStepExecutionResult(process.ExitCode, TimedOut: false);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             await output.WriteLineAsync($"Error: failed to run workflow step {step.Index}: {ex.Message}");
-            return 1;
+            return new WorkflowStepExecutionResult(1, TimedOut: false);
         }
     }
 
@@ -1365,6 +2141,12 @@ public static class WorkflowCommand
 
     private static bool IsMarkdown(string outputFormat) =>
         string.Equals(outputFormat, "markdown", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsWorkflowReportOutputFormat(string? outputFormat)
+    {
+        var normalized = (outputFormat ?? "table").Trim().ToLowerInvariant();
+        return normalized is "table" or "json" or "markdown";
+    }
 
     private static string EscapeInlineCode(string? value)
     {
@@ -1458,6 +2240,100 @@ public static class WorkflowCommand
         return relative.StartsWith("..", StringComparison.Ordinal) ? path : relative;
     }
 
+    private sealed class WorkflowReviewReport
+    {
+        [JsonPropertyName("schemaVersion")]
+        public string SchemaVersion { get; set; } = "workflow-review.v1";
+
+        [JsonPropertyName("path")]
+        public string Path { get; set; } = "";
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "";
+
+        [JsonPropertyName("description")]
+        public string? Description { get; set; }
+
+        [JsonPropertyName("projectDirectory")]
+        public string ProjectDirectory { get; set; } = "";
+
+        [JsonPropertyName("canRun")]
+        public bool CanRun { get; set; }
+
+        [JsonPropertyName("stepCount")]
+        public int StepCount { get; set; }
+
+        [JsonPropertyName("mutatingStepCount")]
+        public int MutatingStepCount { get; set; }
+
+        [JsonPropertyName("dryRunStepCount")]
+        public int DryRunStepCount { get; set; }
+
+        [JsonPropertyName("approvalRequiredCount")]
+        public int ApprovalRequiredCount { get; set; }
+
+        [JsonPropertyName("modeCounts")]
+        public Dictionary<string, int> ModeCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        [JsonPropertyName("issues")]
+        public List<WorkflowValidationIssue> Issues { get; set; } = new();
+
+        [JsonPropertyName("steps")]
+        public List<WorkflowStepSimulation> Steps { get; set; } = new();
+
+        [JsonPropertyName("artifactReadiness")]
+        public List<WorkflowArtifactReadiness> ArtifactReadiness { get; set; } = new();
+
+        [JsonPropertyName("preRunHandoffCommands")]
+        public List<string> PreRunHandoffCommands { get; set; } = new();
+
+        [JsonPropertyName("recommendedCommands")]
+        public List<string> RecommendedCommands { get; set; } = new();
+
+        [JsonPropertyName("postRunReceiptCommands")]
+        public List<string> PostRunReceiptCommands { get; set; } = new();
+
+        [JsonPropertyName("evidence")]
+        public IReadOnlyList<string> Evidence { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("handoffNotes")]
+        public List<string> HandoffNotes { get; set; } = new();
+    }
+
+    private sealed class WorkflowArtifactReadiness
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "";
+
+        [JsonPropertyName("status")]
+        public string Status { get; set; } = "";
+
+        [JsonPropertyName("count")]
+        public int Count { get; set; }
+
+        [JsonPropertyName("relativePath")]
+        public string RelativePath { get; set; } = "";
+
+        [JsonPropertyName("reviewCommand")]
+        public string ReviewCommand { get; set; } = "";
+
+        [JsonPropertyName("workingDirectory")]
+        public string WorkingDirectory { get; set; } = "";
+
+        [JsonPropertyName("matchedSteps")]
+        public IReadOnlyList<int> MatchedSteps { get; set; } = Array.Empty<int>();
+
+        [JsonPropertyName("notes")]
+        public string Notes { get; set; } = "";
+    }
+
+    private sealed record WorkflowArtifactMetadata(
+        string RelativePath,
+        bool IsFile,
+        IReadOnlyList<string> Patterns,
+        string ReviewCommand,
+        string Notes);
+
     private sealed record WorkflowAcceptanceExample(
         [property: JsonPropertyName("workflow")] string Workflow,
         [property: JsonPropertyName("prompt")] string Prompt,
@@ -1465,6 +2341,8 @@ public static class WorkflowCommand
         [property: JsonPropertyName("previewCommands")] IReadOnlyList<string> PreviewCommands,
         [property: JsonPropertyName("approvalCommands")] IReadOnlyList<string> ApprovalCommands,
         [property: JsonPropertyName("evidence")] IReadOnlyList<string> Evidence);
+
+    private sealed record WorkflowStepExecutionResult(int ExitCode, bool TimedOut);
 }
 
 public sealed class WorkflowValidationFileReport

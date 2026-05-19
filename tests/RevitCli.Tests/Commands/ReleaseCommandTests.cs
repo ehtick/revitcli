@@ -49,6 +49,12 @@ public sealed class ReleaseCommandTests : IDisposable
             check.GetProperty("id").GetString() == "ci:release-verify" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "ci:workbench-verify" &&
+            check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script:v4-workbench" &&
+            check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "release-workflow:no-addin-2025" &&
             check.GetProperty("status").GetString() == "ok");
     }
@@ -92,6 +98,8 @@ jobs:
         Assert.Contains("- None.", text);
         Assert.Contains("## Passing Checks", text);
         Assert.Contains("| OK | ci:no-addin-build | .github/workflows/ci.yml | Ubuntu CI does not build the Windows/Revit add-in. |", text);
+        Assert.Contains("| OK | ci:workbench-verify | .github/workflows/ci.yml | Ubuntu CI runs the v4 workbench contract verifier. |", text);
+        Assert.Contains("| OK | smoke-script:v4-workbench | scripts/smoke-revit.ps1 | Real smoke script can run the v4 workbench and live discovery gate. |", text);
         Assert.Contains("## Gate Scope", text);
         Assert.Contains("Real Revit smoke remains a separate Windows/Revit checklist gate.", text);
     }
@@ -151,7 +159,7 @@ git tag vX.Y.Z
 """);
         WriteFile(root, "docs/release-checklist.md", "# Release Checklist");
         WriteFile(root, "docs/architect-terminal-vision.md", "# Vision");
-        WriteFile(root, "docs/revit2026-real-smoke.md", "# Smoke\n\njournal evidence");
+        WriteFile(root, "docs/revit2026-real-smoke.md", "# Smoke\n\njournal evidence with V4Workbench");
         WriteFile(root, "docs/revit-version-compatibility.md", "2024 2025 2026");
         WriteFile(root, ".github/workflows/ci.yml", """
 name: CI
@@ -162,6 +170,7 @@ jobs:
       - run: dotnet restore shared/RevitCli.Shared/RevitCli.Shared.csproj
       - run: dotnet build src/RevitCli/RevitCli.csproj --no-restore
       - run: dotnet run --project src/RevitCli/RevitCli.csproj --no-build -- release verify --output json
+      - run: dotnet run --project src/RevitCli/RevitCli.csproj --no-build -- workbench verify --dir . --output json
       - run: dotnet test tests/RevitCli.Tests/RevitCli.Tests.csproj --no-build
 """);
         WriteFile(root, ".github/workflows/release.yml", """
@@ -201,7 +210,7 @@ param(
 $staged = 'staged'
 function Test-PathListContains { }
 """);
-        WriteFile(root, "scripts/smoke-revit.ps1", "2024 2025 2026");
+        WriteFile(root, "scripts/smoke-revit.ps1", "2024 2025 2026 V4Workbench workbench\", \"verify schedule\", \"export");
     }
 
     private void WriteFile(string relativePath, string content) =>

@@ -6,7 +6,7 @@ sheets and schedules, diagnose publish failures, snapshot/diff model state,
 and make reviewed parameter changes without clicking through repetitive
 Revit UI.
 
-> **Status: Unreleased v3.0 - Project Standards Workbench**
+> **Status: Unreleased v4.0 - Architect Terminal BIM Workbench**
 > Windows/Revit-first BIMOps runner with source-level support for Revit
 > 2024/2025/2026; the latest tagged release ZIP packages the Revit 2026 add-in.
 > Current focus:
@@ -20,18 +20,35 @@ revitcli inspect sheets --issues-only --output markdown      # find sheet blocke
 revitcli sheets verify --output json --issues-only           # verify sheet numbering/index expectations
 revitcli inspect params doors                                # find writable parameters
 revitcli inspect schedules --issues-only --output markdown   # find schedule export blockers
+revitcli inspect plans --output markdown                     # review saved plans before apply
 revitcli query walls --filter "height > 3000" --output json  # query
 revitcli schedule list --output markdown                     # review available schedules
 revitcli schedule export --name "Door Schedule" --output csv # export a schedule
+revitcli schedule create --category Doors --fields "Mark,Level" --name "Door Review" --dry-run --output json # preview ViewSchedule write
 revitcli export --format dwg --sheets "A1*" --output-dir .   # batch export
 revitcli set doors --param "Fire Rating" --value "60min"     # bulk set
 revitcli snapshot --output snap.json                         # capture model state
 revitcli diff snap-mon.json snap-fri.json --output markdown  # what changed
 revitcli diff snap-mon.json snap-fri.json --review           # flag suspicious changes
 revitcli workflow init pre-issue                             # create a workflow template
+revitcli inspect workflows --output markdown                 # discover local workflow YAML and next commands
 revitcli workflow run .revitcli/workflows/pre-issue.yml --dry-run # preview workflow steps
+revitcli workflow review .revitcli/workflows/pre-issue.yml --output markdown # review approval/evidence handoff
 revitcli workflow suggest --output yaml                       # draft workflow from repeated journal commands
-revitcli workflow receipts --output markdown                  # review workflow run receipts
+revitcli workflow receipts --name pre-issue --output markdown # review one workflow's receipts
+revitcli score --history 30d --output json                    # machine-readable model health trend
+revitcli workbench contract --output json                     # machine-readable command contract
+revitcli workbench verify --dir . --output markdown           # verify local workbench contract readiness
+revitcli workbench receipts --output json                     # machine-readable receipt schema index
+revitcli workbench paths --output json                        # flat callable command path index
+revitcli workbench exits --output json                        # predictable exit-code index
+revitcli workbench extensions --output json                   # terminal extension-point index
+revitcli workbench outputs --output json                      # output schema index
+revitcli workbench safeguards --output json                   # dry-run/approval safety index
+revitcli workbench project --output json                      # local project artifact inventory
+revitcli workbench handoff --output markdown                  # one-command terminal handoff
+revitcli examples workbench                                  # discover v4 workbench command path
+revitcli examples workflow --output json                     # machine-readable task recipe
 revitcli examples recipes                                     # show Codex CLI recipe templates
 revitcli report weekly --report .revitcli/reports/weekly.md  # local weekly report
 revitcli report knowledge --output markdown                  # summarize reusable local project knowledge
@@ -70,20 +87,23 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli fix [checkName]` | Preview or apply profile-driven parameter fixes |
 | `revitcli rollback <artifact>` | Restore parameters from a fix baseline or plan receipt |
 | `revitcli export --format <fmt>` | Export DWG/PDF/IFC; supports JSON dry-run plans, receipts, and delivery manifests |
-| `revitcli schedule list` / `export` / `create` | Manage Revit schedules; list/export support table/JSON/Markdown, export also supports CSV |
+| `revitcli schedule list` / `export` / `create` | Manage Revit schedules; list/export support table/JSON/Markdown, export also supports CSV, and create supports dry-run JSON/Markdown plus write receipts |
 | `revitcli audit` | Run model quality checks |
 | `revitcli check` | Profile-driven check pipeline; supports table/JSON/HTML/SARIF/PR-comment output |
 | `revitcli publish [name]` | Profile-driven export pipeline (DWG/PDF/IFC), with JSON dry-run plans, receipts, and delivery manifests |
 | `revitcli init <template>` | Bootstrap a `.revitcli.yml` profile |
-| `revitcli score` | Model health score from `check` results |
+| `revitcli score` | Model health score from `check` results; supports table/JSON/Markdown output |
 | `revitcli coverage` | Profile coverage report (which checks ran) |
 | `revitcli inspect categories` | Discover common categories and next commands |
 | `revitcli inspect params <category>` | Discover parameter coverage, write status, storage type, and dry-run probes |
 | `revitcli inspect schedules` | Discover schedules, readiness issues, filters, and ready-to-run export commands |
 | `revitcli inspect sheets` | Discover sheets, issues, filters, and export candidates for CLI/Codex workflows |
+| `revitcli inspect workflows` | Discover local workflow YAML files with validate/simulate/review/dry-run/receipt next commands |
+| `revitcli inspect plans` | Discover saved mutation plans with show, dry-run apply, approved apply, receipt, and rollback-preview commands |
 | `revitcli sheets verify` / `index` | Verify sheet numbering, required sheets, and local sheet-frame expectations |
-| `revitcli examples <topic>` | Show copy-paste examples for common architect workflows |
-| `revitcli workflow validate` / `simulate` / `run` / `suggest` / `receipts` | Check, run, draft, and review reusable terminal workflow YAML with approval gates |
+| `revitcli examples <topic>` | Show copy-paste examples for common architect workflows; supports table/JSON/Markdown output |
+| `revitcli workbench contract` / `verify` / `receipts` / `paths` / `exits` / `extensions` / `outputs` / `safeguards` / `project` / `handoff` | Show and verify the stable command/output/dry-run/receipt/exit-code contract, receipt schema index, callable path index, exit-code index, extension-point index, output schema index, dry-run/approval safety index, local project artifact inventory, and one-command terminal handoff for Codex CLI |
+| `revitcli workflow validate` / `simulate` / `review` / `run` / `suggest` / `receipts` | Check, review, run, draft, and inspect reusable terminal workflow YAML with approval gates |
 | `revitcli report weekly` / `knowledge` | Generate local weekly reports and project knowledge summaries from RevitCli artifacts |
 | `revitcli deliverables list` / `stats` / `verify` / `bundle` | Review delivery manifest entries, receipt traceability, and package handoff zips |
 | `revitcli standards install` / `validate` | Install and validate required profiles, workflows, outputs, schedules, and family rules |
@@ -96,7 +116,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli completions <shell>` | Generate shell completions (bash/zsh/PowerShell) |
 | `revitcli interactive` / `-i` | Interactive REPL mode |
 | `revitcli history init` / `capture` / `list` / `prune` / `diff` / `trend` | Local snapshot timeline + ASCII trend (v1.6) |
-| `revitcli score --history <duration>` | Per-day score time series (v1.6) |
+| `revitcli score --history <duration>` | Per-day score time series with table/JSON/Markdown output |
 | `revitcli check --output sarif\|pr-comment` | SARIF 2.1.0 / PR-comment report (v1.7) |
 | `revitcli ci doctor` | Detect CI provider + emit workflow snippet (v1.7) |
 | `revitcli profile validate` / `show --resolve` / `diff` / `install` | Profile lint, resolve, diff, git install (v1.9) |
@@ -117,6 +137,8 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - `inspect params <category>` shows value coverage, writable/read-only status, storage types, sample element IDs, and ready-to-copy element-scoped `set --dry-run` probes
 - `inspect params doors --writable-only --missing-only` narrows parameter discovery to fix candidates for delivery-day schedule data
 - `inspect schedules --category Doors --ready-only` narrows schedule discovery for delivery-day exports; `--empty-only` and `--issues-only` surface empty or incomplete schedules before handoff
+- `inspect workflows --output json|markdown` prints `inspect-workflows.v1`, a read-only local workflow YAML inventory with validate, simulate, review, dry-run, approved-run, and receipt review commands
+- `inspect plans --dir <path> --output json|markdown` prints `inspect-plans.v1`, a read-only saved-plan inventory with action counts, high-impact/invalid status, receipt detection, `plan show`, dry-run apply, approved apply, and rollback-preview commands
 - `schedule list/export --output markdown` adds handoff-ready schedule review tables while preserving JSON/CSV for scripts and spreadsheet workflows
 - `sheets verify --against .revitcli/sheets/index.yml --output json` checks numbering gaps, duplicate sheet numbers, required sheet declarations, and required placed-view counts without writing to Revit.
 - `sheets index init` bootstraps `.revitcli/sheets/index.yml` from the active model for later review; it only writes the local YAML file and refuses to overwrite without `--force`.
@@ -136,7 +158,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 
 - `audit` (built-in rules): `naming`, `room-bounds`, `level-consistency`, `unplaced-rooms`, `duplicate-room-numbers`, `room-metadata`
 - `check` (profile-driven): combine multiple rules + suppressions + `failOn: error|warning` exit code policy
-- `score` rolls check results into a single 0–100 model-health number
+- `score` rolls check results into a single 0–100 model-health number; `score --history 30d --output json` prints a compact `model-health-history.v1` envelope from local snapshots
 - `coverage` reports which checks actually ran vs which were skipped
 
 ### Publish — profile-driven export pipelines
@@ -172,10 +194,14 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - `workflow init <template>` creates a workflow YAML in the project; `workflow init all` installs the whole pack
 - Each step must declare `run` and `mode: read-only|dry-run|mutating`
 - `workflow validate` checks files without running any command; `--output markdown` produces handoff-ready validation notes
+- `workflow validate` recognizes v4 read-only handoff paths such as `workbench verify`, `workbench handoff`, `inspect workflows`, `inspect plans`, `report knowledge`, and `workflow review`, while rejecting unknown grouped subcommands before execution
+- `workflow validate`, `workflow simulate`, and `workflow run` reject unknown `--output` values before reading or executing workflow steps
+- Shell completions only suggest output formats each workflow subcommand actually accepts: `workflow suggest` includes YAML, while validate/simulate/review/run/examples/receipts stay on table/JSON/Markdown
 - `workflow simulate <file>` prints the planned steps, risk modes, and validation issues as table, JSON, or Markdown for Codex CLI review
-- `workflow run <file> --dry-run --output markdown` prints a reviewable execution plan; `workflow run <file> --yes` is required before approved mutating steps run
-- Real `workflow run` executions write `.revitcli/workflows/receipts/*.json` with a stable `workflow-run-receipt.v1` schema, step exit codes, command metadata, and success/failure status
-- `workflow receipts --output markdown` reviews saved workflow-run receipts; add `--failed-only` to triage failed deadline workflows
+- `workflow review <file> --dir <path> --output json|markdown` prints `workflow-review.v1` with pre-run workbench verify/handoff commands for the same project directory, approval counts, inferred project artifact readiness for workflow step dependencies, saved-plan review through `inspect plans --dir <path>`, recommended dry-run/approval commands, post-run receipt triage commands, acceptance evidence hints, and handoff notes without running commands
+- `workflow run <file> --dry-run --output markdown` prints a reviewable execution plan; `workflow run <file> --yes` is required before approved mutating steps run, and `--timeout-ms <n>` fails a long-running step with exit code 124 before writing receipt evidence
+- Real `workflow run` executions write `.revitcli/workflows/receipts/*.json` with a stable `workflow-run-receipt.v1` schema, step exit codes, command metadata, run/step duration metadata, timeout metadata, and success/failure status
+- `workflow receipts --output markdown` reviews saved workflow-run receipts with duration evidence; add `--failed-only` to triage failed deadline workflows, `--name pre-issue` to focus one repeated workflow, `--min-duration-ms 60000` to isolate slow runs, `--sort duration` to list slowest runs first, or `--window 24h` to review recent automation only
 - `workflow suggest` reads explicit `command` / `commandLine` / `run` fields from `.revitcli/journal.jsonl` and prints suggested YAML only; it does not write workflow files
 - `workflow examples [template]` shows architect prompts, preview commands, approval commands, and acceptance evidence for the built-in workflow pack
 
@@ -183,7 +209,28 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 
 - `docs/templates/codex-recipes/` stores prompt-to-command recipes for common architect tasks
 - `examples recipes` points Codex CLI to the local recipe templates and related safe commands
+- `examples <topic> --output json` prints an `example-recipes.v1` envelope with commands and the Codex prompt for that task
+- `examples workbench` shows the v4 contract, verifier, path index, receipt index, recipe, and workflow-review command path from one terminal topic
 - Recipes are documentation only; RevitCli does not embed a prompt interpreter or hidden agent runtime
+
+### Workbench Contract
+
+- `workbench contract --output json` prints a compact `workbench-contract.v1` envelope for Codex CLI and shell scripts
+- `workbench verify --dir <path> --output json|markdown` prints `workbench-verification.v1`, checking root-command alignment, MCP public exclusion plus hidden/deprecated legacy MCP compatibility, LLM/dashboard/cloud exclusion, recipe output support, model-health terminal output, risky-command dry-run/receipt coverage, workflow and saved-plan discovery, built-in workflow template validity, workflow duration telemetry, workflow receipt triage, workflow-review pre-run/post-run handoff and artifact-readiness coverage, shell completion coverage, project inventory coverage, handoff readiness actions, handoff recommended command phases, schedule-create safety, and exit-code notes
+- `workbench receipts --output json|markdown` prints `workbench-receipts.v1`, indexing write/export receipt schemas, path patterns, dry-run commands, and review commands
+- `workbench paths --output json|markdown` prints `workbench-paths.v1`, a flat list of concrete `revitcli ...` command paths with risk, output, dry-run, receipt, and exit-code notes
+- `workbench exits --output json|markdown` prints `workbench-exit-codes.v1`, a compact command-to-exit-code index for scripts and Codex CLI
+- `workbench extensions --output json|markdown` prints `workbench-extensions.v1`, listing terminal-first extension points such as profiles, workflow YAML, standards packs, family rules, and recipe docs with validation and preview commands
+- `workbench outputs --output json|markdown` prints `workbench-outputs.v1`, listing readable table support, compact JSON schema names, and Markdown support for key terminal paths
+- `workbench safeguards --output json|markdown` prints `workbench-safeguards.v1`, listing dry-run, approval, receipt, and review commands for risky terminal paths
+- `workbench project --dir <path> --output json|markdown` prints `workbench-project.v1`, a read-only local inventory of profile, standards, workflows, receipts, history, journal, delivery manifest, plans, and reports with review commands
+- `workbench handoff --dir <path> --output json|markdown` prints `workbench-handoff.v1`, combining verification status, readiness check summaries, project artifact counts, machine-readable readiness actions for actionable missing or empty artifacts, recommended next commands such as workflow discovery, saved-plan discovery, and schedule-create dry-run, and non-goal reminders for terminal handoff
+- `schedule create --dry-run --output json|markdown` prints `schedule-create.v1` without calling Revit; real schedule creates write `schedule-create-receipt.v1` under `.revitcli/receipts` by default, expose `receiptRequired`/`receiptSaved`, and JSON/Markdown failures use the same schema
+- Shell completions keep inspect, workflow, and schedule output formats aligned by subcommand, and `workbench verify` guards the inspect/workbench/workflow/schedule completion surface: inspect commands include `inspect plans`, workflow suggest uses table/JSON/YAML, workflow reports use table/JSON/Markdown, schedule list/create use table/JSON/Markdown, and schedule export also offers CSV
+- The contract lists stable command vocabulary, callable command paths, recipe discovery, risk mode, JSON/Markdown support, recommended first command, dry-run expectations, receipt locations, and exit-code notes
+- Write paths without a dry-run/receipt contract are intentionally excluded from the Codex callable path index; `schedule create` is included now that it has a dry-run preview and receipt contract
+- JSON includes `commandPaths` entries such as `plan apply`, `score --history`, `inspect workflows`, `inspect plans`, `workflow review`, `workbench verify`, `workbench receipts`, `workbench paths`, `workbench exits`, `workbench extensions`, `workbench outputs`, `workbench safeguards`, `workbench project`, `workbench handoff`, and `deliverables bundle` so Codex CLI can choose concrete commands without scraping help text
+- Output formats are table, JSON, and Markdown; workbench commands are read-only and have no Revit API, dashboard, cloud, LLM runtime, or MCP dependency
 
 ### Reports — local project summaries
 
@@ -317,8 +364,8 @@ Starter templates in `profiles/`:
 dotnet build src/RevitCli/RevitCli.csproj
 dotnet test  tests/RevitCli.Tests/
 
-# Add-in (Windows + Revit only). RevitYear picks DLL refs + output dir.
-dotnet build src/RevitCli.Addin -p:RevitYear=2026   # default; also 2024 (net48) / 2025 (net8.0-windows)
+# Add-in (Windows + Revit only). RevitYear picks DLL refs, target framework, and output dir.
+dotnet build src/RevitCli.Addin -p:RevitYear=2026 -p:Revit2026InstallDir="D:\Autodesk\Revit 2026"
 ```
 
 ## Install
@@ -337,7 +384,7 @@ dotnet publish src/RevitCli -c Release -o ./publish
 
 ### Revit Add-in
 
-1. Build: `dotnet publish src/RevitCli.Addin -c Release -p:RevitYear=2026`
+1. Build: `dotnet publish src/RevitCli.Addin -c Release -p:RevitYear=2026 -p:Revit2026InstallDir="D:\Autodesk\Revit 2026"`
 2. Close Revit
 3. Copy all files from `src/RevitCli.Addin/bin/Release/2026/publish/` to `%APPDATA%\Autodesk\Revit\Addins\2026\`
 4. Start Revit and open a project
@@ -352,7 +399,7 @@ the local install directory:
 
 ```powershell
 .\scripts\install.ps1 -RevitYears 2026 `
-  -Revit2026InstallDir "D:\revit2026" `
+  -Revit2026InstallDir "D:\revit2026\Revit 2026" `
   -Force
 ```
 
@@ -472,7 +519,7 @@ docs/superpowers/          # Design specs and implementation plans
 - [x] v2.3 Codex CLI-assisted architect workflow: inspect/discover, safe batch plans, delivery workflows, standards packs
 - [x] v3.0 project standards workbench: office standards packs bootstrap profiles, workflows, outputs, family rules, and terminal validation
 - [x] v3.x review and knowledge capture: local reports, journal-derived workflow drafts, recipes, and handoff-ready review evidence
-- [ ] v4 terminal workbench: dashboard/workbench polish, deeper workflow review, and long-running Revit automation ergonomics
+- [ ] v4 terminal workbench: stable `workbench contract`, deeper workflow review, and long-running Revit automation ergonomics
 
 See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.
 
@@ -482,7 +529,7 @@ Follow [docs/release-checklist.md](docs/release-checklist.md) before pushing a t
 
 1. Update `RevitCliVersion` in `Directory.Build.props` (single source of truth for both the CLI and add-in projects).
 2. Update `CHANGELOG.md`.
-3. Run `revitcli release verify --tag vX.Y.Z`, then complete the Windows/Revit smoke checklist.
+3. Run `revitcli release verify --tag vX.Y.Z` and `revitcli workbench verify --dir . --output json`, then complete the Windows/Revit smoke checklist.
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 5. GitHub Actions packages the Revit 2026 add-in ZIP to the GitHub release. NuGet publishing is manual via the `Publish to NuGet` workflow.
 

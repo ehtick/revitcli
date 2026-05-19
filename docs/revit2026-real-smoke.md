@@ -111,6 +111,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke-revit2026.ps1 `
   -Filter "Mark = W-01" `
   -Param Comments `
   -Value "revitcli-smoke-20260426" `
+  -V4Workbench `
+  -V4ProjectDir . `
   -OutputPath ".\revitcli-smoke-2026-dry-run.json"
 ```
 
@@ -118,7 +120,15 @@ Expected result:
 
 - Exit code `0`.
 - Report JSON includes `cliVersion`, `installedAddinVersion`, `liveAddinVersion`, `manifestAssemblyPath`, `serverInfoPath`, `oldValue`, `testValue`, and every command step with its exit code and output.
+- Each command step includes `attempt` and `retrySafe` values. Explicitly
+  transient add-in communication timeouts may be retried once for read-only or
+  dry-run commands, and both the failed attempt and the successful retry remain
+  in the report. Write and rollback commands are not retried automatically.
 - `applied` is `false`.
+- `v4Workbench` is `true`, and the step list includes `workbench verify`,
+  `workbench handoff`, live `inspect schedules` / `inspect sheets`,
+  `schedule list`, and read-only `schedule export` evidence from the active
+  Revit document.
 
 Then run the apply/confirm/restore smoke:
 
@@ -174,6 +184,30 @@ Result:
   PASS / FAIL
   follow-up:
 ```
+
+## Current Local Evidence
+
+Last verified: `2026-05-19 19:55:55 +08:00`.
+
+The Revit 2026 add-in was installed from the local source tree, Revit was
+restarted, and the live server reported matching CLI, installed add-in, and
+live add-in version `2.3.0`. A dry-run smoke with `-V4Workbench` passed against
+a local Revit 2026 test document using category `levels`, element ID `311`,
+filter `id = 311`, parameter `IfcGUID`, and test value
+`revitcli-smoke-20260519`.
+
+The final report recorded 16 command steps, each tagged with `retrySafe`, with
+zero failed steps and zero retries. During validation, an earlier run exposed a
+transient `doctor --check-version 2026` HTTP timeout; the smoke script now keeps
+retry evidence visible and limits retries to read-only or dry-run commands.
+The final status, query, dry-run set, workbench verify, workbench handoff,
+inspect, schedule list/export, schedule create dry-run, and final query
+evidence completed with no script failure.
+
+The apply/confirm/restore smoke was intentionally not run on this document
+because the discovered writable parameter was not a project-safe text field.
+Run the apply leg only on a controlled model with a disposable writable text
+parameter such as `Comments`.
 
 ## Stop Conditions
 

@@ -13,19 +13,24 @@ command.
 This is not MCP. There is no server protocol, client registry, or hidden
 agent runtime. Codex CLI runs normal shell commands such as
 `revitcli check`, `revitcli publish --dry-run`, and
-`revitcli schedule export`.
+`revitcli schedule export`. The legacy `mcp serve` compatibility command stays
+hidden and deprecated, and `workbench verify` checks that it is not part of
+public command discovery.
 
 ## Operating Model
 
 1. Architect opens Revit with the target model.
 2. Architect opens Codex CLI in the project folder.
 3. Codex CLI checks setup with `revitcli doctor` and `revitcli status`.
-4. Codex CLI reads `.revitcli.yml`, `.revitcli/standards.yml`, profiles,
+4. Codex CLI can verify the callable surface with `revitcli workbench verify`,
+   inspect `workbench paths` / `workbench receipts` / `workbench project`, or
+   start from `workbench handoff` before choosing a path.
+5. Codex CLI reads `.revitcli.yml`, `.revitcli/standards.yml`, profiles,
    workflows, and local docs.
-5. Codex CLI runs read-only or dry-run commands first.
-6. For writes or exports, Codex CLI summarizes the plan and asks for
+6. Codex CLI runs read-only or dry-run commands first.
+7. For writes or exports, Codex CLI summarizes the plan and asks for
    explicit approval before using `--yes` or a non-dry-run command.
-7. RevitCli writes receipts, history, and journal entries for audit.
+8. RevitCli writes receipts, history, and journal entries for audit.
 
 ## Architect Prompts
 
@@ -38,12 +43,24 @@ Expected command path:
 ```powershell
 revitcli doctor --output json
 revitcli status --output json
+revitcli workbench verify --dir . --output json
+revitcli workbench paths --output json
+revitcli workbench exits --output json
+revitcli workbench extensions --output json
+revitcli workbench outputs --output json
+revitcli workbench safeguards --output json
+revitcli workbench project --output json
+revitcli workbench handoff --output markdown
+revitcli inspect workflows --output markdown
+revitcli inspect plans --output markdown
+revitcli score --history 30d --output json
 revitcli standards validate
 revitcli profile simulate issue
 revitcli workflow init pre-issue
 revitcli workflow examples pre-issue
 revitcli workflow validate .revitcli/workflows/pre-issue.yml
 revitcli workflow simulate .revitcli/workflows/pre-issue.yml
+revitcli schedule create --category Doors --fields "Mark,Level" --name "Door Review" --dry-run --output json
 revitcli workflow run .revitcli/workflows/pre-issue.yml --dry-run
 revitcli workflow receipts --failed-only --output markdown
 revitcli sheets verify --output json --issues-only
@@ -216,6 +233,53 @@ revitcli examples recipes
   connection-failure output.
   Schedule list/export now also support Markdown handoff output, and export
   rejects unknown `--output` values before contacting Revit.
+- `workbench contract --output json`, `workbench verify --dir <path> --output json`,
+  `workbench receipts --output json`, `workbench paths --output json`,
+  `workbench exits --output json`, `workbench extensions --output json`,
+  `workbench outputs --output json`, `workbench safeguards --output json`,
+  `workbench project --output json`, and `workbench handoff --output json`
+  give Codex CLI a read-only v4 contract, readiness gate, receipt schema index,
+  flat callable path index, success/failure semantics index, and terminal
+  extension-point, output schema, dry-run/approval safety, local project
+  artifact, and one-command handoff indexes. The handoff includes readiness
+  check summaries, machine-readable readiness actions for actionable missing or
+  empty project artifacts, workflow discovery, saved-plan discovery, and the
+  schedule-create dry-run path now that schedule writes have preview and
+  receipt contracts.
+  `workbench verify` guards both the readiness-action list and the recommended
+  handoff command phases, including workflow discovery, saved-plan discovery,
+  and schedule-create dry-run.
+  Manual-only paths without a dry-run or receipt contract, such as
+  future direct writes, are intentionally excluded, as are LLM runtime, dashboard
+  dependency, and cloud-sync command paths.
+- `inspect workflows --output json|markdown` prints `inspect-workflows.v1`, a
+  local workflow YAML discovery envelope with validate, simulate, review,
+  dry-run, approved-run, and receipt review commands.
+- `inspect plans --dir <path> --output json|markdown` prints
+  `inspect-plans.v1`, a local saved-plan discovery envelope with action counts,
+  high-impact/invalid status, receipt detection, and plan show/dry-run/apply
+  plus rollback-preview commands.
+- `workbench verify` also validates the built-in workflow template surface:
+  `pre-issue`, `weekly-health`, `export-package`, and `family-cleanup` must
+  remain loadable, simulatable, and tied to acceptance examples.
+- Workflow YAML validation recognizes `workbench verify`, `workbench handoff`,
+  `workflow review`, `inspect workflows`, `inspect plans`, and
+  `report knowledge` as read-only handoff paths, and rejects unknown
+  `workbench` subcommands before a workflow can run.
+- `workflow validate`, `workflow simulate`, and `workflow run` reject unknown
+  `--output` values before loading or executing workflow steps, so a typo never
+  silently falls back to table output during automation.
+- Shell completions mirror those output contracts. Inspect completions include
+  `inspect plans` and table/json/markdown output; `workflow suggest --output`
+  offers table/json/yaml; validate, simulate, review, run, examples, and
+  receipts offer table/json/markdown. Schedule completions keep CSV scoped to
+  `schedule export` and keep list/create on table/json/markdown.
+  `workbench verify` guards those completion contracts for the inspect,
+  workbench, workflow, and schedule surfaces so tab discovery stays aligned
+  with callable v4 command paths.
+- `score --history <duration> --output json|markdown` gives Codex CLI a
+  terminal-first `model-health-history.v1` trend without dashboard or cloud
+  dependencies.
 - Export receipts are written under
   `<outputDir>/.revitcli/receipts/export-*.json` after successful real
   exports; dry-runs never write receipt files.
@@ -271,19 +335,31 @@ revitcli examples recipes
   gate state, and Revit purge results for cleanup review.
 - `release verify --tag vX.Y.Z` writes table/JSON/Markdown
   `release-verify.v1` evidence for version/tag consistency, release docs,
-  Ubuntu CLI/Shared-only CI guardrails, installer markers, and release
-  packaging workflow markers.
+  Ubuntu CLI/Shared-only CI guardrails, the v4 `workbench verify` CI gate,
+  installer markers, and release packaging workflow markers.
 - Workflow validation/simulation commands support table, JSON, and Markdown
   output so Codex CLI can show declared read-only, dry-run, and mutating
   steps before anything runs.
+- `workflow review --output json|markdown` prints `workflow-review.v1` with
+  pre-run workbench verify/handoff commands, validate/simulate/dry-run
+  commands, inferred project artifact readiness for workflow step dependencies,
+  saved-plan review through `inspect plans --dir <path>`, and post-run
+  `workflow receipts` triage commands for failed, recent, or slow workflow
+  executions. When review uses `--dir <path>`, those pre-run handoff commands
+  and artifact checks keep the same project directory.
 - `workflow run` with `--dry-run` and `--yes` gates, so approved workflow
   YAML can execute visible RevitCli commands without becoming a shell script.
-  `workflow run --dry-run --output markdown` prints a reviewable handoff plan.
+  `workflow run --dry-run --output markdown` prints a reviewable handoff plan,
+  and `--timeout-ms <n>` bounds each executed step for long-running automation.
 - Real `workflow run` executions write `workflow-run-receipt.v1` JSON
   receipts under `.revitcli/workflows/receipts/`, including command
-  metadata, operator/machine, step exit codes, and success/failure status.
+  metadata, operator/machine, run/step durations, step timeout metadata, step
+  exit codes, and success/failure status.
 - `workflow receipts --output markdown` turns saved workflow-run receipts into
-  a local handoff table; `--failed-only` narrows review to failed runs.
+  a local handoff table with duration evidence; `--failed-only` narrows review
+  to failed runs, `--name pre-issue` focuses one repeated workflow, and
+  `--window 24h`, `--min-duration-ms 60000`, and `--sort duration` isolate
+  recent slow runs.
 - `workflow suggest` to print workflow YAML drafts from repeated explicit
   journal command entries. The command never writes the workflow file.
 - `journal stats` summarizes actions, categories, users, operators,

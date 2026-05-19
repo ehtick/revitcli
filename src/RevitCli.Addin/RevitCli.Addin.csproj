@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -9,8 +8,13 @@
 
     <!-- RevitYear: 2024 (net48), 2025 (net8.0-windows), 2026 (net8.0-windows) -->
     <RevitYear Condition="'$(RevitYear)' == ''">2026</RevitYear>
+    <TargetFramework Condition="'$(TargetFrameworks)' == '' AND '$(TargetFramework)' == '' AND '$(RevitYear)' == '2024'">net48</TargetFramework>
+    <TargetFramework Condition="'$(TargetFrameworks)' == '' AND '$(TargetFramework)' == '' AND '$(RevitYear)' != '2024'">net8.0-windows</TargetFramework>
 
     <!-- Revit install directories per year -->
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == '' AND '$(Revit2026InstallDir)' != '' AND '$(RevitYear)' == '2026'">$(Revit2026InstallDir)</RevitInstallDir>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == '' AND '$(Revit2025InstallDir)' != '' AND '$(RevitYear)' == '2025'">$(Revit2025InstallDir)</RevitInstallDir>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == '' AND '$(Revit2024InstallDir)' != '' AND '$(RevitYear)' == '2024'">$(Revit2024InstallDir)</RevitInstallDir>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == '' AND '$(RevitYear)' == '2024'">C:\Program Files\Autodesk\Revit 2024</RevitInstallDir>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == '' AND '$(RevitYear)' == '2025'">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == '' AND '$(RevitYear)' == '2026'">C:\Program Files\Autodesk\Revit 2026</RevitInstallDir>
@@ -34,11 +38,11 @@
 
   <ItemGroup>
     <Reference Include="RevitAPI">
-      <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
+      <HintPath>$(RevitInstallDir)/RevitAPI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="RevitAPIUI">
-      <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
+      <HintPath>$(RevitInstallDir)/RevitAPIUI.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
@@ -52,6 +56,13 @@
   </ItemGroup>
 
   <!-- Generate deployment-ready .addin with absolute DLL path after build (Windows only) -->
+  <Target Name="ValidateRevitApiReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(RevitInstallDir)/RevitAPI.dll')"
+           Text="Missing RevitAPI.dll at '$(RevitInstallDir)'. Set -p:RevitInstallDir=... or the matching -p:Revit2024InstallDir / -p:Revit2025InstallDir / -p:Revit2026InstallDir override." />
+    <Error Condition="!Exists('$(RevitInstallDir)/RevitAPIUI.dll')"
+           Text="Missing RevitAPIUI.dll at '$(RevitInstallDir)'. Set -p:RevitInstallDir=... or the matching -p:Revit2024InstallDir / -p:Revit2025InstallDir / -p:Revit2026InstallDir override." />
+  </Target>
+
   <Target Name="GenerateDeployManifest" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
     <Copy SourceFiles="RevitCli.addin" DestinationFiles="$(OutputPath)RevitCli.addin" />
     <XmlPoke XmlInputPath="$(OutputPath)RevitCli.addin"

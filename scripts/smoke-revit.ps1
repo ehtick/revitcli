@@ -9,6 +9,8 @@
 
     The filter must match exactly one element and should not depend on the
     parameter being written, so the restore command can target the same element.
+    Pass -V4Workbench to add the v4 terminal contract gate plus live read-only
+    inspect/schedule discovery against the active Revit document.
 .EXAMPLE
     .\scripts\smoke-revit.ps1 `
       -Version 2026 `
@@ -18,7 +20,8 @@
       -Filter 'Mark = W-01' `
       -Param Comments `
       -Value 'revitcli smoke' `
-      -Apply
+      -Apply `
+      -V4Workbench
 #>
 param(
     [ValidateSet("2024", "2025", "2026")]
@@ -50,7 +53,11 @@ param(
 
     [string]$FixProfile = "",
 
-    [string]$OutputPath = ""
+    [string]$OutputPath = "",
+
+    [switch]$V4Workbench,
+
+    [string]$V4ProjectDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -158,27 +165,77 @@ function Get-CliVersionMetadata {
     }
 }
 
+function Test-TransientRevitCliFailure {
+    param([int]$ExitCode, [string]$Text)
+
+    if ($ExitCode -eq 0) { return $false }
+
+    return $Text -match 'HttpClient\.Timeout' -or
+        $Text -match 'Communication error' -or
+        $Text -match 'request was canceled' -or
+        $Text -match 'TaskCanceledException'
+}
+
+function Test-RevitCliSmokeCommandCanRetry {
+    param([string[]]$CommandArgs)
+
+    if ($CommandArgs.Count -eq 0) { return $true }
+
+    switch ($CommandArgs[0]) {
+        "set" { return $CommandArgs -contains "--dry-run" }
+        "fix" { return $CommandArgs -contains "--dry-run" }
+        "rollback" { return $false }
+        "export" { return $false }
+        "publish" { return $false }
+        "plan" { return -not ($CommandArgs -contains "apply") }
+        "schedule" {
+            if ($CommandArgs.Count -gt 1 -and $CommandArgs[1] -eq "create") {
+                return $CommandArgs -contains "--dry-run"
+            }
+
+            return $true
+        }
+        default { return $true }
+    }
+}
+
 function Invoke-RevitCliSmoke {
     param(
         [string[]]$CommandArgs,
-        [int]$ExpectedExitCode = 0
+        [int]$ExpectedExitCode = 0,
+        [int]$MaxAttempts = 2,
+        [int]$RetryDelaySeconds = 2
     )
 
-    $output = & $RevitCli @CommandArgs 2>&1
-    $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
-    $text = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
-    $entry = [ordered]@{
-        command = "$RevitCli $($CommandArgs -join ' ')"
-        exitCode = $exitCode
-        output = $text
-    }
-    $script:Steps.Add($entry) | Out-Null
+    $canRetry = Test-RevitCliSmokeCommandCanRetry -CommandArgs $CommandArgs
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $output = & $RevitCli @CommandArgs 2>&1
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        $text = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        $entry = [ordered]@{
+            command = "$RevitCli $($CommandArgs -join ' ')"
+            attempt = $attempt
+            retrySafe = $canRetry
+            exitCode = $exitCode
+            output = $text
+        }
+        $script:Steps.Add($entry) | Out-Null
 
-    if ($exitCode -ne $ExpectedExitCode) {
+        if ($exitCode -eq $ExpectedExitCode) {
+            return $text
+        }
+
+        if ($canRetry -and
+            $attempt -lt $MaxAttempts -and
+            (Test-TransientRevitCliFailure -ExitCode $exitCode -Text $text)) {
+            Start-Sleep -Seconds $RetryDelaySeconds
+            continue
+        }
+
         throw "Command failed with exit code ${exitCode}: $($entry.command)`n$text"
     }
 
-    return $text
+    throw "Command failed after $MaxAttempts attempts: $RevitCli $($CommandArgs -join ' ')"
 }
 
 function Convert-JsonArray {
@@ -195,6 +252,66 @@ function Convert-JsonArray {
 
     if ($value -is [array]) { return ,@($value) }
     return ,@($value)
+}
+
+function Convert-JsonObject {
+    param([string]$Json, [string]$Label)
+    try {
+        $value = $Json | ConvertFrom-Json
+    } catch {
+        throw "$Label did not return valid JSON: $($_.Exception.Message)`n$Json"
+    }
+
+    if ($null -eq $value) {
+        throw "$Label returned empty JSON."
+    }
+
+    if ($value -is [array]) {
+        throw "$Label returned a JSON array; expected an object."
+    }
+
+    return $value
+}
+
+function Invoke-V4WorkbenchSmoke {
+    param(
+        [string]$ProjectDir,
+        [string]$Version,
+        [string]$Category,
+        [long]$ElementId
+    )
+
+    $dirArgs = @()
+    if (-not [string]::IsNullOrWhiteSpace($ProjectDir)) {
+        $dirArgs += @("--dir", $ProjectDir)
+    }
+
+    $verifyArgs = @("workbench", "verify") + $dirArgs + @("--output", "json")
+    $verifyJson = Invoke-RevitCliSmoke -CommandArgs $verifyArgs
+    $verify = Convert-JsonObject $verifyJson "workbench verify"
+    if ($verify.success -ne $true) {
+        throw "workbench verify reported success=false."
+    }
+
+    $handoffArgs = @("workbench", "handoff") + $dirArgs + @("--output", "json")
+    Convert-JsonObject (Invoke-RevitCliSmoke -CommandArgs $handoffArgs) "workbench handoff" | Out-Null
+
+    $status = Convert-JsonObject (Invoke-RevitCliSmoke -CommandArgs @("status", "--output", "json")) "status --output json"
+    if ([int]$status.revitYear -ne [int]$Version) {
+        throw "status --output json reported Revit year $($status.revitYear), expected $Version."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$status.documentName)) {
+        throw "status --output json reported no active document; open the controlled smoke model before v4 workbench smoke."
+    }
+
+    Convert-JsonArray (Invoke-RevitCliSmoke -CommandArgs @("inspect", "categories", "--output", "json")) "inspect categories" | Out-Null
+    Convert-JsonArray (Invoke-RevitCliSmoke -CommandArgs @("inspect", "params", $Category, "--output", "json")) "inspect params" | Out-Null
+    Convert-JsonArray (Invoke-RevitCliSmoke -CommandArgs @("inspect", "schedules", "--output", "json")) "inspect schedules" | Out-Null
+    Convert-JsonArray (Invoke-RevitCliSmoke -CommandArgs @("inspect", "sheets", "--output", "json")) "inspect sheets" | Out-Null
+    Convert-JsonArray (Invoke-RevitCliSmoke -CommandArgs @("schedule", "list", "--output", "json")) "schedule list" | Out-Null
+    Convert-JsonObject (Invoke-RevitCliSmoke -CommandArgs @("schedule", "export", "--category", $Category, "--fields", "Name,Category,Type Name", "--output", "json")) "schedule export" | Out-Null
+    Convert-JsonObject (Invoke-RevitCliSmoke -CommandArgs @("schedule", "create", "--category", $Category, "--fields", "Name", "--name", "RevitCli Smoke Preview", "--dry-run", "--output", "json")) "schedule create dry-run" | Out-Null
+    Convert-JsonArray (Invoke-RevitCliSmoke -CommandArgs @("query", "--id", $ElementId.ToString(), "--output", "json")) "query target json" | Out-Null
 }
 
 function Get-ElementParameterProperty {
@@ -259,6 +376,7 @@ $fixBaselinePath = ""
 $fixJournalPath = ""
 
 $Steps = [System.Collections.Generic.List[object]]::new()
+$resolvedV4ProjectDir = ""
 $installDir = Resolve-RevitInstallDir -Version $Version -OverridePath $RevitInstallDir
 $installDirEnvName = "REVITCLI_REVIT${Version}_INSTALL_DIR"
 $previousInstallDirEnvValue = [Environment]::GetEnvironmentVariable($installDirEnvName)
@@ -336,6 +454,15 @@ try {
         "--dry-run"
     )
     Assert-DryRunPreview -Text $dryRunText -ElementId $ElementId -OldValue $oldValue -NewValue $Value
+
+    if ($V4Workbench) {
+        $resolvedV4ProjectDir = if ([string]::IsNullOrWhiteSpace($V4ProjectDir)) {
+            (Get-Location).Path
+        } else {
+            [System.IO.Path]::GetFullPath($V4ProjectDir)
+        }
+        Invoke-V4WorkbenchSmoke -ProjectDir $resolvedV4ProjectDir -Version $Version -Category $Category -ElementId $ElementId
+    }
 
     if (-not $Apply -and -not $FixApply) {
         Write-Host "Dry-run smoke completed. Re-run with -Apply to perform the write/confirm/restore steps."
@@ -475,6 +602,8 @@ try {
         fixProfile = $FixProfile
         fixBaselinePath = $fixBaselinePath
         fixJournalPath = $fixJournalPath
+        v4Workbench = [bool]$V4Workbench
+        v4ProjectDir = $resolvedV4ProjectDir
         fixApplyError = if ($null -ne $fixApplyFailure) { $fixApplyFailure.Exception.Message } else { "" }
         fixRollbackError = if ($null -ne $fixRollbackFailure) { $fixRollbackFailure.Exception.Message } else { "" }
         failure = if ($null -ne $scriptFailure) { $scriptFailure.Exception.Message } else { "" }

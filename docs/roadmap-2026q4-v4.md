@@ -402,8 +402,73 @@ Target outcome:
   report, standards, family, history, and journal.
 - A stable "Codex CLI can call this" contract: predictable exit codes,
   readable tables, compact JSON, dry-run everywhere, and receipts for
-  writes/exports. First v4 contract slice shipped through
-  `status --output json`, `doctor --output json`, `check --output json`,
+  writes/exports. First v4 contract slices shipped through
+  `workbench contract --output json` for a compact
+  `workbench-contract.v1` command vocabulary/risk/dry-run/receipt/exit-code
+  contract with callable `commandPaths` such as `plan apply`,
+  `workflow review`, `workbench verify`, `workbench receipts`, and
+  `workbench paths`, and `deliverables bundle`,
+  `workbench verify --dir <path> --output json` for a local
+  `workbench-verification.v1` readiness gate that checks required callable
+  paths, schedule-create dry-run/receipt/output/safeguard coverage, workflow
+  template validity, workflow duration telemetry, workflow receipt triage,
+  handoff readiness actions and recommended command phases,
+  shell completion coverage for inspect/workbench/workflow/schedule discovery and
+  output formats, and non-goal exclusions for MCP, LLM/prompt/chat/agent paths,
+  dashboard dependency, and cloud sync, including a guard that legacy
+  `mcp serve` remains hidden, deprecated, and excluded from public discovery,
+  `workbench receipts --output json`
+  for a compact `workbench-receipts.v1` schema/path/dry-run/review command index,
+  `workbench paths --output json` for a flat `workbench-paths.v1` callable
+  path/risk/output/dry-run/receipt/exit-code index that intentionally excludes
+  write paths until they have a dry-run/receipt contract,
+  `workbench exits --output json`
+  for a compact `workbench-exit-codes.v1` success/failure semantics index,
+  `workbench extensions --output json`
+  for a compact `workbench-extensions.v1` terminal extension-point index,
+  `workbench outputs --output json`
+  for a compact `workbench-outputs.v1` table/JSON/Markdown schema index,
+  `workbench safeguards --output json`
+  for a compact `workbench-safeguards.v1` dry-run/approval/receipt/review index,
+  `workbench project --output json`
+  for a compact `workbench-project.v1` local artifact inventory covering
+  profile, standards, workflows, workflow receipts, history, journal, delivery
+  manifests, delivery receipts, plans, and reports with review commands,
+  `workbench handoff --dir <path> --output json`
+  for a compact `workbench-handoff.v1` one-command terminal handoff that
+  combines verification status, readiness check summaries, project artifact
+  counts, machine-readable readiness actions for actionable missing or empty
+  project artifacts, recommended next commands including workflow discovery,
+  saved-plan discovery, and schedule-create dry-run, and non-goal reminders,
+	  `schedule create --dry-run --output json`
+	  for a compact `schedule-create.v1` preview plus
+	  `schedule-create-receipt.v1` write receipts after real ViewSchedule creates,
+	  `scripts/smoke-revit.ps1 -V4Workbench`
+	  for a Windows/Revit live smoke gate that combines the add-in status/query/set
+	  baseline with workbench verification and live read-only inspect/schedule
+	  discovery; the Revit 2026 dry-run leg passed on 2026-05-19 with final
+	  clean retry-safe report evidence after validation exposed one transient
+	  add-in timeout, while apply/restore remains a controlled-model gate
+	  requiring a disposable writable text parameter,
+	  `inspect workflows --output json`
+	  for a compact `inspect-workflows.v1` local workflow YAML discovery envelope,
+  `inspect plans --output json`
+  for a compact `inspect-plans.v1` saved mutation plan discovery envelope with
+  plan show, dry-run apply, approved apply, receipt, and rollback-preview
+  commands,
+  `score --history <duration> --output json`
+  for a compact `model-health-history.v1` local model-health trend envelope,
+  `examples <topic> --output json`
+  for deterministic `example-recipes.v1` prompt-to-command recipes,
+  `examples workbench` for a copy-paste v4 discovery path,
+  `workflow review <file> --output json` for a `workflow-review.v1`
+  approval/evidence handoff with pre-run workbench verify/handoff commands and
+  inferred project artifact readiness, saved-plan review through
+  `inspect plans --dir <path>`, and post-run receipt triage commands before
+  workflow runs, with `--dir <path>` preserved in pre-run handoff commands and
+  artifact checks when reviewing another project, plus
+  `status --output json`,
+  `doctor --output json`, `check --output json`,
   `export --dry-run --output json`, `publish --dry-run --output json`,
   `schedule list --output json`, and journal `--output json` for
   machine-readable setup checks, connection status, check gate results,
@@ -433,12 +498,23 @@ Target outcome:
   pack-version / compatibility metadata during validation.
 - Bulk writes are plan-based and reversible.
 - Deliverables have manifests, receipts, and bundle receipts.
-- Delivery workflows have run receipts and a local `workflow receipts` review
-  surface for failed-run triage and handoff notes.
+- Delivery workflows have `inspect-workflows.v1` local workflow discovery, run
+  receipts, `workflow-review.v1` pre-run workbench handoff and post-run receipt
+  triage commands, per-step `--timeout-ms` execution bounds, and a local
+  `workflow receipts` review surface for failed-run, workflow-name,
+  minimum-duration, duration sorting, recent-window filtering, and handoff
+  triage notes. The v4 verifier also validates the built-in `pre-issue`,
+  `weekly-health`, `export-package`, and `family-cleanup` templates so
+  delivery-day workflows cannot drift silently.
 - Model health is trackable from terminal and optionally visible in the
-  dashboard.
+  dashboard. First terminal contract slice shipped through
+  `score --history <duration> --output json|markdown`, plus workbench contract,
+  path, and verification coverage for `model-health-history.v1`.
 - Extension points exist for custom rules/workflows, but they serve the
-  terminal product, not an MCP ecosystem.
+  terminal product, not an MCP ecosystem. First terminal contract slice shipped
+  through `workbench extensions --output json|markdown`, covering profiles,
+  workflow YAML, standards packs, family rules, and recipe docs with validation
+  and preview commands.
 
 Non-goals:
 
@@ -526,9 +602,10 @@ RevitCli into a hidden AI/MCP platform instead of a dependable CLI.
 2. Keep existing `revitcli mcp serve` hidden and deprecated; remove it only
    with a future breaking-change notice.
 3. Keep v2.3 release packaging focused on the version/tag flow, CI signal,
-   and Windows/Revit smoke evidence. Current CLI-only CI runs `release verify`
-   and the portable tests before tag publication; live smoke evidence remains
-   a Windows/Revit release gate.
+   and Windows/Revit smoke evidence. Current CLI-only CI runs `release verify`,
+   `workbench verify`, and the portable tests before tag publication; live
+   smoke evidence remains a Windows/Revit release gate through
+   `scripts/smoke-revit.ps1 -V4Workbench`.
 4. Extend inspect/discover and workflow review beyond the shipped sheets,
    schedules, writable parameter metadata, delivery receipts, and standards
    checks into deeper workflows that directly support

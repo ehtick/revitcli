@@ -40,6 +40,186 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   journal command sequences, making the v3.x local knowledge-capture path
   complete without adding hidden writes or runtime dependencies.
 
+### Added — v4.0 architect terminal BIM workbench
+
+- `revitcli workbench contract` prints a read-only `workbench-contract.v1`
+  command contract as table, compact JSON, or Markdown so Codex CLI can
+  discover stable command vocabulary, dry-run expectations, receipt locations,
+  and exit-code notes without depending on dashboard, cloud, LLM runtime, or
+  MCP extensions.
+- `workbench-contract.v1` now includes callable `commandPaths` such as
+  `plan apply`, `workflow review`, `workbench verify`, `workbench receipts`,
+  `workbench paths`, `workbench exits`, `workbench project`,
+  `workbench handoff`, and `deliverables bundle`;
+  `workbench verify` checks that required callable paths remain present.
+- `revitcli workbench receipts` prints a read-only `workbench-receipts.v1`
+  index of receipt schemas, write triggers, path patterns, dry-run commands,
+  and review commands for export, publish, plan apply, workflow run, and
+  delivery bundle evidence.
+- `revitcli workbench paths` prints a read-only `workbench-paths.v1` flat
+  callable path index with risk, output support, dry-run/receipt expectations,
+  and exit-code notes.
+- `revitcli workbench exits` prints a read-only `workbench-exit-codes.v1`
+  index so shell scripts and Codex CLI can review success/failure semantics
+  without scraping help text.
+- `revitcli workbench extensions` prints a read-only
+  `workbench-extensions.v1` index of terminal-first extension points, file
+  patterns, validation commands, preview commands, and write behavior for
+  profiles, workflow YAML, standards packs, family rules, and recipe docs.
+- `revitcli workbench outputs` prints a read-only `workbench-outputs.v1`
+  index of readable table support, compact JSON schema names, and Markdown
+  support for key Codex-callable terminal paths.
+- `revitcli workbench safeguards` prints a read-only
+  `workbench-safeguards.v1` index of dry-run, approval, receipt, and review
+  commands for risky export/write/local-write/mixed terminal paths.
+- `revitcli workbench project --dir <path>` prints a read-only
+  `workbench-project.v1` inventory of local project artifacts such as
+  profiles, standards, workflows, workflow receipts, history, journal,
+  delivery manifests, delivery receipts, plans, and reports, including counts
+  and review commands without requiring Revit, dashboard, cloud, MCP, or an LLM
+  runtime.
+- `revitcli workbench handoff --dir <path>` prints a read-only
+  `workbench-handoff.v1` summary of contract verification status, project
+  readiness check summaries, artifact counts, machine-readable readiness
+  actions for actionable missing or empty local artifacts, recommended next
+  terminal commands, and non-goal reminders for a single Codex CLI project handoff
+  command; it now includes saved-plan discovery plus the
+  `schedule create --dry-run --output json` preview path.
+- `revitcli schedule create --dry-run --output json|markdown` now prints a
+  `schedule-create.v1` preview without calling Revit, validates unsupported
+  filters and sort-field requirements before writes, and successful real
+  creates write `schedule-create-receipt.v1` receipts under
+  `.revitcli/receipts` by default.
+- `schedule create --output json|markdown` now returns `schedule-create.v1`
+  failure envelopes for create validation and server errors, making the write
+  path machine-readable on both success and failure.
+- `schedule-create.v1` success output now includes `receiptRequired` and
+  `receiptSaved` so a real write with missing local evidence is visible to
+  scripts even when the Revit operation itself succeeded.
+- `workbench verify` now guards the callable path index against write commands
+  without dry-run/receipt contracts; `schedule create` is now exposed because
+  it has both.
+- `workbench verify` now also guards the v4 terminal contract against LLM
+  runtime, prompt/chat/agent, dashboard dependency, SaaS/cloud sync, and ACC
+  command paths.
+- `workbench verify` now checks the legacy MCP compatibility command remains
+  hidden, deprecated, and excluded from public command discovery.
+- `workbench verify` now checks that the extension-point surface covers
+  profiles, workflow YAML, standards packs, and family rules through terminal
+  validation and preview commands.
+- `workbench verify` now checks that key output schemas such as
+  `workbench-contract.v1`, `workbench-project.v1`, `workbench-handoff.v1`,
+  `schedule-create.v1`, `workflow-review.v1`, `workflow-receipts.v1`,
+  `example-recipes.v1`, and `model-health-history.v1` remain indexed.
+- `workbench verify` now checks the project inventory surface for expected
+  local artifacts and review commands.
+- `workbench verify` now checks the handoff readiness-action surface so
+  actionable missing or empty project artifacts keep bootstrap/review commands
+  in the `workbench-handoff.v1` contract.
+- `workbench verify` now checks the handoff recommended command surface so
+  workflow discovery, saved-plan discovery, and schedule-create dry-run stay in
+  the `workbench-handoff.v1` next-command list.
+- `workbench verify` now includes a `schedule-create-safety` check so the
+  newly callable schedule-write path must keep dry-run, receipt, output, and
+  safeguard coverage together.
+- `workbench verify` now checks that core risky paths keep dry-run/approval
+  safeguards indexed for export, publish, plan apply, rollback, workflow run,
+  and delivery bundle.
+- `revitcli examples <topic> --output json|markdown` exposes the existing
+  architect workflow examples as an `example-recipes.v1` envelope and
+  handoff-ready Markdown, giving Codex CLI a deterministic prompt-to-command
+  recipe surface without adding a prompt interpreter.
+- `revitcli workbench verify` prints a read-only `workbench-verification.v1`
+  readiness report for root-command alignment, MCP public exclusion, recipe
+  output support, risky-command dry-run/receipt coverage, and exit-code notes.
+- `workbench verify --dir <path>` now evaluates project-inventory readiness
+  for a selected project directory, and `workbench handoff --dir <path>` carries
+  that directory into its follow-up verify/project/workflow discovery commands.
+- `revitcli inspect workflows --output json|markdown` adds a read-only
+  `inspect-workflows.v1` local workflow YAML inventory with
+  validate/simulate/review/dry-run/approved-run/receipt next commands.
+- Workflow validation now recognizes `report knowledge`, `inspect workflows`,
+  `inspect plans`, `workflow review`, and read-only `workbench` handoff
+  commands as existing RevitCli command paths, and rejects unknown `workbench`
+  subcommands before execution.
+- `workflow validate`, `workflow simulate`, and `workflow run` now reject
+  unknown `--output` values before reading or executing workflow steps, keeping
+  v4 workflow reports predictable for scripts and Codex CLI.
+- Shell completions now mirror those workflow output contracts: `workflow
+  suggest --output` offers table/json/yaml, while validate/simulate/review/run,
+  examples, and receipts offer table/json/markdown. Schedule completions now
+  keep list/create on table/json/markdown and reserve CSV for `schedule export`.
+- `workbench verify` now checks the shell completion contract for
+  inspect/workbench/workflow/schedule v4 subcommands, key handoff options, and
+  subcommand-specific output formats.
+- zsh completions now expose `workbench --dir`, `schedule --dry-run`, and
+  `schedule --receipt-dir` so terminal discovery covers local project handoff
+  and schedule-create receipt paths.
+- `revitcli workflow review <file>` adds a read-only `workflow-review.v1`
+  handoff surface with pre-run workbench verify/handoff commands, approval
+  counts, inferred project artifact readiness for workflow step dependencies,
+  saved-plan review through `inspect plans --dir <path>`, recommended
+  validate/simulate/dry-run commands, post-run receipt triage commands,
+  acceptance evidence hints, and workflow issues before any run.
+- `workflow review --dir <path>` now carries that project directory into its
+  pre-run workbench verify/handoff and workflow discovery commands.
+- `workflow run --timeout-ms <n>` now bounds each executed workflow step; timed
+  out steps return exit code 124, record `timedOut` and `timeoutMs` in
+  `workflow-run-receipt.v1`, skip remaining steps unless `--continue-on-error`
+  is set, and still write receipt evidence.
+- Add-in builds now choose a single target framework from `RevitYear` by
+  default (`2024` -> `net48`, `2025/2026` -> `net8.0-windows`) and accept
+  per-year `Revit2024InstallDir` / `Revit2025InstallDir` /
+  `Revit2026InstallDir` MSBuild overrides.
+- `scripts/smoke-revit.ps1` and the legacy `smoke-revit2026.ps1` now expose
+  `-V4Workbench` to run the v4 workbench verifier and live read-only
+  inspect/schedule discovery against the active Revit document during real
+  smoke.
+- Real Revit smoke scripts now retry explicitly transient add-in communication
+  timeouts only for read-only or dry-run commands, record the attempt number
+  and retry-safety flag for each command step, and preserve the failed attempt
+  in the report so flake evidence is visible instead of hidden.
+- `workflow-run-receipt.v1` now records total run duration plus per-step
+  duration metadata for executed steps; `workflow receipts` surfaces duration
+  evidence in table, JSON, and Markdown output, and `workbench verify` checks
+  the duration and timeout telemetry contract.
+- `workflow receipts --min-duration-ms` filters local workflow receipts by
+  run duration for long-running automation triage.
+- `workflow receipts --sort duration|completed` controls receipt ordering for
+  slow-run review while keeping completed-time ordering as the default.
+- `workflow receipts --window 24h|7d|60m` filters receipt review to a recent
+  local time window for deadline-day automation triage.
+- `workbench verify` now checks the workflow receipt triage contract for
+  name, minimum-duration, duration-sort, and recent-window review.
+- `workbench verify` now checks the inspect workflow discovery surface for
+  `inspect-workflows.v1` JSON/Markdown handoff coverage.
+- `revitcli inspect plans --dir <path> --output json|markdown` adds a
+  read-only `inspect-plans.v1` saved mutation plan inventory with action
+  counts, high-impact/invalid status, receipt detection, `plan show`,
+  dry-run apply, approved apply, and rollback-preview commands.
+- `workbench verify` now checks the inspect plan discovery surface for
+  `inspect-plans.v1` JSON/Markdown handoff coverage.
+- `workbench verify` now checks the built-in workflow template surface so
+  `pre-issue`, `weekly-health`, `export-package`, and `family-cleanup` must
+  exist, load, simulate without issues, and keep acceptance examples.
+- `workbench verify` now checks the `workflow-review.v1` handoff contract for
+  pre-run workbench handoff commands, project artifact readiness, and post-run
+  receipt triage commands.
+- Ubuntu CI now runs `workbench verify --dir . --output json`, and
+  `release verify` checks that this v4 contract gate remains in CI before the
+  separate Windows/Revit live smoke gate.
+- `revitcli score --history <duration> --output json|markdown` now exposes
+  local model-health trend output as `model-health-history.v1`, and the v4
+  workbench contract/path index includes `score --history` as a Codex-callable
+  terminal health review path.
+- `revitcli examples workbench` documents the v4 workbench contract, verifier,
+  project inventory, terminal handoff, recipe JSON, and workflow-review path as a single
+  copy-paste terminal topic.
+- `revitcli examples schedule` now includes a schedule-create dry-run command
+  so ViewSchedule writes have a copy-paste preview path.
+- Shell completions now include `report knowledge` so the local knowledge
+  report is discoverable through the same terminal-first command surface.
+
 ## [2.3.0] - 2026-05-17
 
 ### Release
@@ -105,7 +285,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   architect-readable delivery handoff summaries for manifest receipt review and
   bundle dry-runs.
 - `revitcli workflow receipts` reviews local `workflow-run-receipt.v1` files
-  with table, JSON, or Markdown output plus `--failed-only` triage.
+  with table, JSON, or Markdown output plus `--failed-only` and `--name`
+  triage.
 - `revitcli inspect categories|params|schedules|sheets --output markdown`
   adds handoff-ready discovery reports for Codex CLI and architect review.
 - `revitcli schedule list|export --output markdown` adds handoff-ready

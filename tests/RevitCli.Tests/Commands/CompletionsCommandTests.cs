@@ -68,7 +68,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("compgen -W \"table json html sarif pr-comment\" -- \"$cur\"", script);
         Assert.Contains("compgen -W \"show set\"", script);
         Assert.Contains("compgen -W \"table json\" -- \"$cur\"", script);
-        Assert.Contains("categories params schedules sheets --output --include-empty --category --name --writable-only --missing-only --ready-only --empty-only --sheets --issues-only", script);
+        Assert.Contains("categories params schedules sheets workflows plans --output --dir --include-empty --category --name --writable-only --missing-only --ready-only --empty-only --sheets --issues-only", script);
         Assert.Contains("defaultOutput)", script);
         Assert.Contains("compgen -f -- \"$cur\"", script);
         Assert.Contains("--profile", script);
@@ -93,13 +93,13 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("--report", script);
         Assert.Contains("--review", script);
         Assert.Contains("table json markdown", script);
-        Assert.Contains("init validate simulate run suggest examples receipts --dir --journal --output --dry-run --yes --continue-on-error --force --min-count --max-steps --limit --failed-only", script);
-        Assert.Contains("weekly --window --dir --history-dir --journal --output --report", script);
+        Assert.Contains("init validate simulate review run suggest examples receipts --dir --journal --output --dry-run --yes --continue-on-error --timeout-ms --force --min-count --max-steps --limit --failed-only --name --min-duration-ms --sort --window", script);
+        Assert.Contains("weekly knowledge --window --dir --history-dir --journal --output --report", script);
         Assert.Contains("list stats verify bundle --dir --bundle-path --dry-run --force --output", script);
         Assert.Contains("install validate --manifest --dir --output --ref --subpath --force --dry-run", script);
         Assert.Contains("verify --root --output --tag --strict", script);
         Assert.Contains("verify index init show --against --rule --issues-only --output --path --force", script);
-        Assert.Contains("list export create --category --name --fields --filter --sort --sort-desc --output --template --place-on-sheet", script);
+        Assert.Contains("list export create --category --name --fields --filter --sort --sort-desc --output --template --place-on-sheet --dry-run --receipt-dir", script);
         Assert.Contains("compgen -W \"table json markdown\" -- \"$cur\"", script);
         Assert.Contains("compgen -W \"table json csv markdown\" -- \"$cur\"", script);
         var rollbackBlock = ExtractBlock(
@@ -133,7 +133,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'release:Verify local release readiness and CI guardrails'", script);
         Assert.Contains("'sheets:Verify sheet numbering and local sheet-frame expectations'", script);
         Assert.Contains("'interactive:Enter interactive REPL mode'", script);
-        Assert.Contains("categories params schedules sheets", script);
+        Assert.Contains("categories params schedules sheets workflows plans", script);
         Assert.Contains("--empty-only[Only zero-row schedules]", script);
         Assert.Contains("show stats review sign verify", script);
         Assert.Contains("--limit[Maximum entries to show]", script);
@@ -141,7 +141,12 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("--action[Filter entries by action]", script);
         Assert.Contains("--review[Render anomaly/notable/routine review]", script);
         Assert.Contains("--output[Output format]:format:(table json markdown)", script);
-        Assert.Contains("init validate simulate run suggest examples receipts", script);
+        Assert.Contains("init validate simulate review run suggest examples receipts", script);
+        Assert.Contains("--name[Only show receipts for workflow name]:name:", script);
+        Assert.Contains("--min-duration-ms[Only show workflow receipts at or above duration]:ms:", script);
+        Assert.Contains("--timeout-ms[Maximum milliseconds per executed workflow step]:ms:", script);
+        Assert.Contains("--sort[Sort workflow receipts]:sort:(completed duration)", script);
+        Assert.Contains("--window[Only show workflow receipts in a recent window]:window:", script);
         Assert.Contains("weekly", script);
         Assert.Contains("list stats verify bundle", script);
         Assert.Contains("install validate", script);
@@ -152,6 +157,8 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("--path[Sheet index path]", script);
         Assert.Contains("list export create", script);
         Assert.Contains("--place-on-sheet[Sheet pattern]", script);
+        Assert.Contains("--dry-run[Preview schedule creation without writing]", script);
+        Assert.Contains("--receipt-dir[Directory for schedule-create receipts]", script);
         Assert.Contains("--output[Output format]:format:(table json csv markdown)", script);
         Assert.Contains("--manifest[Standards manifest file]", script);
         Assert.Contains("--dry-run[Show install plan without writing files]", script);
@@ -184,7 +191,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("$doctorOutputFormats = @('table', 'json')", script);
         Assert.Contains("$revitYears = @('2024', '2025', '2026')", script);
         Assert.Contains("'check' = @('--profile', '--output', '--report', '--no-save')", script);
-        Assert.Contains("'inspect' = @('categories', 'params', 'schedules', 'sheets', '--output', '--include-empty', '--category', '--name', '--writable-only', '--missing-only', '--ready-only', '--empty-only', '--sheets', '--issues-only')", script);
+        Assert.Contains("'inspect' = @('categories', 'params', 'schedules', 'sheets', 'workflows', 'plans', '--output', '--dir', '--include-empty', '--category', '--name', '--writable-only', '--missing-only', '--ready-only', '--empty-only', '--sheets', '--issues-only')", script);
         Assert.Contains("$inspectOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("$checkOutputFormats = @('table', 'json', 'html', 'sarif', 'pr-comment')", script);
         Assert.Contains("'status' = @('--output')", script);
@@ -212,9 +219,11 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'--plan-output'", script);
         Assert.Contains("$planOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("$diffOutputFormats = @('table', 'json', 'markdown')", script);
-        Assert.Contains("'init', 'validate', 'simulate', 'run', 'suggest', 'examples', 'receipts', '--dir', '--journal', '--output', '--dry-run', '--yes', '--continue-on-error', '--force', '--min-count', '--max-steps', '--limit', '--failed-only'", script);
-        Assert.Contains("$workflowOutputFormats = @('table', 'json', 'yaml', 'markdown')", script);
-        Assert.Contains("'weekly', '--window', '--dir', '--history-dir', '--journal', '--output', '--report'", script);
+        Assert.Contains("'init', 'validate', 'simulate', 'review', 'run', 'suggest', 'examples', 'receipts', '--dir', '--journal', '--output', '--dry-run', '--yes', '--continue-on-error', '--timeout-ms', '--force', '--min-count', '--max-steps', '--limit', '--failed-only', '--name', '--min-duration-ms', '--sort', '--window'", script);
+        Assert.Contains("$workflowSubcommands = @('init', 'validate', 'simulate', 'review', 'run', 'suggest', 'examples', 'receipts')", script);
+        Assert.Contains("$workflowReportOutputFormats = @('table', 'json', 'markdown')", script);
+        Assert.Contains("$workflowSuggestOutputFormats = @('table', 'json', 'yaml')", script);
+        Assert.Contains("'weekly', 'knowledge', '--window', '--dir', '--history-dir', '--journal', '--output', '--report'", script);
         Assert.Contains("$reportOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("'list', 'stats', 'verify', 'bundle', '--dir', '--bundle-path', '--dry-run', '--force', '--output'", script);
         Assert.Contains("$deliverablesOutputFormats = @('table', 'json', 'markdown')", script);
@@ -225,7 +234,10 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'sheets' = @('verify', 'index', 'init', 'show', '--against', '--rule', '--issues-only', '--output', '--path', '--force')", script);
         Assert.Contains("$sheetsOutputFormats = @('table', 'json', 'markdown', 'yaml')", script);
         Assert.Contains("$scheduleSubcommands = @('list', 'export', 'create')", script);
-        Assert.Contains("$scheduleOutputFormats = @('table', 'json', 'csv', 'markdown')", script);
+        Assert.Contains("$scheduleListOutputFormats = @('table', 'json', 'markdown')", script);
+        Assert.Contains("$scheduleExportOutputFormats = @('table', 'json', 'csv', 'markdown')", script);
+        Assert.Contains("$scheduleCreateOutputFormats = @('table', 'json', 'markdown')", script);
+        Assert.Contains("'--receipt-dir'", script);
         Assert.Contains("'ls', 'validate', 'purge', 'export', '--unused', '--category', '--rules', '--rules-from'", script);
         Assert.Contains("'--report'", script);
         Assert.Contains("$familyRules = @('name-non-empty', 'name-no-path-chars', 'category-known', 'loadable-or-in-place')", script);
@@ -240,6 +252,8 @@ public class CompletionsCommandTests : IDisposable
             "        'examples' = @(",
             "        'publish' = @(");
         Assert.Contains("'inspect', 'sheets', 'schedule'", examplesOptionsBlock);
+        Assert.Contains("'--output'", examplesOptionsBlock);
+        Assert.Contains("$exampleOutputFormats = @('table', 'json', 'markdown')", script);
         var rollbackOptionsBlock = ExtractBlock(
             script,
             "        'rollback' = @(",
@@ -250,6 +264,62 @@ public class CompletionsCommandTests : IDisposable
             "        'rollback' {",
             "        'import' {");
         Assert.Contains("New-RevitCliFileCompletionResults -Path $wordToComplete", rollbackSwitchBlock);
+    }
+
+    [Fact]
+    public async Task Completions_UseSubcommandSpecificWorkflowAndScheduleOutputFormats()
+    {
+        var bashOut = new StringWriter();
+        Console.SetOut(bashOut);
+        var bashExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "bash" });
+        var bash = bashOut.ToString();
+
+        Assert.Equal(0, bashExitCode);
+        var bashWorkflow = ExtractBlock(bash, "        workflow)", "        report)");
+        Assert.Contains("if [ \"$subcmd\" = \"suggest\" ]; then", bashWorkflow);
+        Assert.Contains("compgen -W \"table json yaml\" -- \"$cur\"", bashWorkflow);
+        Assert.Contains("compgen -W \"table json markdown\" -- \"$cur\"", bashWorkflow);
+        Assert.DoesNotContain("table json yaml markdown", bashWorkflow);
+        var bashSchedule = ExtractBlock(bash, "        schedule)", "        family)");
+        Assert.Contains("if [ \"$subcmd\" = \"list\" ]; then", bashSchedule);
+        Assert.Contains("elif [ \"$subcmd\" = \"create\" ]; then", bashSchedule);
+        Assert.Contains("compgen -W \"table json csv markdown\" -- \"$cur\"", bashSchedule);
+
+        var zshOut = new StringWriter();
+        Console.SetOut(zshOut);
+        var zshExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "zsh" });
+        var zsh = zshOut.ToString();
+
+        Assert.Equal(0, zshExitCode);
+        var zshWorkflow = ExtractBlock(zsh, "                workflow)", "                report)");
+        Assert.Contains("if [[ \"$words[3]\" == \"suggest\" ]]; then", zshWorkflow);
+        Assert.Contains("--output[Output format]:format:(table json yaml)", zshWorkflow);
+        Assert.Contains("--output[Output format]:format:(table json markdown)", zshWorkflow);
+        Assert.DoesNotContain("--output[Output format]:format:(table json yaml markdown)", zshWorkflow);
+        var zshSchedule = ExtractBlock(zsh, "                schedule)", "                family)");
+        Assert.Contains("if [[ \"$words[3]\" == \"list\" ]]; then", zshSchedule);
+        Assert.Contains("elif [[ \"$words[3]\" == \"create\" ]]; then", zshSchedule);
+        Assert.Contains("--output[Output format]:format:(table json csv markdown)", zshSchedule);
+
+        var pwshOut = new StringWriter();
+        Console.SetOut(pwshOut);
+        var pwshExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "powershell" });
+        var pwsh = pwshOut.ToString();
+
+        Assert.Equal(0, pwshExitCode);
+        var pwshWorkflow = ExtractBlock(pwsh, "        'workflow' {", "        'report' {");
+        Assert.Contains("$tokens[2] -eq 'suggest'", pwshWorkflow);
+        Assert.Contains("$workflowSuggestOutputFormats", pwshWorkflow);
+        Assert.Contains("$workflowReportOutputFormats", pwshWorkflow);
+        Assert.Contains("$workflowSubcommands", pwshWorkflow);
+        Assert.DoesNotContain("$workflowOutputFormats", pwshWorkflow);
+        var pwshSchedule = ExtractBlock(pwsh, "        'schedule' {", "        'family' {");
+        Assert.Contains("$tokens[2] -eq 'list'", pwshSchedule);
+        Assert.Contains("$tokens[2] -eq 'create'", pwshSchedule);
+        Assert.Contains("$scheduleListOutputFormats", pwshSchedule);
+        Assert.Contains("$scheduleCreateOutputFormats", pwshSchedule);
+        Assert.Contains("$scheduleExportOutputFormats", pwshSchedule);
+        Assert.DoesNotContain("$scheduleOutputFormats", pwshSchedule);
     }
 
     [Fact]
@@ -361,6 +431,98 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'--match-by'", script);
         Assert.Contains("'--encoding'", script);
         Assert.Contains("'auto', 'utf-8', 'gbk'", script);
+    }
+
+    [Fact]
+    public async Task Completions_Include_WorkbenchContract()
+    {
+        var bashOut = new StringWriter();
+        Console.SetOut(bashOut);
+        var bashExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "bash" });
+        var bash = bashOut.ToString();
+
+        Assert.Equal(0, bashExitCode);
+        Assert.Contains("workbench)", bash);
+        Assert.Contains("contract verify receipts paths exits extensions outputs safeguards project handoff --dir --output", bash);
+        Assert.Contains("compgen -W \"table json markdown\" -- \"$cur\"", bash);
+
+        var zshOut = new StringWriter();
+        Console.SetOut(zshOut);
+        var zshExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "zsh" });
+        var zsh = zshOut.ToString();
+
+        Assert.Equal(0, zshExitCode);
+        Assert.Contains("'workbench:Show stable terminal workbench contract for Codex CLI'", zsh);
+        Assert.Contains("workbench)", zsh);
+        Assert.Contains("_values 'subcommand' contract verify receipts paths exits extensions outputs safeguards project handoff", zsh);
+        Assert.Contains("--dir[Project directory]:dir:_directories", zsh);
+        Assert.Contains("--output[Output format]:format:(table json markdown)", zsh);
+
+        var pwshOut = new StringWriter();
+        Console.SetOut(pwshOut);
+        var pwshExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "powershell" });
+        var pwsh = pwshOut.ToString();
+
+        Assert.Equal(0, pwshExitCode);
+        Assert.Contains("'workbench' = 'Show stable terminal workbench contract for Codex CLI'", pwsh);
+        Assert.Contains("'workbench' = @('contract', 'verify', 'receipts', 'paths', 'exits', 'extensions', 'outputs', 'safeguards', 'project', 'handoff', '--dir', '--output')", pwsh);
+        Assert.Contains("$workbenchOutputFormats = @('table', 'json', 'markdown')", pwsh);
+    }
+
+    [Fact]
+    public async Task Completions_Include_ScoreOutputFormats()
+    {
+        var bashOut = new StringWriter();
+        Console.SetOut(bashOut);
+        var bashExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "bash" });
+        var bash = bashOut.ToString();
+
+        Assert.Equal(0, bashExitCode);
+        var bashBlock = ExtractBlock(bash, "        score)", "        query)");
+        Assert.Contains("--history --dir --output", bashBlock);
+        Assert.Contains("compgen -W \"table json markdown\" -- \"$cur\"", bashBlock);
+
+        var zshOut = new StringWriter();
+        Console.SetOut(zshOut);
+        var zshExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "zsh" });
+        var zsh = zshOut.ToString();
+
+        Assert.Equal(0, zshExitCode);
+        var zshBlock = ExtractBlock(zsh, "                score)", "                query)");
+        Assert.Contains("--history[History window", zshBlock);
+        Assert.Contains("--output[Output format]:format:(table json markdown)", zshBlock);
+
+        var pwshOut = new StringWriter();
+        Console.SetOut(pwshOut);
+        var pwshExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "powershell" });
+        var pwsh = pwshOut.ToString();
+
+        Assert.Equal(0, pwshExitCode);
+        Assert.Contains("'score' = @('--history', '--dir', '--output')", pwsh);
+        Assert.Contains("$scoreOutputFormats = @('table', 'json', 'markdown')", pwsh);
+    }
+
+    [Fact]
+    public async Task Completions_Include_ExamplesOutputFormats()
+    {
+        var bashOut = new StringWriter();
+        Console.SetOut(bashOut);
+        var bashExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "bash" });
+        var bash = bashOut.ToString();
+
+        Assert.Equal(0, bashExitCode);
+        var bashBlock = ExtractBlock(bash, "        examples)", "        interactive)");
+        Assert.Contains("--output", bashBlock);
+        Assert.Contains("compgen -W \"table json markdown\" -- \"$cur\"", bashBlock);
+
+        var zshOut = new StringWriter();
+        Console.SetOut(zshOut);
+        var zshExitCode = await CompletionsCommand.Create().InvokeAsync(new[] { "zsh" });
+        var zsh = zshOut.ToString();
+
+        Assert.Equal(0, zshExitCode);
+        var zshBlock = ExtractBlock(zsh, "                examples)", "                import)");
+        Assert.Contains("--output[Output format]:format:(table json markdown)", zshBlock);
     }
 
     private static string ExtractBlock(string text, string startMarker, string endMarker)

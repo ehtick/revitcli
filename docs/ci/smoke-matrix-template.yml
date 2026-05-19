@@ -76,6 +76,8 @@ jobs:
             "-Param", $env:REVITCLI_SMOKE_PARAM,
             "-Value", $env:REVITCLI_SMOKE_VALUE,
             "-RevitCli", $revitCli,
+            "-V4Workbench",
+            "-V4ProjectDir", $PWD,
             "-OutputPath", ".revitcli\smoke-${{ matrix.version }}.json"
           )
           if (-not [string]::IsNullOrWhiteSpace($installDir)) {

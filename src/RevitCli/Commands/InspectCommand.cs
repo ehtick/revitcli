@@ -8,7 +8,9 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using RevitCli.Client;
+using RevitCli.Plans;
 using RevitCli.Shared;
+using RevitCli.Workflows;
 
 namespace RevitCli.Commands;
 
@@ -54,6 +56,8 @@ public static class InspectCommand
         command.AddCommand(CreateParamsCommand(client));
         command.AddCommand(CreateSchedulesCommand(client));
         command.AddCommand(CreateSheetsCommand(client));
+        command.AddCommand(CreateWorkflowsCommand());
+        command.AddCommand(CreatePlansCommand());
         return command;
     }
 
@@ -156,6 +160,38 @@ public static class InspectCommand
                 issuesOnly,
                 Console.Out);
         }, outputOpt, sheetsOpt, readyOnlyOpt, issuesOnlyOpt);
+        return command;
+    }
+
+    private static Command CreateWorkflowsCommand()
+    {
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+        var dirOpt = new Option<string?>("--dir", "Project directory containing .revitcli/workflows");
+        var command = new Command("workflows", "Inspect local workflow YAML files and next commands")
+        {
+            outputOpt,
+            dirOpt
+        };
+        command.SetHandler(async (output, dir) =>
+        {
+            Environment.ExitCode = await ExecuteWorkflowsAsync(dir, output, Console.Out);
+        }, outputOpt, dirOpt);
+        return command;
+    }
+
+    private static Command CreatePlansCommand()
+    {
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+        var dirOpt = new Option<string?>("--dir", "Project directory containing .revitcli/plans");
+        var command = new Command("plans", "Inspect saved mutation plans and review commands")
+        {
+            outputOpt,
+            dirOpt
+        };
+        command.SetHandler(async (output, dir) =>
+        {
+            Environment.ExitCode = await ExecutePlansAsync(dir, output, Console.Out);
+        }, outputOpt, dirOpt);
         return command;
     }
 
@@ -336,6 +372,102 @@ public static class InspectCommand
             await output.WriteLineAsync($"{item.Alias,-20} {modelCategory,-18} {item.Count,-8} {item.ParamsCommand}");
         }
 
+        return 0;
+    }
+
+    public static async Task<int> ExecuteWorkflowsAsync(
+        string? projectDirectory,
+        string outputFormat,
+        TextWriter output)
+    {
+        var normalizedOutput = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedOutput is not ("table" or "json" or "markdown"))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
+        string projectRoot;
+        try
+        {
+            projectRoot = string.IsNullOrWhiteSpace(projectDirectory)
+                ? Directory.GetCurrentDirectory()
+                : Path.GetFullPath(projectDirectory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            await output.WriteLineAsync($"Error: invalid --dir: {ex.Message}");
+            return 1;
+        }
+
+        if (!Directory.Exists(projectRoot))
+        {
+            await output.WriteLineAsync($"Error: project directory not found: {projectRoot}");
+            return 1;
+        }
+
+        var report = BuildWorkflowInspectReport(projectRoot);
+        if (normalizedOutput == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(report, PrettyJson));
+            return 0;
+        }
+
+        if (normalizedOutput == "markdown")
+        {
+            await output.WriteLineAsync(RenderWorkflowsMarkdown(report));
+            return 0;
+        }
+
+        await output.WriteLineAsync(RenderWorkflowsTable(report));
+        return 0;
+    }
+
+    public static async Task<int> ExecutePlansAsync(
+        string? projectDirectory,
+        string outputFormat,
+        TextWriter output)
+    {
+        var normalizedOutput = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedOutput is not ("table" or "json" or "markdown"))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
+        string projectRoot;
+        try
+        {
+            projectRoot = string.IsNullOrWhiteSpace(projectDirectory)
+                ? Directory.GetCurrentDirectory()
+                : Path.GetFullPath(projectDirectory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            await output.WriteLineAsync($"Error: invalid --dir: {ex.Message}");
+            return 1;
+        }
+
+        if (!Directory.Exists(projectRoot))
+        {
+            await output.WriteLineAsync($"Error: project directory not found: {projectRoot}");
+            return 1;
+        }
+
+        var report = BuildPlanInspectReport(projectRoot);
+        if (normalizedOutput == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(report, PrettyJson));
+            return 0;
+        }
+
+        if (normalizedOutput == "markdown")
+        {
+            await output.WriteLineAsync(RenderPlansMarkdown(report));
+            return 0;
+        }
+
+        await output.WriteLineAsync(RenderPlansTable(report));
         return 0;
     }
 
@@ -576,6 +708,416 @@ public static class InspectCommand
                     canWrite == true ? BuildDryRunProbeCommand(category, stat.Name, probeElementId) : "");
             })
             .ToArray();
+    }
+
+    private static WorkflowInspectReport BuildWorkflowInspectReport(string projectRoot)
+    {
+        var workflowDirectory = Path.Combine(projectRoot, WorkflowLoader.DefaultDirectory);
+        var files = Directory.Exists(workflowDirectory)
+            ? Directory.EnumerateFiles(workflowDirectory, "*.yml")
+                .Concat(Directory.EnumerateFiles(workflowDirectory, "*.yaml"))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : Array.Empty<string>();
+        var workflows = files
+            .Select(path => BuildWorkflowInspectItem(path, projectRoot))
+            .ToArray();
+
+        return new WorkflowInspectReport(
+            "inspect-workflows.v1",
+            NormalizePath(projectRoot),
+            NormalizePath(workflowDirectory),
+            workflows.Length,
+            workflows.Count(workflow => workflow.CanRun),
+            workflows.Sum(workflow => workflow.IssueCount),
+            workflows);
+    }
+
+    private static WorkflowInspectItem BuildWorkflowInspectItem(string path, string projectRoot)
+    {
+        var relativePath = NormalizePath(Path.GetRelativePath(projectRoot, path));
+        try
+        {
+            var loaded = WorkflowLoader.Load(path);
+            var simulation = WorkflowValidator.Simulate(loaded);
+            var dryRunCount = simulation.Steps.Count(step =>
+                string.Equals(step.Mode, "dry-run", StringComparison.OrdinalIgnoreCase));
+            var mutatingCount = simulation.Steps.Count(step =>
+                string.Equals(step.Mode, "mutating", StringComparison.OrdinalIgnoreCase));
+            var approvalCount = simulation.Steps.Count(step => step.RequiresApproval);
+
+            return new WorkflowInspectItem(
+                relativePath,
+                simulation.Name,
+                simulation.Description,
+                simulation.CanRun,
+                simulation.StepCount,
+                dryRunCount,
+                mutatingCount,
+                approvalCount,
+                simulation.Issues.Count,
+                simulation.CanRun ? "ready" : "blocked",
+                simulation.Issues.ToArray(),
+                BuildWorkflowInspectCommands(relativePath, simulation.Name, mutatingCount));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or YamlDotNet.Core.YamlException)
+        {
+            var issues = new[]
+            {
+                new WorkflowValidationIssue(
+                    WorkflowValidationSeverity.Error,
+                    relativePath,
+                    ex.Message)
+            };
+            var name = Path.GetFileNameWithoutExtension(path);
+            return new WorkflowInspectItem(
+                relativePath,
+                name,
+                null,
+                false,
+                0,
+                0,
+                0,
+                0,
+                issues.Length,
+                "blocked",
+                issues,
+                BuildWorkflowInspectCommands(relativePath, name, mutatingCount: 0));
+        }
+    }
+
+    private static PlanInspectReport BuildPlanInspectReport(string projectRoot)
+    {
+        var planDirectory = Path.Combine(projectRoot, ".revitcli", "plans");
+        var files = Directory.Exists(planDirectory)
+            ? Directory.EnumerateFiles(planDirectory, "*.json", SearchOption.TopDirectoryOnly)
+                .Where(path => !path.EndsWith(".receipt.json", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : Array.Empty<string>();
+        var plans = files.Select(path => BuildPlanInspectItem(path, projectRoot)).ToArray();
+
+        return new PlanInspectReport(
+            "inspect-plans.v1",
+            NormalizePath(projectRoot),
+            NormalizePath(planDirectory),
+            plans.Length,
+            plans.Count(plan => string.Equals(plan.Status, "ready", StringComparison.OrdinalIgnoreCase)),
+            plans.Count(plan => string.Equals(plan.Status, "high-impact", StringComparison.OrdinalIgnoreCase)),
+            plans.Count(plan => string.Equals(plan.Status, "invalid", StringComparison.OrdinalIgnoreCase)),
+            plans.Sum(plan => plan.ActionCount),
+            plans);
+    }
+
+    private static PlanInspectItem BuildPlanInspectItem(string path, string projectRoot)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var relativePath = NormalizePath(Path.GetRelativePath(projectRoot, fullPath));
+        var commands = BuildPlanInspectCommands(fullPath);
+        var receiptPath = fullPath + ".receipt.json";
+        try
+        {
+            var type = SetPlanFileStore.ReadType(fullPath);
+            return type.ToLowerInvariant() switch
+            {
+                "set" => BuildSetPlanInspectItem(fullPath, relativePath, receiptPath, commands),
+                "import" => BuildImportPlanInspectItem(fullPath, relativePath, receiptPath, commands),
+                "fix" => BuildFixPlanInspectItem(fullPath, relativePath, receiptPath, commands),
+                _ => InvalidPlanInspectItem(relativePath, fullPath, commands, $"Unsupported plan type '{type}'.")
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            return InvalidPlanInspectItem(relativePath, fullPath, commands, ex.Message);
+        }
+    }
+
+    private static PlanInspectItem BuildSetPlanInspectItem(
+        string fullPath,
+        string relativePath,
+        string receiptPath,
+        PlanInspectCommands commands)
+    {
+        var plan = SetPlanFileStore.Load(fullPath);
+        var actionCount = plan.Summary.FrozenElementIds.Count > 0
+            ? plan.Summary.FrozenElementIds.Count
+            : plan.Summary.Affected;
+        return new PlanInspectItem(
+            relativePath,
+            "set",
+            BuildPlanStatus(actionCount),
+            actionCount,
+            plan.CreatedAtUtc,
+            plan.CreatedBy,
+            plan.Summary.Param,
+            plan.Summary.Value,
+            plan.Summary.OriginalTarget,
+            plan.Summary.ApplyTarget,
+            Array.Empty<string>(),
+            File.Exists(receiptPath),
+            File.Exists(receiptPath) ? NormalizePath(Path.GetFileName(receiptPath)) : "",
+            commands);
+    }
+
+    private static PlanInspectItem BuildImportPlanInspectItem(
+        string fullPath,
+        string relativePath,
+        string receiptPath,
+        PlanInspectCommands commands)
+    {
+        var plan = SetPlanFileStore.LoadImport(fullPath);
+        var issues = plan.Warnings
+            .Concat(plan.Misses.Select(miss => $"missing match: {miss.MatchByValue}"))
+            .Concat(plan.Duplicates.Select(duplicate => $"duplicate match: {duplicate.MatchByValue}"))
+            .Concat(plan.Skipped.Select(skip => $"skipped cell: row {skip.RowNumber} {skip.Param}: {skip.Reason}"))
+            .ToArray();
+        return new PlanInspectItem(
+            relativePath,
+            "import",
+            BuildPlanStatus(plan.Summary.ElementWrites),
+            plan.Summary.ElementWrites,
+            plan.CreatedAtUtc,
+            plan.CreatedBy,
+            plan.Summary.MatchBy,
+            $"{plan.Summary.GroupCount} group(s)",
+            plan.Summary.SourceCsv,
+            $"category={plan.Summary.Category}",
+            issues,
+            File.Exists(receiptPath),
+            File.Exists(receiptPath) ? NormalizePath(Path.GetFileName(receiptPath)) : "",
+            commands);
+    }
+
+    private static PlanInspectItem BuildFixPlanInspectItem(
+        string fullPath,
+        string relativePath,
+        string receiptPath,
+        PlanInspectCommands commands)
+    {
+        var plan = SetPlanFileStore.LoadFix(fullPath);
+        var issues = plan.Warnings
+            .Concat(plan.Skipped.Select(skipped => $"skipped {skipped.Rule}: {skipped.Reason}"))
+            .ToList();
+        if (plan.Summary.InferredCount > 0)
+            issues.Add($"{plan.Summary.InferredCount} inferred action(s) require --allow-inferred before apply.");
+
+        return new PlanInspectItem(
+            relativePath,
+            "fix",
+            BuildPlanStatus(plan.Summary.ActionCount),
+            plan.Summary.ActionCount,
+            plan.CreatedAtUtc,
+            plan.CreatedBy,
+            plan.Summary.CheckName,
+            $"{plan.Summary.SkippedCount} skipped",
+            plan.Summary.ProfilePath ?? "",
+            string.Join(",", plan.Summary.Rules),
+            issues.ToArray(),
+            File.Exists(receiptPath),
+            File.Exists(receiptPath) ? NormalizePath(Path.GetFileName(receiptPath)) : "",
+            commands);
+    }
+
+    private static PlanInspectItem InvalidPlanInspectItem(
+        string relativePath,
+        string fullPath,
+        PlanInspectCommands commands,
+        string issue)
+    {
+        return new PlanInspectItem(
+            relativePath,
+            "unknown",
+            "invalid",
+            0,
+            "",
+            "",
+            "",
+            "",
+            fullPath,
+            "",
+            new[] { issue },
+            HasReceipt: false,
+            ReceiptPath: "",
+            commands);
+    }
+
+    private static string BuildPlanStatus(int actionCount)
+    {
+        if (actionCount <= 0)
+            return "empty";
+        return actionCount > 50 ? "high-impact" : "ready";
+    }
+
+    private static PlanInspectCommands BuildPlanInspectCommands(string fullPath)
+    {
+        var quoted = QuoteArgument(fullPath);
+        var receiptPath = fullPath + ".receipt.json";
+        return new PlanInspectCommands(
+            $"revitcli plan show {quoted} --output markdown",
+            $"revitcli plan apply {quoted} --dry-run",
+            $"revitcli plan apply {quoted} --yes",
+            File.Exists(receiptPath)
+                ? $"revitcli rollback {QuoteArgument(receiptPath)} --dry-run"
+                : "");
+    }
+
+    private static WorkflowInspectCommands BuildWorkflowInspectCommands(
+        string relativePath,
+        string workflowName,
+        int mutatingCount)
+    {
+        var workflowPath = QuoteArgument(relativePath);
+        var receiptCommand = string.IsNullOrWhiteSpace(workflowName)
+            ? "revitcli workflow receipts --output markdown"
+            : $"revitcli workflow receipts --name {QuoteArgument(workflowName)} --output markdown";
+
+        return new WorkflowInspectCommands(
+            $"revitcli workflow validate {workflowPath} --output markdown",
+            $"revitcli workflow simulate {workflowPath} --output markdown",
+            $"revitcli workflow review {workflowPath} --output markdown",
+            $"revitcli workflow run {workflowPath} --dry-run --output markdown",
+            mutatingCount > 0
+                ? $"revitcli workflow run {workflowPath} --yes --output markdown"
+                : "",
+            receiptCommand);
+    }
+
+    private static string RenderWorkflowsTable(WorkflowInspectReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine($"RevitCli inspect workflows ({report.SchemaVersion})");
+        writer.WriteLine($"Project: {report.ProjectDirectory}");
+        writer.WriteLine($"Workflows: {report.WorkflowCount}; runnable: {report.RunnableCount}; issues: {report.IssueCount}");
+        if (report.Workflows.Count == 0)
+        {
+            writer.WriteLine("No workflow YAML files found. Create one with revitcli workflow init pre-issue.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine($"{"Name",-24} {"Status",-8} {"Steps",-6} {"Mutating",-9} {"Approvals",-10} {"Issues",-7} Next review");
+        writer.WriteLine(new string('-', 132));
+        foreach (var workflow in report.Workflows)
+        {
+            writer.WriteLine(
+                $"{TrimForTable(workflow.Name, 24),-24} {workflow.Status,-8} {workflow.StepCount,-6} {workflow.MutatingStepCount,-9} {workflow.ApprovalRequiredCount,-10} {workflow.IssueCount,-7} {workflow.Commands.ReviewCommand}");
+        }
+
+        writer.WriteLine("Receipt review:");
+        foreach (var workflow in report.Workflows)
+            writer.WriteLine($"  {workflow.Name}: {workflow.Commands.ReceiptsCommand}");
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderWorkflowsMarkdown(WorkflowInspectReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Inspect Workflows");
+        writer.WriteLine();
+        writer.WriteLine($"Schema: `{report.SchemaVersion}`");
+        writer.WriteLine($"Project: `{EscapeInlineCode(report.ProjectDirectory)}`");
+        writer.WriteLine($"Workflow directory: `{EscapeInlineCode(report.WorkflowDirectory)}`");
+        writer.WriteLine($"Workflows: `{report.WorkflowCount}`; runnable: `{report.RunnableCount}`; issues: `{report.IssueCount}`");
+        writer.WriteLine();
+
+        if (report.Workflows.Count == 0)
+        {
+            writer.WriteLine("No workflow YAML files found. Create one with `revitcli workflow init pre-issue`.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine("| Workflow | Status | Steps | Dry-run | Mutating | Approvals | Issues | Review | Dry-run run | Receipts |");
+        writer.WriteLine("|---|---|---:|---:|---:|---:|---:|---|---|---|");
+        foreach (var workflow in report.Workflows)
+        {
+            writer.WriteLine(
+                $"| {EscapeTableCell(workflow.Name)} | {EscapeTableCell(workflow.Status)} | {workflow.StepCount} | {workflow.DryRunStepCount} | {workflow.MutatingStepCount} | {workflow.ApprovalRequiredCount} | {workflow.IssueCount} | {InlineCodeCell(workflow.Commands.ReviewCommand)} | {InlineCodeCell(workflow.Commands.DryRunCommand)} | {InlineCodeCell(workflow.Commands.ReceiptsCommand)} |");
+        }
+
+        var workflowsWithIssues = report.Workflows.Where(workflow => workflow.Issues.Count > 0).ToArray();
+        if (workflowsWithIssues.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("## Issues");
+            foreach (var workflow in workflowsWithIssues)
+            {
+                foreach (var issue in workflow.Issues)
+                {
+                    writer.WriteLine(
+                        $"- `{EscapeInlineCode(workflow.Name)}` `{issue.Severity.ToString().ToUpperInvariant()}` `{EscapeInlineCode(issue.Path)}`: {EscapeMarkdownText(issue.Message)}");
+                }
+            }
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderPlansTable(PlanInspectReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine($"RevitCli inspect plans ({report.SchemaVersion})");
+        writer.WriteLine($"Project: {report.ProjectDirectory}");
+        writer.WriteLine($"Plan directory: {report.PlanDirectory}");
+        writer.WriteLine($"Plans: {report.PlanCount}; ready: {report.ReadyCount}; high-impact: {report.HighImpactCount}; invalid: {report.InvalidCount}; actions: {report.TotalActionCount}");
+        if (report.Plans.Count == 0)
+        {
+            writer.WriteLine("No saved plan JSON files found. Create one with --plan-output before apply.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine($"{"Type",-8} {"Status",-11} {"Actions",-8} {"Receipt",-7} {"Path",-36} Dry-run apply");
+        writer.WriteLine(new string('-', 128));
+        foreach (var plan in report.Plans)
+        {
+            writer.WriteLine(
+                $"{plan.Type,-8} {plan.Status,-11} {plan.ActionCount,-8} {YesNo(plan.HasReceipt),-7} {TrimForTable(plan.Path, 36),-36} {plan.Commands.DryRunApplyCommand}");
+        }
+
+        writer.WriteLine("Review commands:");
+        foreach (var plan in report.Plans)
+            writer.WriteLine($"  {plan.Path}: {plan.Commands.ShowCommand}");
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderPlansMarkdown(PlanInspectReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Inspect Plans");
+        writer.WriteLine();
+        writer.WriteLine($"Schema: `{report.SchemaVersion}`");
+        writer.WriteLine($"Project: `{EscapeInlineCode(report.ProjectDirectory)}`");
+        writer.WriteLine($"Plan directory: `{EscapeInlineCode(report.PlanDirectory)}`");
+        writer.WriteLine($"Plans: `{report.PlanCount}`; ready: `{report.ReadyCount}`; high-impact: `{report.HighImpactCount}`; invalid: `{report.InvalidCount}`; actions: `{report.TotalActionCount}`");
+        writer.WriteLine();
+
+        if (report.Plans.Count == 0)
+        {
+            writer.WriteLine("No saved plan JSON files found. Create one with `--plan-output` before apply.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine("| Plan | Type | Status | Actions | Receipt | Show | Dry-run apply | Apply | Rollback preview |");
+        writer.WriteLine("|---|---|---|---:|---|---|---|---|---|");
+        foreach (var plan in report.Plans)
+        {
+            writer.WriteLine(
+                $"| `{EscapeInlineCode(plan.Path)}` | {EscapeTableCell(plan.Type)} | `{EscapeTableCell(plan.Status)}` | {plan.ActionCount} | {YesNo(plan.HasReceipt)} | {InlineCodeCell(plan.Commands.ShowCommand)} | {InlineCodeCell(plan.Commands.DryRunApplyCommand)} | {InlineCodeCell(plan.Commands.ApplyCommand)} | {InlineCodeCell(plan.Commands.RollbackPreviewCommand)} |");
+        }
+
+        var plansWithIssues = report.Plans.Where(plan => plan.Issues.Count > 0).ToArray();
+        if (plansWithIssues.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("## Issues");
+            foreach (var plan in plansWithIssues)
+            {
+                foreach (var issue in plan.Issues)
+                    writer.WriteLine($"- `{EscapeInlineCode(plan.Path)}`: {EscapeMarkdownText(issue)}");
+            }
+        }
+
+        return writer.ToString().TrimEnd();
     }
 
     private static string RenderCategoriesMarkdown(IReadOnlyList<CategoryInspectItem> items)
@@ -992,6 +1534,9 @@ public static class InspectCommand
         return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
 
+    private static string NormalizePath(string value) =>
+        value.Replace('\\', '/');
+
     private static string TrimForTable(string value, int maxLength)
     {
         if (value.Length <= maxLength)
@@ -1123,6 +1668,70 @@ public static class InspectCommand
     }
 
     private sealed record SheetIssue(string Severity, string Code, string Message);
+
+    private sealed record WorkflowInspectReport(
+        string SchemaVersion,
+        string ProjectDirectory,
+        string WorkflowDirectory,
+        int WorkflowCount,
+        int RunnableCount,
+        int IssueCount,
+        IReadOnlyList<WorkflowInspectItem> Workflows);
+
+    private sealed record WorkflowInspectItem(
+        string Path,
+        string Name,
+        string? Description,
+        bool CanRun,
+        int StepCount,
+        int DryRunStepCount,
+        int MutatingStepCount,
+        int ApprovalRequiredCount,
+        int IssueCount,
+        string Status,
+        IReadOnlyList<WorkflowValidationIssue> Issues,
+        WorkflowInspectCommands Commands);
+
+    private sealed record WorkflowInspectCommands(
+        string ValidateCommand,
+        string SimulateCommand,
+        string ReviewCommand,
+        string DryRunCommand,
+        string ApprovedRunCommand,
+        string ReceiptsCommand);
+
+    private sealed record PlanInspectReport(
+        string SchemaVersion,
+        string ProjectDirectory,
+        string PlanDirectory,
+        int PlanCount,
+        int ReadyCount,
+        int HighImpactCount,
+        int InvalidCount,
+        int TotalActionCount,
+        IReadOnlyList<PlanInspectItem> Plans);
+
+    private sealed record PlanInspectItem(
+        string Path,
+        string Type,
+        string Status,
+        int ActionCount,
+        string CreatedAtUtc,
+        string CreatedBy,
+        string PrimaryField,
+        string Summary,
+        string Source,
+        string Target,
+        IReadOnlyList<string> Issues,
+        bool HasReceipt,
+        string ReceiptPath,
+        PlanInspectCommands Commands);
+
+    private sealed record PlanInspectCommands(
+        string ShowCommand,
+        string DryRunApplyCommand,
+        string ApplyCommand,
+        string RollbackPreviewCommand);
 
     private sealed class ParameterStats
     {

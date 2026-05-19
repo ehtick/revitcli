@@ -71,6 +71,13 @@ public sealed class WorkflowRunReport
     [JsonPropertyName("completedAtUtc")]
     public string CompletedAtUtc { get; set; } = "";
 
+    [JsonPropertyName("durationMs")]
+    public long DurationMs { get; set; }
+
+    [JsonPropertyName("timeoutMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public long TimeoutMs { get; set; }
+
     [JsonPropertyName("operator")]
     public string Operator { get; set; } = "";
 
@@ -121,4 +128,20 @@ public sealed class WorkflowRunStepResult
 
     [JsonPropertyName("exitCode")]
     public int? ExitCode { get; set; }
+
+    [JsonPropertyName("startedAtUtc")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StartedAtUtc { get; set; }
+
+    [JsonPropertyName("completedAtUtc")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CompletedAtUtc { get; set; }
+
+    [JsonPropertyName("durationMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? DurationMs { get; set; }
+
+    [JsonPropertyName("timedOut")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool TimedOut { get; set; }
 }

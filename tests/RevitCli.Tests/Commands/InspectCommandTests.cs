@@ -70,6 +70,113 @@ public class InspectCommandTests
     }
 
     [Fact]
+    public async Task Plans_Json_PrintsSavedPlanInventory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-inspect-plans-{Guid.NewGuid():N}");
+        try
+        {
+            var planDir = Path.Combine(root, ".revitcli", "plans");
+            Directory.CreateDirectory(planDir);
+            var planPath = Path.Combine(planDir, "doors.plan.json");
+            File.WriteAllText(planPath, """
+{
+  "schemaVersion": 1,
+  "type": "set",
+  "createdAtUtc": "2026-05-19T10:00:00Z",
+  "createdBy": "tester",
+  "summary": {
+    "operation": "set",
+    "param": "Mark",
+    "value": "D-01",
+    "affected": 2,
+    "frozenElementIds": [100, 200],
+    "originalTarget": "category=doors",
+    "applyTarget": "frozen elementIds"
+  },
+  "applyRequest": {
+    "param": "Mark",
+    "value": "D-01",
+    "elementIds": [100, 200],
+    "dryRun": false
+  },
+  "preview": [],
+  "commands": {}
+}
+""");
+            File.WriteAllText(planPath + ".receipt.json", """{"schemaVersion":"plan-receipt.v1"}""");
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecutePlansAsync(root, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var report = json.RootElement;
+            Assert.Equal("inspect-plans.v1", report.GetProperty("schemaVersion").GetString());
+            Assert.Equal(Path.GetFullPath(root), report.GetProperty("projectDirectory").GetString());
+            Assert.Equal(1, report.GetProperty("planCount").GetInt32());
+            Assert.Equal(2, report.GetProperty("totalActionCount").GetInt32());
+            var plan = report.GetProperty("plans").EnumerateArray().Single();
+            Assert.Equal("doors.plan.json", Path.GetFileName(plan.GetProperty("path").GetString()));
+            Assert.Equal("set", plan.GetProperty("type").GetString());
+            Assert.Equal("ready", plan.GetProperty("status").GetString());
+            Assert.Equal(2, plan.GetProperty("actionCount").GetInt32());
+            Assert.True(plan.GetProperty("hasReceipt").GetBoolean());
+            Assert.Contains(
+                "plan apply",
+                plan.GetProperty("commands").GetProperty("dryRunApplyCommand").GetString(),
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                "rollback",
+                plan.GetProperty("commands").GetProperty("rollbackPreviewCommand").GetString(),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Plans_Markdown_PrintsReviewCommands()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-inspect-plans-{Guid.NewGuid():N}");
+        try
+        {
+            var planDir = Path.Combine(root, ".revitcli", "plans");
+            Directory.CreateDirectory(planDir);
+            File.WriteAllText(Path.Combine(planDir, "bad.json"), "{ not json");
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecutePlansAsync(root, "markdown", writer);
+
+            var text = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("# Inspect Plans", text);
+            Assert.Contains("Schema: `inspect-plans.v1`", text);
+            Assert.Contains("| Plan | Type | Status | Actions | Receipt | Show | Dry-run apply | Apply | Rollback preview |", text);
+            Assert.Contains("`invalid`", text);
+            Assert.Contains("## Issues", text);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Plans_UnknownOutput_ReturnsFailureBeforeReadingDirectory()
+    {
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecutePlansAsync("/path/that/does/not/exist", "yaml", writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal("Error: --output must be 'table', 'json', or 'markdown'." + Environment.NewLine, writer.ToString());
+    }
+
+    [Fact]
     public async Task Params_Table_AggregatesParameters()
     {
         var elements = new[]
@@ -918,6 +1025,100 @@ public class InspectCommandTests
         Assert.Contains("not running", writer.ToString().ToLowerInvariant());
     }
 
+    [Fact]
+    public async Task Workflows_Json_PrintsLocalWorkflowDiscovery()
+    {
+        var root = CreateTempProject();
+        try
+        {
+            var workflowPath = Path.Combine(root, ".revitcli", "workflows", "pre-issue.yml");
+            Directory.CreateDirectory(Path.GetDirectoryName(workflowPath)!);
+            await File.WriteAllTextAsync(workflowPath, ValidWorkflowYaml());
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecuteWorkflowsAsync(root, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var document = JsonDocument.Parse(writer.ToString());
+            var json = document.RootElement;
+            Assert.Equal("inspect-workflows.v1", json.GetProperty("schemaVersion").GetString());
+            Assert.Equal(1, json.GetProperty("workflowCount").GetInt32());
+            Assert.Equal(1, json.GetProperty("runnableCount").GetInt32());
+            var workflow = Assert.Single(json.GetProperty("workflows").EnumerateArray());
+            Assert.Equal(".revitcli/workflows/pre-issue.yml", workflow.GetProperty("path").GetString());
+            Assert.Equal("pre-issue", workflow.GetProperty("name").GetString());
+            Assert.Equal("ready", workflow.GetProperty("status").GetString());
+            Assert.Equal(3, workflow.GetProperty("stepCount").GetInt32());
+            Assert.Equal(1, workflow.GetProperty("mutatingStepCount").GetInt32());
+            Assert.Equal(1, workflow.GetProperty("approvalRequiredCount").GetInt32());
+            var commands = workflow.GetProperty("commands");
+            Assert.Contains("workflow review \".revitcli/workflows/pre-issue.yml\" --output markdown", commands.GetProperty("reviewCommand").GetString());
+            Assert.Contains("workflow run \".revitcli/workflows/pre-issue.yml\" --dry-run --output markdown", commands.GetProperty("dryRunCommand").GetString());
+            Assert.Contains("workflow receipts --name \"pre-issue\" --output markdown", commands.GetProperty("receiptsCommand").GetString());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Workflows_Markdown_PrintsReviewAndReceiptCommands()
+    {
+        var root = CreateTempProject();
+        try
+        {
+            var workflowPath = Path.Combine(root, ".revitcli", "workflows", "pre-issue.yml");
+            Directory.CreateDirectory(Path.GetDirectoryName(workflowPath)!);
+            await File.WriteAllTextAsync(workflowPath, ValidWorkflowYaml());
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecuteWorkflowsAsync(root, "markdown", writer);
+
+            var text = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("# Inspect Workflows", text);
+            Assert.Contains("Schema: `inspect-workflows.v1`", text);
+            Assert.Contains("`revitcli workflow review \".revitcli/workflows/pre-issue.yml\" --output markdown`", text);
+            Assert.Contains("`revitcli workflow receipts --name \"pre-issue\" --output markdown`", text);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Workflows_Table_NoWorkflowDirectory_ReturnsEmptyDiscovery()
+    {
+        var root = CreateTempProject();
+        try
+        {
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecuteWorkflowsAsync(root, "table", writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("RevitCli inspect workflows (inspect-workflows.v1)", writer.ToString());
+            Assert.Contains("No workflow YAML files found", writer.ToString());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Workflows_InvalidOutput_ReturnsFailure()
+    {
+        var writer = new StringWriter();
+
+        var exitCode = await InspectCommand.ExecuteWorkflowsAsync(Directory.GetCurrentDirectory(), "yaml", writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--output must be 'table', 'json', or 'markdown'", writer.ToString());
+    }
+
     private static void AssertSnapshotRequestCapturesOnlySheets(string? requestBody)
     {
         Assert.False(string.IsNullOrWhiteSpace(requestBody));
@@ -946,4 +1147,28 @@ public class InspectCommandTests
 
         return count;
     }
+
+    private static string CreateTempProject()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "revitcli-inspect-workflows-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static string ValidWorkflowYaml() =>
+        """
+        name: pre-issue
+        description: Pre-issue review
+        steps:
+          - name: inspect sheets
+            run: revitcli inspect sheets --issues-only
+            mode: read-only
+          - name: publish dry-run
+            run: revitcli publish issue --dry-run
+            mode: dry-run
+          - name: approved publish
+            run: revitcli publish issue
+            mode: mutating
+            requiresApproval: true
+        """;
 }

@@ -18,10 +18,20 @@ public static class WorkflowReceiptReader
     public static WorkflowReceiptListReport Read(
         string? projectDirectory,
         int limit,
-        bool failedOnly)
+        bool failedOnly,
+        string? nameFilter = null,
+        long? minDurationMs = null,
+        string sort = "completed",
+        DateTimeOffset? sinceUtc = null,
+        string? window = null)
     {
         if (limit < 1)
             throw new ArgumentOutOfRangeException(nameof(limit), "limit must be at least 1.");
+        if (minDurationMs is < 0)
+            throw new ArgumentOutOfRangeException(nameof(minDurationMs), "min duration must be at least 0.");
+        var normalizedSort = NormalizeSort(sort);
+        if (normalizedSort == null)
+            throw new ArgumentException("sort must be 'completed' or 'duration'.", nameof(sort));
 
         var projectRoot = string.IsNullOrWhiteSpace(projectDirectory)
             ? Directory.GetCurrentDirectory()
@@ -34,6 +44,11 @@ public static class WorkflowReceiptReader
             Exists = Directory.Exists(receiptDir),
             Limit = limit,
             FailedOnly = failedOnly,
+            NameFilter = string.IsNullOrWhiteSpace(nameFilter) ? null : nameFilter,
+            MinDurationMs = minDurationMs is > 0 ? minDurationMs : null,
+            Sort = normalizedSort,
+            SinceUtc = sinceUtc?.ToString("o"),
+            Window = string.IsNullOrWhiteSpace(window) ? null : window,
         };
 
         if (!report.Exists)
@@ -47,16 +62,24 @@ public static class WorkflowReceiptReader
                 summaries.Add(summary);
         }
 
-        var filtered = failedOnly
-            ? summaries.Where(summary => !summary.Success)
-            : summaries;
+        var filteredByName = string.IsNullOrWhiteSpace(nameFilter)
+            ? summaries
+            : summaries.Where(summary =>
+                string.Equals(summary.Name, nameFilter, StringComparison.OrdinalIgnoreCase));
 
-        var ordered = filtered
-            .OrderByDescending(summary => ParseTimestamp(summary.CompletedAtUtc) ??
-                                          ParseTimestamp(summary.StartedAtUtc) ??
-                                          DateTimeOffset.MinValue)
-            .ThenByDescending(summary => summary.Path, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var filteredByStatus = failedOnly
+            ? filteredByName.Where(summary => !summary.Success)
+            : filteredByName;
+
+        var filteredByDuration = minDurationMs is > 0
+            ? filteredByStatus.Where(summary => summary.DurationMs >= minDurationMs.Value)
+            : filteredByStatus;
+
+        var filtered = sinceUtc.HasValue
+            ? filteredByDuration.Where(summary => ReceiptTimestamp(summary) >= sinceUtc.Value)
+            : filteredByDuration;
+
+        var ordered = OrderReceipts(filtered, normalizedSort).ToList();
 
         report.ReceiptCount = ordered.Count;
         report.Receipts.AddRange(ordered.Take(limit));
@@ -65,6 +88,31 @@ public static class WorkflowReceiptReader
 
     public static string ResolveReceiptDirectory(string projectRoot) =>
         Path.Combine(projectRoot, ".revitcli", "workflows", "receipts");
+
+    private static string? NormalizeSort(string? sort)
+    {
+        var normalized = string.IsNullOrWhiteSpace(sort)
+            ? "completed"
+            : sort.Trim().ToLowerInvariant();
+        return normalized is "completed" or "duration" ? normalized : null;
+    }
+
+    private static IOrderedEnumerable<WorkflowReceiptSummary> OrderReceipts(
+        IEnumerable<WorkflowReceiptSummary> receipts,
+        string sort) =>
+        sort == "duration"
+            ? receipts
+                .OrderByDescending(summary => summary.DurationMs)
+                .ThenByDescending(ReceiptTimestamp)
+                .ThenByDescending(summary => summary.Path, StringComparer.OrdinalIgnoreCase)
+            : receipts
+                .OrderByDescending(ReceiptTimestamp)
+                .ThenByDescending(summary => summary.Path, StringComparer.OrdinalIgnoreCase);
+
+    private static DateTimeOffset ReceiptTimestamp(WorkflowReceiptSummary summary) =>
+        ParseTimestamp(summary.CompletedAtUtc) ??
+        ParseTimestamp(summary.StartedAtUtc) ??
+        DateTimeOffset.MinValue;
 
     private static WorkflowReceiptSummary? ReadReceipt(
         string path,
@@ -114,6 +162,7 @@ public static class WorkflowReceiptReader
             ExitCode = receipt.ExitCode,
             StartedAtUtc = receipt.StartedAtUtc,
             CompletedAtUtc = receipt.CompletedAtUtc,
+            DurationMs = receipt.DurationMs,
             StepCount = receipt.Steps.Count,
             FailedStepCount = receipt.Steps.Count(step =>
                 string.Equals(step.Status, "failed", StringComparison.OrdinalIgnoreCase)),
@@ -164,6 +213,21 @@ public sealed class WorkflowReceiptListReport
     [JsonPropertyName("failedOnly")]
     public bool FailedOnly { get; set; }
 
+    [JsonPropertyName("nameFilter")]
+    public string? NameFilter { get; set; }
+
+    [JsonPropertyName("minDurationMs")]
+    public long? MinDurationMs { get; set; }
+
+    [JsonPropertyName("sort")]
+    public string Sort { get; set; } = "completed";
+
+    [JsonPropertyName("window")]
+    public string? Window { get; set; }
+
+    [JsonPropertyName("sinceUtc")]
+    public string? SinceUtc { get; set; }
+
     [JsonPropertyName("receiptCount")]
     public int ReceiptCount { get; set; }
 
@@ -203,6 +267,9 @@ public sealed class WorkflowReceiptSummary
 
     [JsonPropertyName("completedAtUtc")]
     public string CompletedAtUtc { get; set; } = "";
+
+    [JsonPropertyName("durationMs")]
+    public long DurationMs { get; set; }
 
     [JsonPropertyName("stepCount")]
     public int StepCount { get; set; }

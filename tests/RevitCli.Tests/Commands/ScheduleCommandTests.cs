@@ -319,6 +319,197 @@ public class ScheduleCommandTests
     }
 
     [Fact]
+    public async Task Create_DryRunJson_PrintsPreviewWithoutCallingRevit()
+    {
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+            client, "Doors", "Mark,Level", null, "Mark", false, "Door Review", null, null,
+            dryRun: true, outputFormat: "json", receiptDir: null, writer);
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var root = document.RootElement;
+        Assert.Equal("schedule-create.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.True(root.GetProperty("dryRun").GetBoolean());
+        Assert.False(root.GetProperty("willWrite").GetBoolean());
+        Assert.False(root.GetProperty("receiptRequired").GetBoolean());
+        Assert.False(root.GetProperty("receiptSaved").GetBoolean());
+        Assert.Equal("Doors", root.GetProperty("category").GetString());
+        Assert.Equal("Door Review", root.GetProperty("name").GetString());
+        Assert.Contains(root.GetProperty("fields").EnumerateArray(), field => field.GetString() == "Mark");
+        Assert.Equal("revitcli schedule create --category Doors --name \"Door Review\" --fields Mark,Level --sort Mark --output json",
+            root.GetProperty("approvalCommand").GetString());
+    }
+
+    [Fact]
+    public async Task Create_JsonRealRun_WritesReceipt()
+    {
+        var result = new ScheduleCreateResult { ViewId = 100, Name = "Door Schedule", FieldCount = 2, RowCount = 10 };
+        var response = ApiResponse<ScheduleCreateResult>.Ok(result);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var receiptDir = Path.Combine(Path.GetTempPath(), $"revitcli-schedule-receipts-{Guid.NewGuid():N}");
+        var writer = new StringWriter();
+
+        try
+        {
+            var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+                client, "Doors", "Mark,Level", null, "Mark", false, "Door Schedule", null, null,
+                dryRun: false, outputFormat: "json", receiptDir, writer);
+
+            Assert.Equal(0, exitCode);
+            using var document = JsonDocument.Parse(writer.ToString());
+            var root = document.RootElement;
+            Assert.Equal("schedule-create.v1", root.GetProperty("schemaVersion").GetString());
+            Assert.False(root.GetProperty("dryRun").GetBoolean());
+            Assert.True(root.GetProperty("willWrite").GetBoolean());
+            Assert.True(root.GetProperty("receiptRequired").GetBoolean());
+            Assert.True(root.GetProperty("receiptSaved").GetBoolean());
+            var receiptPath = root.GetProperty("receiptPath").GetString();
+            Assert.NotNull(receiptPath);
+            Assert.True(File.Exists(receiptPath));
+
+            using var receipt = JsonDocument.Parse(File.ReadAllText(receiptPath!));
+            Assert.Equal("schedule-create-receipt.v1", receipt.RootElement.GetProperty("schemaVersion").GetString());
+            Assert.Equal("Door Schedule", receipt.RootElement.GetProperty("name").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(receiptDir))
+                Directory.Delete(receiptDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Create_JsonRealRun_WhenReceiptCannotBeSaved_PrintsWarning()
+    {
+        var result = new ScheduleCreateResult { ViewId = 100, Name = "Door Schedule", FieldCount = 2, RowCount = 10 };
+        var response = ApiResponse<ScheduleCreateResult>.Ok(result);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var blockedReceiptDir = Path.Combine(Path.GetTempPath(), $"revitcli-schedule-receipts-{Guid.NewGuid():N}");
+        File.WriteAllText(blockedReceiptDir, "not a directory");
+        var writer = new StringWriter();
+
+        try
+        {
+            var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+                client, "Doors", "Mark,Level", null, "Mark", false, "Door Schedule", null, null,
+                dryRun: false, outputFormat: "json", receiptDir: blockedReceiptDir, writer);
+
+            Assert.Equal(0, exitCode);
+            using var document = JsonDocument.Parse(writer.ToString());
+            var root = document.RootElement;
+            Assert.True(root.GetProperty("receiptRequired").GetBoolean());
+            Assert.False(root.GetProperty("receiptSaved").GetBoolean());
+            Assert.Null(root.GetProperty("receiptPath").GetString());
+            Assert.Contains(
+                root.GetProperty("warnings").EnumerateArray(),
+                warning => warning.GetString()!.Contains("receipt could not be saved", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            if (File.Exists(blockedReceiptDir))
+                File.Delete(blockedReceiptDir);
+        }
+    }
+
+    [Fact]
+    public async Task Create_UnknownOutput_ReturnsFailureBeforeCallingRevit()
+    {
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+            client, "Doors", "Mark", null, null, false, "Door Review", null, null,
+            dryRun: true, outputFormat: "yaml", receiptDir: null, writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal("Error: --output must be 'table', 'json', or 'markdown'." + Environment.NewLine, writer.ToString());
+    }
+
+    [Fact]
+    public async Task Create_Filter_ReturnsPortableValidationError()
+    {
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+            client, "Doors", "Mark", "Mark = D-01", null, false, "Door Review", null, null,
+            dryRun: true, outputFormat: "json", receiptDir: null, writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--filter on schedule create is not supported", writer.ToString());
+    }
+
+    [Fact]
+    public async Task Create_FilterJson_PrintsScheduleCreateErrorEnvelope()
+    {
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+            client, "Doors", "Mark", "Mark = D-01", null, false, "Door Review", null, null,
+            dryRun: true, outputFormat: "json", receiptDir: null, writer);
+
+        Assert.Equal(1, exitCode);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var root = document.RootElement;
+        Assert.Equal("schedule-create.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.True(root.GetProperty("dryRun").GetBoolean());
+        Assert.False(root.GetProperty("willWrite").GetBoolean());
+        Assert.Contains("--filter on schedule create is not supported", root.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Create_ServerFailureJson_PrintsScheduleCreateErrorEnvelope()
+    {
+        var response = ApiResponse<ScheduleCreateResult>.Fail("Revit rejected schedule create.");
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+            client, "Doors", "Mark", null, null, false, "Door Review", null, null,
+            dryRun: false, outputFormat: "json", receiptDir: null, writer);
+
+        Assert.Equal(1, exitCode);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var root = document.RootElement;
+        Assert.Equal("schedule-create.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("dryRun").GetBoolean());
+        Assert.True(root.GetProperty("willWrite").GetBoolean());
+        Assert.Equal("Revit rejected schedule create.", root.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Create_MissingNameMarkdown_PrintsScheduleCreateError()
+    {
+        var handler = new FakeHttpHandler(throwException: true);
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost:17839") });
+        var writer = new StringWriter();
+
+        var exitCode = await ScheduleCommand.ExecuteCreateAsync(
+            client, "Doors", "Mark", null, null, false, null!, null, null,
+            dryRun: true, outputFormat: "markdown", receiptDir: null, writer);
+
+        var text = writer.ToString();
+        Assert.Equal(1, exitCode);
+        Assert.Contains("# Schedule Create", text);
+        Assert.Contains("- Schema: `schedule-create.v1`", text);
+        Assert.Contains("- Status: `FAIL`", text);
+        Assert.Contains("--name is required", text);
+    }
+
+    [Fact]
     public async Task Create_MissingName_PrintsError()
     {
         var handler = new FakeHttpHandler("{}");

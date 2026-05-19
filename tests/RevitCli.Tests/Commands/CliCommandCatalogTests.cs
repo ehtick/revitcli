@@ -35,6 +35,7 @@ public class CliCommandCatalogTests
         Assert.Contains("fix", names);
         Assert.Contains("inspect", names);
         Assert.Contains("examples", names);
+        Assert.Contains("workbench", names);
         Assert.Contains("workflow", names);
         Assert.Contains("report", names);
         Assert.Contains("deliverables", names);
@@ -94,6 +95,7 @@ public class CliCommandCatalogTests
         Assert.Contains("diff", names);
         Assert.Contains("inspect", names);
         Assert.Contains("examples", names);
+        Assert.Contains("workbench", names);
         Assert.Contains("workflow", names);
         Assert.Contains("report", names);
         Assert.Contains("deliverables", names);
@@ -102,6 +104,114 @@ public class CliCommandCatalogTests
         Assert.Contains("sheets", names);
         Assert.Contains("journal", names);
         Assert.DoesNotContain("mcp", names);
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchContract()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench contract" &&
+                     entry.Description.Contains("exit-code"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchVerify()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench verify" &&
+                     entry.Description.Contains("recipe"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchReceipts()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench receipts" &&
+                     entry.Description.Contains("schema"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchPaths()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench paths" &&
+                     entry.Description.Contains("callable"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchExits()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench exits" &&
+                     entry.Description.Contains("exit-code"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchExtensions()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench extensions" &&
+                     entry.Description.Contains("extension"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchOutputs()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench outputs" &&
+                     entry.Description.Contains("JSON"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchSafeguards()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench safeguards" &&
+                     entry.Description.Contains("dry-run"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchProject()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench project" &&
+                     entry.Description.Contains("artifacts"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkbenchHandoff()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workbench handoff" &&
+                     entry.Description.Contains("handoff"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeInspectWorkflows()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "inspect workflows" &&
+                     entry.Description.Contains("workflow YAML"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeInspectPlans()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "inspect plans" &&
+                     entry.Description.Contains("saved mutation plans", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -163,6 +273,15 @@ public class CliCommandCatalogTests
             CliCommandCatalog.InteractiveHelpEntries,
             entry => entry.Command == "workflow simulate <file>" &&
                      entry.Description.Contains("risk modes"));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeWorkflowReview()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "workflow review <file>" &&
+                     entry.Description.Contains("handoff evidence"));
     }
 
     [Fact]

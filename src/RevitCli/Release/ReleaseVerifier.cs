@@ -205,6 +205,8 @@ internal static partial class ReleaseVerifier
             "Ubuntu CI runs the portable CLI/Shared test project.", ".github/workflows/ci.yml");
         AddContains(report, "ci:release-verify", text, "release verify",
             "Ubuntu CI runs release verify guardrails.", ".github/workflows/ci.yml");
+        AddContains(report, "ci:workbench-verify", text, "workbench verify",
+            "Ubuntu CI runs the v4 workbench contract verifier.", ".github/workflows/ci.yml");
         AddNotContains(report, "ci:no-addin-build", text, "src/RevitCli.Addin",
             "Ubuntu CI does not build the Windows/Revit add-in.", ".github/workflows/ci.yml");
         AddNotContains(report, "ci:no-addin-tests", text, "tests/RevitCli.Addin.Tests",
@@ -301,6 +303,13 @@ internal static partial class ReleaseVerifier
                     AddContains(report, $"smoke-script:year-{year}", script, year,
                         $"Smoke script documents or supports Revit {year}.", "scripts/smoke-revit.ps1");
                 }
+
+                AddContains(report, "smoke-script:v4-workbench", script, "V4Workbench",
+                    "Real smoke script can run the v4 workbench and live discovery gate.", "scripts/smoke-revit.ps1");
+                AddContains(report, "smoke-script:v4-workbench-verify", script, "workbench\", \"verify",
+                    "Real smoke script runs workbench verify during v4 smoke.", "scripts/smoke-revit.ps1");
+                AddContains(report, "smoke-script:v4-schedule-export", script, "schedule\", \"export",
+                    "Real smoke script exercises live schedule export during v4 smoke.", "scripts/smoke-revit.ps1");
             }
         }
 
@@ -326,6 +335,8 @@ internal static partial class ReleaseVerifier
             {
                 AddContains(report, "smoke-doc:journal", smokeDoc, "journal",
                     "Real smoke doc includes journal evidence expectations.", "docs/revit2026-real-smoke.md");
+                AddContains(report, "smoke-doc:v4-workbench", smokeDoc, "V4Workbench",
+                    "Real smoke doc includes the v4 workbench smoke gate.", "docs/revit2026-real-smoke.md");
             }
         }
     }
