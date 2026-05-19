@@ -15,8 +15,6 @@ namespace RevitCli.Commands;
 
 public static class ScheduleCommand
 {
-    private static readonly JsonSerializerOptions PrettyJson = new() { WriteIndented = true };
-
     public static Command Create(RevitClient client)
     {
         var command = new Command("schedule", "Manage and export Revit schedules");
@@ -108,7 +106,7 @@ public static class ScheduleCommand
 
     public static async Task<int> ExecuteListAsync(RevitClient client, string outputFormat, TextWriter output)
     {
-        if (!TryNormalizeListOutput(outputFormat, out var normalizedOutput))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -121,7 +119,7 @@ public static class ScheduleCommand
             {
                 await output.WriteLineAsync(JsonSerializer.Serialize(
                     new ScheduleListErrorOutput(false, result.Error ?? "Unknown error"),
-                    PrettyJson));
+                    TerminalJsonOptions.Pretty));
                 return 1;
             }
 
@@ -138,7 +136,7 @@ public static class ScheduleCommand
         {
             if (normalizedOutput == "json")
             {
-                await output.WriteLineAsync(JsonSerializer.Serialize(Array.Empty<ScheduleInfo>(), PrettyJson));
+                await output.WriteLineAsync(JsonSerializer.Serialize(Array.Empty<ScheduleInfo>(), TerminalJsonOptions.Pretty));
                 return 0;
             }
 
@@ -151,7 +149,7 @@ public static class ScheduleCommand
 
         if (normalizedOutput == "json")
         {
-            await output.WriteLineAsync(JsonSerializer.Serialize(schedules, PrettyJson));
+            await output.WriteLineAsync(JsonSerializer.Serialize(schedules, TerminalJsonOptions.Pretty));
         }
         else if (normalizedOutput == "markdown")
         {
@@ -168,21 +166,12 @@ public static class ScheduleCommand
         return 0;
     }
 
-    private static bool TryNormalizeListOutput(string? outputFormat, out string normalized)
-    {
-        normalized = string.IsNullOrWhiteSpace(outputFormat)
-            ? "table"
-            : outputFormat.Trim().ToLowerInvariant();
-
-        return normalized is "table" or "json" or "markdown";
-    }
-
     public static async Task<int> ExecuteExportAsync(
         RevitClient client, string? category, string? existingName,
         string? fields, string? filter, string? sort, bool sortDesc,
         string outputFormat, string? templateName, TextWriter output)
     {
-        if (!TryNormalizeExportOutput(outputFormat, out var normalizedOutput))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "csv", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', 'csv', or 'markdown'.");
             return 1;
@@ -242,15 +231,6 @@ public static class ScheduleCommand
         return 0;
     }
 
-    private static bool TryNormalizeExportOutput(string? outputFormat, out string normalized)
-    {
-        normalized = string.IsNullOrWhiteSpace(outputFormat)
-            ? "table"
-            : outputFormat.Trim().ToLowerInvariant();
-
-        return normalized is "table" or "json" or "csv" or "markdown";
-    }
-
     public static async Task<int> ExecuteCreateAsync(
         RevitClient client, string? category, string? fields,
         string? filter, string? sort, bool sortDesc,
@@ -267,7 +247,7 @@ public static class ScheduleCommand
         string? name, string? placeOnSheet, string? templateName,
         bool dryRun, string outputFormat, string? receiptDir, TextWriter output)
     {
-        if (!TryNormalizeCreateOutput(outputFormat, out var normalizedOutput))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -389,14 +369,6 @@ public static class ScheduleCommand
         return 0;
     }
 
-    private static bool TryNormalizeCreateOutput(string? outputFormat, out string normalized)
-    {
-        normalized = string.IsNullOrWhiteSpace(outputFormat)
-            ? "table"
-            : outputFormat.Trim().ToLowerInvariant();
-
-        return normalized is "table" or "json" or "markdown";
-    }
 
     private static bool CreateFieldsIncludeSort(IReadOnlyList<string>? fields, string sort)
     {
@@ -428,7 +400,7 @@ public static class ScheduleCommand
     {
         return format.ToLowerInvariant() switch
         {
-            "json" => JsonSerializer.Serialize(data, PrettyJson),
+            "json" => JsonSerializer.Serialize(data, TerminalJsonOptions.Pretty),
             "csv" => FormatCsv(data),
             "markdown" => RenderScheduleExportMarkdown(data),
             _ => data.Rows.Count == 0 ? "No data." : FormatTable(data),
@@ -475,7 +447,7 @@ public static class ScheduleCommand
     {
         return format.ToLowerInvariant() switch
         {
-            "json" => JsonSerializer.Serialize(output, PrettyJson),
+            "json" => JsonSerializer.Serialize(output, TerminalJsonOptions.Pretty),
             "markdown" => RenderScheduleCreateMarkdown(output),
             _ => RenderScheduleCreateTable(output)
         };
@@ -497,7 +469,7 @@ public static class ScheduleCommand
                     DryRun: dryRun,
                     WillWrite: willWrite,
                     message),
-                PrettyJson));
+                TerminalJsonOptions.Pretty));
             return;
         }
 
@@ -613,7 +585,7 @@ public static class ScheduleCommand
                 request.SortDescending,
                 request.PlaceOnSheet,
                 result);
-            File.WriteAllText(path, JsonSerializer.Serialize(receipt, PrettyJson));
+            File.WriteAllText(path, JsonSerializer.Serialize(receipt, TerminalJsonOptions.Pretty));
             return path;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)

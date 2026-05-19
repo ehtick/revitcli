@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using RevitCli.Checks;
 using RevitCli.Client;
 using RevitCli.Fix;
+using RevitCli.Output;
 using RevitCli.Plans;
 using RevitCli.Shared;
 
@@ -179,7 +180,7 @@ public static class FixCommand
 
                 await File.WriteAllTextAsync(
                     baselinePath,
-                    JsonSerializer.Serialize(snapshotResult.Data, new JsonSerializerOptions { WriteIndented = true }),
+                    JsonSerializer.Serialize(snapshotResult.Data, TerminalJsonOptions.Pretty),
                     default);
             }
             catch (Exception ex)
@@ -252,7 +253,7 @@ public static class FixCommand
             {
                 await File.WriteAllTextAsync(
                     journalPath!,
-                    JsonSerializer.Serialize(journal, new JsonSerializerOptions { WriteIndented = true }),
+                    JsonSerializer.Serialize(journal, TerminalJsonOptions.Pretty),
                     default);
             }
             catch (Exception ex)

@@ -18,12 +18,6 @@ namespace RevitCli.Commands;
 
 public static class DoctorCommand
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     public static Command Create(RevitClient client, CliConfig config)
     {
         var command = new Command("doctor", "Check RevitCli setup and diagnose issues");
@@ -83,7 +77,7 @@ public static class DoctorCommand
         DoctorEnvironment environment,
         string outputFormat)
     {
-        if (!TryNormalizeOutput(outputFormat, out var normalizedOutput))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json"))
         {
             await output.WriteLineAsync("Error: --output must be 'table' or 'json'.");
             return 1;
@@ -204,7 +198,7 @@ public static class DoctorCommand
         var exitCode = await ExecuteTableAsync(client, config, capture, environment);
         var report = CreateReport(config, environment, exitCode, capture.ToString());
 
-        await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+        await output.WriteLineAsync(JsonSerializer.Serialize(report, TerminalJsonOptions.PrettyIgnoreNull));
         return report.Valid ? 0 : 1;
     }
 
@@ -269,15 +263,6 @@ public static class DoctorCommand
             return message[..parenIndex].Trim();
 
         return message.Length <= 80 ? message : message[..80].TrimEnd();
-    }
-
-    private static bool TryNormalizeOutput(string? outputFormat, out string normalized)
-    {
-        normalized = string.IsNullOrWhiteSpace(outputFormat)
-            ? "table"
-            : outputFormat.Trim().ToLowerInvariant();
-
-        return normalized is "table" or "json";
     }
 
     private static bool IsTargetRevitVersion(StatusInfo status, int checkVersion)

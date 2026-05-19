@@ -16,13 +16,6 @@ namespace RevitCli.Commands;
 
 public static class FamilyCommand
 {
-    private static readonly JsonSerializerOptions PrettyJson = new() { WriteIndented = true };
-    private static readonly JsonSerializerOptions PrettyCamelJson = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     public static Command Create(RevitClient client)
     {
         var command = new Command("family", "Manage Revit families (list, validate, purge, export)");
@@ -85,7 +78,7 @@ public static class FamilyCommand
         switch ((outputFormat ?? "table").ToLowerInvariant())
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(families, PrettyJson));
+                await output.WriteLineAsync(JsonSerializer.Serialize(families, TerminalJsonOptions.Pretty));
                 break;
             case "csv":
                 await output.WriteLineAsync(FormatCsv(families));
@@ -187,8 +180,7 @@ public static class FamilyCommand
         string? rulesFromManifestPath,
         TextWriter output)
     {
-        var normalizedOutput = (outputFormat ?? "table").Trim().ToLowerInvariant();
-        if (normalizedOutput is not ("table" or "json" or "csv" or "sarif"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "csv", "sarif"))
         {
             await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, csv, sarif.");
             return 1;
@@ -233,7 +225,7 @@ public static class FamilyCommand
         switch (normalizedOutput)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(issues, PrettyJson));
+                await output.WriteLineAsync(JsonSerializer.Serialize(issues, TerminalJsonOptions.Pretty));
                 break;
             case "csv":
                 await output.WriteLineAsync(FormatValidationCsv(issues));
@@ -636,7 +628,7 @@ public static class FamilyCommand
                 Directory.CreateDirectory(directory);
             }
 
-            var json = JsonSerializer.Serialize(report, PrettyCamelJson);
+            var json = JsonSerializer.Serialize(report, TerminalJsonOptions.PrettyCamel);
             await File.WriteAllTextAsync(fullPath, json + Environment.NewLine);
             await output.WriteLineAsync($"Wrote purge report: {fullPath}");
             return exitCode;

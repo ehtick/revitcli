@@ -17,12 +17,6 @@ public static class ExportCommand
 {
     internal static readonly string[] ValidFormats = { "dwg", "pdf", "ifc" };
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     public static Command Create(RevitClient client, CliConfig config)
     {
         var formatOpt = new Option<string>("--format", "Export format: dwg, pdf, ifc") { IsRequired = true };
@@ -144,7 +138,7 @@ public static class ExportCommand
         TextWriter output,
         string outputFormat = "table")
     {
-        if (!TryNormalizeOutput(outputFormat, out var normalizedOutput))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json"))
         {
             await output.WriteLineAsync("Error: --output must be 'table' or 'json'.");
             return 1;
@@ -208,7 +202,7 @@ public static class ExportCommand
             {
                 await output.WriteLineAsync(JsonSerializer.Serialize(
                     ExportJsonReport.FromSuccess(request, progress),
-                    JsonOpts));
+                    TerminalJsonOptions.PrettyIgnoreNull));
                 return 0;
             }
 
@@ -222,7 +216,7 @@ public static class ExportCommand
                     progress.Message ?? $"Export dry-run returned status '{progress.Status}'.",
                     progress.Status,
                     progress.TaskId),
-                JsonOpts));
+                TerminalJsonOptions.PrettyIgnoreNull));
             return 1;
         }
 
@@ -293,7 +287,7 @@ public static class ExportCommand
             Directory.CreateDirectory(receiptDir);
             var receiptPath = Path.Combine(receiptDir, $"export-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
             var receipt = ExportReceipt.From(request, progress);
-            File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt, JsonOpts));
+            File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt, TerminalJsonOptions.PrettyIgnoreNull));
             DeliveryManifestWriter.Append(request.OutputDir, new
             {
                 schemaVersion = "delivery-manifest.v1",
@@ -316,15 +310,6 @@ public static class ExportCommand
         }
     }
 
-    private static bool TryNormalizeOutput(string? outputFormat, out string normalized)
-    {
-        normalized = string.IsNullOrWhiteSpace(outputFormat)
-            ? "table"
-            : outputFormat.Trim().ToLowerInvariant();
-
-        return normalized is "table" or "json";
-    }
-
     private static async Task<int> WriteJsonAwareError(
         TextWriter output,
         string outputFormat,
@@ -339,7 +324,7 @@ public static class ExportCommand
         {
             await output.WriteLineAsync(JsonSerializer.Serialize(
                 ExportJsonReport.Failure(format, dryRun, sheets, views, outputDir, error),
-                JsonOpts));
+                TerminalJsonOptions.PrettyIgnoreNull));
             return 1;
         }
 

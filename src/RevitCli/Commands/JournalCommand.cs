@@ -6,17 +6,12 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Journal;
+using RevitCli.Output;
 
 namespace RevitCli.Commands;
 
 public static class JournalCommand
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true,
-    };
-
     public static Command Create()
     {
         var command = new Command("journal", "Inspect, sign, and verify the RevitCli operation journal");
@@ -538,7 +533,7 @@ public static class JournalCommand
 
     private static async Task<int> WriteJson(TextWriter output, object value, int exitCode)
     {
-        await output.WriteLineAsync(JsonSerializer.Serialize(value, JsonOptions));
+        await output.WriteLineAsync(JsonSerializer.Serialize(value, TerminalJsonOptions.PrettyCamel));
         return exitCode;
     }
 

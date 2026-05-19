@@ -16,12 +16,6 @@ namespace RevitCli.Commands;
 
 public static class CheckCommand
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     private static readonly HashSet<string> ValidOutputFormats = new(StringComparer.OrdinalIgnoreCase)
     {
         "table",
@@ -230,7 +224,7 @@ public static class CheckCommand
         {
             await output.WriteLineAsync(JsonSerializer.Serialize(
                 new CheckErrorOutput("check.v1", false, checkName, error, hint),
-                JsonOpts));
+                TerminalJsonOptions.PrettyIgnoreNull));
             return;
         }
 

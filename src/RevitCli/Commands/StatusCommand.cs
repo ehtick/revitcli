@@ -12,12 +12,6 @@ namespace RevitCli.Commands;
 
 public static class StatusCommand
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     public static Command Create(RevitClient client)
     {
         var outputOpt = new Option<string>("--output", () => "table", "Output format: table | json");
@@ -79,7 +73,7 @@ public static class StatusCommand
             {
                 await output.WriteLineAsync(JsonSerializer.Serialize(
                     new StatusOutput(false, result.Error ?? "Unknown error", null),
-                    JsonOpts));
+                    TerminalJsonOptions.PrettyIgnoreNull));
                 return 1;
             }
 
@@ -90,7 +84,7 @@ public static class StatusCommand
         var status = result.Data!;
         if (IsJson(outputFormat))
         {
-            await output.WriteLineAsync(JsonSerializer.Serialize(status, JsonOpts));
+            await output.WriteLineAsync(JsonSerializer.Serialize(status, TerminalJsonOptions.PrettyIgnoreNull));
             return 0;
         }
 

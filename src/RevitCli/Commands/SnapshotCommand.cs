@@ -5,14 +5,13 @@ using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
+using RevitCli.Output;
 using RevitCli.Shared;
 
 namespace RevitCli.Commands;
 
 public static class SnapshotCommand
 {
-    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
-
     public static Command Create(RevitClient client)
     {
         var outputOpt = new Option<string?>("--output", "Write JSON to file (default: stdout)");
@@ -64,7 +63,7 @@ public static class SnapshotCommand
             return 1;
         }
 
-        var json = JsonSerializer.Serialize(result.Data, JsonOpts);
+        var json = JsonSerializer.Serialize(result.Data, TerminalJsonOptions.Pretty);
         if (outputPath != null)
         {
             var dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));

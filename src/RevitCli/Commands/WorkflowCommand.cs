@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using RevitCli.Journal;
+using RevitCli.Output;
 using RevitCli.Workflows;
 
 namespace RevitCli.Commands;
@@ -534,8 +535,7 @@ public static class WorkflowCommand
         string? window = null,
         DateTimeOffset? nowUtc = null)
     {
-        var format = (outputFormat ?? "table").Trim().ToLowerInvariant();
-        if (format is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var format, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -734,8 +734,7 @@ public static class WorkflowCommand
         string outputFormat,
         TextWriter output)
     {
-        var format = (outputFormat ?? "table").Trim().ToLowerInvariant();
-        if (format is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var format, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;

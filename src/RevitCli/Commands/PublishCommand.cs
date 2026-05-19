@@ -17,12 +17,6 @@ namespace RevitCli.Commands;
 
 public static class PublishCommand
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     private static readonly Regex DryRunExportLine = new(
         @"^\[dry-run\] Would export '([^']+)': format=([^,]+), sheets=\[(.*)\], outputDir=(.*)$",
         RegexOptions.Compiled);
@@ -62,7 +56,7 @@ public static class PublishCommand
         TextWriter output,
         string outputFormat = "table")
     {
-        if (!TryNormalizeOutput(outputFormat, out var normalizedOutput))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json"))
         {
             await output.WriteLineAsync("Error: --output must be 'table' or 'json'.");
             return 1;
@@ -78,7 +72,7 @@ public static class PublishCommand
                         pipelineName,
                         dryRun,
                         "--output json is supported for publish dry-runs only. Add --dry-run or use table output."),
-                    JsonOpts));
+                    TerminalJsonOptions.PrettyIgnoreNull));
                 return 1;
             }
 
@@ -93,7 +87,7 @@ public static class PublishCommand
                 updateBaseline,
                 capture);
             var report = CreateJsonReport(pipelineName, dryRun, exitCode, capture.ToString());
-            await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+            await output.WriteLineAsync(JsonSerializer.Serialize(report, TerminalJsonOptions.PrettyIgnoreNull));
             return exitCode;
         }
 
@@ -508,15 +502,6 @@ public static class PublishCommand
         return value.Any(char.IsWhiteSpace) || value.Contains('"')
             ? $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
             : value;
-    }
-
-    private static bool TryNormalizeOutput(string? outputFormat, out string normalized)
-    {
-        normalized = string.IsNullOrWhiteSpace(outputFormat)
-            ? "table"
-            : outputFormat.Trim().ToLowerInvariant();
-
-        return normalized is "table" or "json";
     }
 
     private static PublishJsonReport CreateJsonReport(

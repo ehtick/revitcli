@@ -18,12 +18,6 @@ namespace RevitCli.Commands;
 
 public static class ReportCommand
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     public static Command Create()
     {
         var command = new Command("report", "Generate local project reports from history and journal data");
@@ -398,7 +392,7 @@ public static class ReportCommand
     private static string Render(WeeklyReport report, string format) =>
         format.ToLowerInvariant() switch
         {
-            "json" => JsonSerializer.Serialize(report, JsonOpts),
+            "json" => JsonSerializer.Serialize(report, TerminalJsonOptions.PrettyCamel),
             "markdown" or "md" => RenderMarkdown(report),
             _ => RenderTable(report),
         };
@@ -901,7 +895,7 @@ public static class ReportCommand
     private static string RenderKnowledge(KnowledgeReport report, string format) =>
         format.ToLowerInvariant() switch
         {
-            "json" => JsonSerializer.Serialize(report, JsonOpts),
+            "json" => JsonSerializer.Serialize(report, TerminalJsonOptions.PrettyCamel),
             "markdown" or "md" => RenderKnowledgeMarkdown(report),
             _ => RenderKnowledgeTable(report),
         };

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using RevitCli.Output;
 using RevitCli.Release;
 
 namespace RevitCli.Commands;
@@ -62,8 +63,7 @@ public static class ReleaseCommand
         bool strict,
         TextWriter output)
     {
-        var normalizedOutput = (outputFormat ?? "table").Trim().ToLowerInvariant();
-        if (normalizedOutput is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, markdown.");
             return 1;

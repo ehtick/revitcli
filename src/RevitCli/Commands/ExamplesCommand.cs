@@ -2,20 +2,14 @@ using System;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading.Tasks;
+using RevitCli.Output;
 
 namespace RevitCli.Commands;
 
 public static class ExamplesCommand
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
 
     private sealed record ExampleTopic(
         string Name,
@@ -303,8 +297,7 @@ public static class ExamplesCommand
 
     public static async Task<int> ExecuteAsync(TextWriter output, string? topic, string outputFormat = "table")
     {
-        var normalizedOutput = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalizedOutput is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -321,7 +314,7 @@ public static class ExamplesCommand
                     "example-recipes.v1",
                     string.IsNullOrWhiteSpace(topic) ? null : selectedTopics[0].Name,
                     selectedTopics.Select(ToContract).ToArray()),
-                JsonOptions));
+                TerminalJsonOptions.CompactContract));
             return 0;
         }
 

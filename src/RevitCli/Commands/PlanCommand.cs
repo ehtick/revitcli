@@ -568,7 +568,7 @@ public static class PlanCommand
 
             await File.WriteAllTextAsync(
                 baselinePath,
-                JsonSerializer.Serialize(snapshotResult.Data, new JsonSerializerOptions { WriteIndented = true }),
+                JsonSerializer.Serialize(snapshotResult.Data, TerminalJsonOptions.Pretty),
                 default);
         }
         catch (Exception ex)
@@ -628,7 +628,7 @@ public static class PlanCommand
         {
             await File.WriteAllTextAsync(
                 journalPath,
-                JsonSerializer.Serialize(journal, new JsonSerializerOptions { WriteIndented = true }),
+                JsonSerializer.Serialize(journal, TerminalJsonOptions.Pretty),
                 default);
         }
         catch (Exception ex)

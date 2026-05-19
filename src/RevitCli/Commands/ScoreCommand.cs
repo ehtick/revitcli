@@ -4,7 +4,6 @@ using System.CommandLine;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
@@ -20,13 +19,6 @@ public static class ScoreCommand
     internal const string ScoreSchemaVersion = "model-health-score.v1";
     internal const string HistorySchemaVersion = "model-health-history.v1";
     internal static readonly string[] OutputFormats = { "table", "json", "markdown" };
-
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
 
     private static readonly Dictionary<string, int> RuleWeights = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -94,7 +86,7 @@ public static class ScoreCommand
 
     public static async Task<int> ExecuteAsync(RevitClient client, TextWriter output, string outputFormat)
     {
-        if (!TryNormalizeOutputFormat(outputFormat, out var normalized))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, OutputFormats))
         {
             await WriteOutputFormatErrorAsync(output);
             return 1;
@@ -139,7 +131,7 @@ public static class ScoreCommand
         TextWriter output,
         string outputFormat)
     {
-        if (!TryNormalizeOutputFormat(outputFormat, out var normalized))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, OutputFormats))
         {
             await WriteOutputFormatErrorAsync(output);
             return 1;
@@ -554,12 +546,6 @@ public static class ScoreCommand
         string Source,
         string Error);
 
-    private static bool TryNormalizeOutputFormat(string? outputFormat, out string normalized)
-    {
-        normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        return OutputFormats.Contains(normalized, StringComparer.OrdinalIgnoreCase);
-    }
-
     private static Task WriteOutputFormatErrorAsync(TextWriter output) =>
         output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
 
@@ -578,7 +564,7 @@ public static class ScoreCommand
                 false,
                 source,
                 message);
-            await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+            await output.WriteLineAsync(JsonSerializer.Serialize(report, TerminalJsonOptions.CompactContract));
             return;
         }
 
@@ -593,7 +579,7 @@ public static class ScoreCommand
         switch (outputFormat)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+                await output.WriteLineAsync(JsonSerializer.Serialize(report, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await output.WriteLineAsync("# Model Health Score");
@@ -616,7 +602,7 @@ public static class ScoreCommand
         switch (outputFormat)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+                await output.WriteLineAsync(JsonSerializer.Serialize(report, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteHistoryMarkdownAsync(output, report);

@@ -1,22 +1,15 @@
 using System.CommandLine;
 using System.Reflection;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using RevitCli.Client;
 using RevitCli.Config;
+using RevitCli.Output;
 using RevitCli.Workflows;
 
 namespace RevitCli.Commands;
 
 public static class WorkbenchCommand
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
-
     private static readonly WorkbenchCommandContract[] CommandContracts =
     {
         new(
@@ -694,8 +687,7 @@ public static class WorkbenchCommand
 
     public static async Task<int> ExecuteContractAsync(TextWriter output, string outputFormat)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -705,7 +697,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(contract, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(contract, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteMarkdownAsync(output, contract);
@@ -723,8 +715,7 @@ public static class WorkbenchCommand
         string outputFormat,
         string? projectDirectory = null)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -753,7 +744,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(verification, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(verification, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteVerificationMarkdownAsync(output, verification);
@@ -768,8 +759,7 @@ public static class WorkbenchCommand
 
     public static async Task<int> ExecuteReceiptsAsync(TextWriter output, string outputFormat)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -779,7 +769,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(receipts, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(receipts, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteReceiptsMarkdownAsync(output, receipts);
@@ -794,8 +784,7 @@ public static class WorkbenchCommand
 
     public static async Task<int> ExecutePathsAsync(TextWriter output, string outputFormat)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -805,7 +794,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(paths, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(paths, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WritePathsMarkdownAsync(output, paths);
@@ -820,8 +809,7 @@ public static class WorkbenchCommand
 
     public static async Task<int> ExecuteExitsAsync(TextWriter output, string outputFormat)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -831,7 +819,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(exits, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(exits, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteExitCodesMarkdownAsync(output, exits);
@@ -846,8 +834,7 @@ public static class WorkbenchCommand
 
     public static async Task<int> ExecuteExtensionsAsync(TextWriter output, string outputFormat)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -857,7 +844,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(extensions, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(extensions, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteExtensionsMarkdownAsync(output, extensions);
@@ -872,8 +859,7 @@ public static class WorkbenchCommand
 
     public static async Task<int> ExecuteOutputsAsync(TextWriter output, string outputFormat)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -883,7 +869,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(outputs, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(outputs, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteOutputsMarkdownAsync(output, outputs);
@@ -898,8 +884,7 @@ public static class WorkbenchCommand
 
     public static async Task<int> ExecuteSafeguardsAsync(TextWriter output, string outputFormat)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -909,7 +894,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(safeguards, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(safeguards, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteSafeguardsMarkdownAsync(output, safeguards);
@@ -927,8 +912,7 @@ public static class WorkbenchCommand
         string outputFormat,
         TextWriter output)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -957,7 +941,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(inventory, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(inventory, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteProjectMarkdownAsync(output, inventory);
@@ -975,8 +959,7 @@ public static class WorkbenchCommand
         string outputFormat,
         TextWriter output)
     {
-        var normalized = (outputFormat ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized is not ("table" or "json" or "markdown"))
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
@@ -1005,7 +988,7 @@ public static class WorkbenchCommand
         switch (normalized)
         {
             case "json":
-                await output.WriteLineAsync(JsonSerializer.Serialize(handoff, JsonOptions));
+                await output.WriteLineAsync(JsonSerializer.Serialize(handoff, TerminalJsonOptions.CompactContract));
                 break;
             case "markdown":
                 await WriteHandoffMarkdownAsync(output, handoff);
