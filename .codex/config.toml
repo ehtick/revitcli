@@ -1,0 +1,15 @@
+[agents.repo-explorer]
+description = "Read-only fast explorer for locating files, call chains, tests, and impact scope in this repo."
+config_file = "agents/repo-explorer.toml"
+
+[agents.cli-worker]
+description = "Worker for RevitCli CLI commands, client behavior, output, and portable CLI tests."
+config_file = "agents/cli-worker.toml"
+
+[agents.addin-worker]
+description = "Worker for Revit add-in handlers, services, bridge/protocol behavior, and add-in tests."
+config_file = "agents/addin-worker.toml"
+
+[agents.test-reviewer]
+description = "Reviewer focused on bugs, regressions, missing tests, and cross-module contract risk."
+config_file = "agents/test-reviewer.toml"
