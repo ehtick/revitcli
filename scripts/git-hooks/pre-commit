@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# scripts/git-hooks/pre-commit
+#
+# Hard enforcement of the RevitCli tick contract. Even if an LLM (or a
+# human) bypasses the tick, this hook rejects commits that violate the
+# active feature's scope-paths or that contain dishonest test patterns.
+#
+# Enable once:
+#   git config core.hooksPath scripts/git-hooks
+#
+# Bypass (for genuine emergencies only):
+#   git commit --no-verify ...
+#   ^ this skips hook audit; prefer manual-override for visible audit.
+
+set -uo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+red()   { printf '\033[31m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+
+EXIT=0
+
+# ── 1. dishonest-test patterns in staged content ─────────────────────
+DISHONEST=$(git diff --cached --unified=0 \
+  | grep -E '^\+' \
+  | grep -E -i '\[Skip\b|\[Trait\("skip","true"\)\]|Assert\.True\(true\)|Assert\.NotNull\(result\)\s*;\s*$|if\s*\(\s*false\s*\)\s*\{|catch\s*\(\s*\)\s*\{\s*\}|catch\s*\(\s*Exception[^)]*\)\s*\{\s*\}' \
+  || true)
+if [ -n "$DISHONEST" ]; then
+  red "✘ pre-commit: dishonest test / silent-error pattern in staged diff:"
+  echo "$DISHONEST" | head -10
+  red "   Forbidden: [Skip], Assert.True(true), trivial NotNull, if (false), empty catch."
+  red "   If a test genuinely needs to be skipped on Linux CI, justify it in"
+  red "   the active feature md Notes section first, then commit with --no-verify."
+  EXIT=1
+fi
+
+# ── 2. scope enforcement vs active feature md ────────────────────────
+FEATURE=""
+for f in .codex/features/*.md; do
+  [ -e "$f" ] || continue
+  if grep -qE '^status: (in-progress|blocked)' "$f"; then
+    FEATURE="$f"; break
+  fi
+done
+
+if [ -n "$FEATURE" ]; then
+  extract_paths() {
+    local section="$1"
+    awk -v s="$section" '
+      BEGIN { in_block=0; in_fm=0 }
+      /^---$/ { in_fm = !in_fm; if (!in_fm) exit; next }
+      in_fm && $1 == s":" { in_block=1; next }
+      in_fm && in_block && /^[a-z]/ { in_block=0 }
+      in_fm && in_block && /^  - / { sub(/^  - /,""); print }
+    ' "$FEATURE"
+  }
+
+  mapfile -t SCOPE     < <(extract_paths "scope-paths")
+  mapfile -t FORBIDDEN < <(extract_paths "forbidden-paths")
+
+  matches_pattern() {
+    local file="$1" pat="$2"
+    [ "$file" = "$pat" ] && return 0
+    case "$pat" in
+      */**)
+        local prefix="${pat%/**}"
+        case "$file" in "$prefix"/*) return 0 ;; esac ;;
+      *\*)
+        case "$file" in $pat) return 0 ;; esac ;;
+    esac
+    return 1
+  }
+
+  CHANGED=$(git diff --cached --name-only)
+  SCOPE_VIOLATIONS=""
+  for f in $CHANGED; do
+    [ -z "$f" ] && continue
+    # The active feature md is the control record for blocker Notes and
+    # tick-owned checkbox/status updates.
+    if [ "$f" = "$FEATURE" ]; then
+      continue
+    fi
+    # forbidden hit?
+    for pat in "${FORBIDDEN[@]:-}"; do
+      [ -z "$pat" ] && continue
+      if matches_pattern "$f" "$pat"; then
+        SCOPE_VIOLATIONS+="  $f (forbidden: $pat)"$'\n'
+        continue 2
+      fi
+    done
+    # scope hit?
+    in_scope=false
+    for pat in "${SCOPE[@]:-}"; do
+      [ -z "$pat" ] && continue
+      if matches_pattern "$f" "$pat"; then in_scope=true; break; fi
+    done
+    if ! $in_scope; then
+      SCOPE_VIOLATIONS+="  $f (out of scope)"$'\n'
+    fi
+  done
+
+  if [ -n "$SCOPE_VIOLATIONS" ]; then
+    red "✘ pre-commit: staged paths outside active feature scope ($FEATURE):"
+    printf '%s' "$SCOPE_VIOLATIONS"
+    red "   Either add the path to the feature md's scope-paths and re-stage,"
+    red "   or split this into a separate commit on a different feature."
+    EXIT=1
+  fi
+fi
+
+# ── 3. Commit message style sniff (advisory only) ────────────────────
+MSG_FILE=".git/COMMIT_EDITMSG"
+if [ -f "$MSG_FILE" ]; then
+  if ! grep -qE '^Verify:' "$MSG_FILE"; then
+    printf '\033[33m⚠ pre-commit advisory: commit message has no `Verify:` line.\033[0m\n'
+    printf '\033[33m  Workers should include `Verify: <single shell command>` at the end.\033[0m\n'
+  fi
+fi
+
+if [ "$EXIT" = "0" ]; then
+  green "✔ pre-commit: scope + honesty checks passed."
+fi
+exit "$EXIT"

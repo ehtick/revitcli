@@ -8,9 +8,11 @@ using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.Commands;
 using RevitCli.Fix;
+using RevitCli.Numbering;
 using RevitCli.Output;
 using RevitCli.Plans;
 using RevitCli.Shared;
+using RevitCli.Sheets;
 using Xunit;
 
 namespace RevitCli.Tests.Commands;
@@ -371,6 +373,555 @@ public class PlanCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_SheetIssuePlan_DryRunPreviewsGroupedActions()
+    {
+        var planPath = WriteSampleSheetIssuePlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 10, Name = "A-101", OldValue = "R02", NewValue = "R03" }
+            }
+        }));
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 10, Name = "A-101", OldValue = "2026-05-01", NewValue = "2026-05-20" }
+            }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: false,
+            dryRun: true,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Dry run: 2 sheet issue metadata value(s)", writer.ToString());
+        Assert.Equal(2, handler.RequestBodies.Count);
+        Assert.Contains("\"elementIds\":[10]", handler.RequestBodies[0]);
+        Assert.Contains("\"param\":\"Sheet Issue Code\"", handler.RequestBodies[0]);
+        Assert.Contains("\"value\":\"R03\"", handler.RequestBodies[0]);
+        Assert.Contains("\"dryRun\":true", handler.RequestBodies[0]);
+        Assert.Contains("\"param\":\"Sheet Issue Date\"", handler.RequestBodies[1]);
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Apply_SheetIssuePlan_WritesReceiptWithPerParameterRollbackActions()
+    {
+        var planPath = WriteSampleSheetIssuePlan();
+        var handler = new RecordingQueueHttpHandler();
+        EnqueueSheetIssueSnapshot(handler);
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 10, Name = "A-101", OldValue = "R02", NewValue = "R03" }
+            }
+        }));
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 10, Name = "A-101", OldValue = "2026-05-01", NewValue = "2026-05-20" }
+            }
+        }));
+        EnqueueStatus(handler);
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        var receiptPath = planPath + ".receipt.json";
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Applied sheet issue plan", writer.ToString());
+        Assert.Contains("Receipt saved", writer.ToString());
+        Assert.True(File.Exists(receiptPath));
+        using var receipt = JsonDocument.Parse(File.ReadAllText(receiptPath));
+        var root = receipt.RootElement;
+        Assert.Equal("plan-receipt.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("sheet-issue", root.GetProperty("operation").GetString());
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.Equal(@"C:\models\Demo.rvt", root.GetProperty("modelPath").GetString());
+        Assert.Equal("Demo.rvt", root.GetProperty("documentName").GetString());
+        Assert.Equal("2026", root.GetProperty("documentVersion").GetString());
+        Assert.Equal(2, root.GetProperty("elementWrites").GetInt32());
+        Assert.Equal(new long[] { 10 }, ReadLongArray(root.GetProperty("affectedElementIds")));
+        var rollbackActions = root.GetProperty("rollbackActions").EnumerateArray().ToArray();
+        Assert.Equal(2, rollbackActions.Length);
+        Assert.Contains(rollbackActions, action =>
+            action.GetProperty("param").GetString() == "Sheet Issue Code" &&
+            action.GetProperty("oldValue").GetString() == "R02" &&
+            action.GetProperty("newValue").GetString() == "R03" &&
+            action.GetProperty("source").GetString() == "sheet-issue");
+        Assert.Contains(rollbackActions, action =>
+            action.GetProperty("param").GetString() == "Sheet Issue Date" &&
+            action.GetProperty("oldValue").GetString() == "2026-05-01" &&
+            action.GetProperty("newValue").GetString() == "2026-05-20");
+    }
+
+    [Fact]
+    public async Task Apply_SheetIssuePlan_RejectsWrongCurrentModelBeforeWrites()
+    {
+        var planPath = WriteSampleSheetIssuePlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/snapshot", ApiResponse<ModelSnapshot>.Ok(new ModelSnapshot
+        {
+            Revit = new SnapshotRevit
+            {
+                Version = "2026",
+                Document = "Other.rvt",
+                DocumentPath = @"C:\models\Other.rvt"
+            },
+            Model = new SnapshotModel { FileHash = "different" }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("current model hash", writer.ToString());
+        Assert.Equal(new[] { "/api/snapshot" }, handler.Requests);
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Apply_SheetIssuePlan_RejectsStaleOldValuesBeforeWrites()
+    {
+        var planPath = WriteSampleSheetIssuePlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/snapshot", ApiResponse<ModelSnapshot>.Ok(new ModelSnapshot
+        {
+            Revit = new SnapshotRevit
+            {
+                Version = "2026",
+                Document = "Demo.rvt",
+                DocumentPath = @"C:\models\Demo.rvt"
+            },
+            Model = new SnapshotModel { FileHash = "abc123" },
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A-101",
+                    Name = "Level 1",
+                    Parameters =
+                    {
+                        ["Sheet Issue Code"] = "R02B",
+                        ["Sheet Issue Date"] = "2026-05-01"
+                    }
+                }
+            }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("sheet issue plan is stale", writer.ToString());
+        Assert.Contains("expected \"R02\"", writer.ToString());
+        Assert.Equal(new[] { "/api/snapshot" }, handler.Requests);
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Apply_SheetRenumberPlan_DryRunPreviewsGroupedActions()
+    {
+        var planPath = WriteSampleSheetRenumberPlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 10, Name = "Level 1", OldValue = "TMP-001", NewValue = "A-101" }
+            }
+        }));
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 11, Name = "Level 2", OldValue = "TMP-002", NewValue = "A-102" }
+            }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: false,
+            dryRun: true,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Dry run: 2 sheet number(s)", writer.ToString());
+        Assert.Equal(2, handler.RequestBodies.Count);
+        Assert.Contains("\"elementIds\":[10]", handler.RequestBodies[0]);
+        Assert.Contains("\"param\":\"Sheet Number\"", handler.RequestBodies[0]);
+        Assert.Contains("\"value\":\"A-101\"", handler.RequestBodies[0]);
+        Assert.Contains("\"dryRun\":true", handler.RequestBodies[0]);
+        Assert.Contains("\"elementIds\":[11]", handler.RequestBodies[1]);
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Apply_SheetRenumberPlan_WritesReceiptWithRollbackActions()
+    {
+        var planPath = WriteSampleSheetRenumberPlan();
+        var handler = new RecordingQueueHttpHandler();
+        EnqueueSheetRenumberSnapshot(handler);
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 10, Name = "Level 1", OldValue = "TMP-001", NewValue = "A-101" }
+            }
+        }));
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = new List<SetPreviewItem>
+            {
+                new() { Id = 11, Name = "Level 2", OldValue = "TMP-002", NewValue = "A-102" }
+            }
+        }));
+        EnqueueStatus(handler);
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        var receiptPath = planPath + ".receipt.json";
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Applied sheet renumber plan", writer.ToString());
+        Assert.True(File.Exists(receiptPath));
+        using var receipt = JsonDocument.Parse(File.ReadAllText(receiptPath));
+        var root = receipt.RootElement;
+        Assert.Equal("plan-receipt.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("sheet-renumber", root.GetProperty("operation").GetString());
+        Assert.Equal(@"C:\models\Demo.rvt", root.GetProperty("modelPath").GetString());
+        Assert.Equal("Demo.rvt", root.GetProperty("documentName").GetString());
+        Assert.Equal("2026", root.GetProperty("documentVersion").GetString());
+        Assert.Equal("Sheet Number", root.GetProperty("param").GetString());
+        Assert.Equal(2, root.GetProperty("elementWrites").GetInt32());
+        Assert.Equal(new long[] { 10, 11 }, ReadLongArray(root.GetProperty("affectedElementIds")));
+        var rollbackActions = root.GetProperty("rollbackActions").EnumerateArray().ToArray();
+        Assert.Equal(2, rollbackActions.Length);
+        Assert.Contains(rollbackActions, action =>
+            action.GetProperty("param").GetString() == "Sheet Number" &&
+            action.GetProperty("oldValue").GetString() == "TMP-001" &&
+            action.GetProperty("newValue").GetString() == "A-101" &&
+            action.GetProperty("source").GetString() == "sheet-renumber");
+    }
+
+    [Fact]
+    public async Task Apply_SheetRenumberPlan_RejectsStaleOldNumbersBeforeWrites()
+    {
+        var planPath = WriteSampleSheetRenumberPlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/snapshot", ApiResponse<ModelSnapshot>.Ok(new ModelSnapshot
+        {
+            Revit = new SnapshotRevit
+            {
+                Version = "2026",
+                Document = "Demo.rvt",
+                DocumentPath = @"C:\models\Demo.rvt"
+            },
+            Model = new SnapshotModel { FileHash = "abc123" },
+            Sheets =
+            {
+                new SnapshotSheet { ViewId = 10, Number = "TMP-009", Name = "Level 1" },
+                new SnapshotSheet { ViewId = 11, Number = "TMP-002", Name = "Level 2" },
+            }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("sheet renumber plan is stale", writer.ToString());
+        Assert.Contains("expected number \"TMP-001\"", writer.ToString());
+        Assert.Equal(new[] { "/api/snapshot" }, handler.Requests);
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Apply_SheetRenumberPlan_RejectsSelectedNumberReuseBeforeWrites()
+    {
+        var planPath = WriteSampleSheetRenumberPlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/snapshot", ApiResponse<ModelSnapshot>.Ok(new ModelSnapshot
+        {
+            Revit = new SnapshotRevit
+            {
+                Version = "2026",
+                Document = "Demo.rvt",
+                DocumentPath = @"C:\models\Demo.rvt"
+            },
+            Model = new SnapshotModel { FileHash = "abc123" },
+            Sheets =
+            {
+                new SnapshotSheet { ViewId = 10, Number = "TMP-001", Name = "Level 1" },
+                new SnapshotSheet { ViewId = 11, Number = "A-101", Name = "Level 2" },
+            }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("still used by selected sheet", writer.ToString());
+        Assert.Equal(new[] { "/api/snapshot" }, handler.Requests);
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Show_RoomNumberingPlan_PrintsActions()
+    {
+        var planPath = WriteSampleRoomNumberingPlan();
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteShowAsync(planPath, "json", writer);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        Assert.Equal("room-numbering-plan.v1", json.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.Equal("room-numbering", json.RootElement.GetProperty("type").GetString());
+        Assert.Equal(2, json.RootElement.GetProperty("actions").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Apply_RoomNumberingPlan_DryRunPreviewsFrozenGroups()
+    {
+        var planPath = WriteSampleRoomNumberingPlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = { new SetPreviewItem { Id = 10, Name = "Office", OldValue = "101", NewValue = "L1-001" } }
+        }));
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = { new SetPreviewItem { Id = 11, Name = "Lobby", OldValue = "102", NewValue = "L1-002" } }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: false, dryRun: true, maxChanges: 50, writer);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Dry run: 2 room number(s)", writer.ToString());
+        Assert.All(handler.RequestBodies, body => Assert.Contains("\"dryRun\":true", body));
+    }
+
+    [Fact]
+    public async Task Apply_RoomNumberingPlan_WritesReceiptWithRollbackActions()
+    {
+        var planPath = WriteSampleRoomNumberingPlan();
+        var handler = new RecordingQueueHttpHandler();
+        EnqueueRooms(handler, "101", "102");
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = { new SetPreviewItem { Id = 10, Name = "Office", OldValue = "101", NewValue = "L1-001" } }
+        }));
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = { new SetPreviewItem { Id = 11, Name = "Lobby", OldValue = "102", NewValue = "L1-002" } }
+        }));
+        EnqueueStatus(handler);
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: true, dryRun: false, maxChanges: 50, writer);
+
+        Assert.Equal(0, exitCode);
+        var receiptPath = planPath + ".receipt.json";
+        Assert.True(File.Exists(receiptPath));
+        using var json = JsonDocument.Parse(File.ReadAllText(receiptPath));
+        var root = json.RootElement;
+        Assert.Equal("room-numbering", root.GetProperty("operation").GetString());
+        Assert.Equal("Number", root.GetProperty("param").GetString());
+        Assert.Equal(2, root.GetProperty("rollbackActions").GetArrayLength());
+        Assert.Contains(root.GetProperty("rollbackActions").EnumerateArray(), action =>
+            action.GetProperty("elementId").GetInt64() == 10 &&
+            action.GetProperty("oldValue").GetString() == "101" &&
+            action.GetProperty("newValue").GetString() == "L1-001");
+    }
+
+    [Fact]
+    public async Task Apply_RoomNumberingPlan_RejectsStaleOldNumbersBeforeWrites()
+    {
+        var planPath = WriteSampleRoomNumberingPlan();
+        var handler = new RecordingQueueHttpHandler();
+        EnqueueRooms(handler, "999", "102");
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: true, dryRun: false, maxChanges: 50, writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("room numbering plan is stale", writer.ToString());
+        Assert.DoesNotContain("/api/elements/set", handler.Requests);
+    }
+
+    [Fact]
+    public async Task Apply_LinkRepairPlan_DryRunUsesRepairEndpoint()
+    {
+        var planPath = WriteSampleLinkRepairPlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/links/repair", ApiResponse<LinkRepairResult>.Ok(new LinkRepairResult
+        {
+            Affected = 1,
+            Preview = { SampleLinkRepairOperation() }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: false, dryRun: true, maxChanges: 20, writer);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Dry run: 1 link repair action", writer.ToString());
+        Assert.Equal("/api/links/repair", Assert.Single(handler.Requests));
+        Assert.Contains("\"dryRun\":true", Assert.Single(handler.RequestBodies));
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Apply_LinkRepairPlan_WritesReceiptWithLinkRollbackActions()
+    {
+        var planPath = WriteSampleLinkRepairPlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/links/repair", ApiResponse<LinkRepairResult>.Ok(new LinkRepairResult
+        {
+            Affected = 1,
+            Preview = { SampleLinkRepairOperation() }
+        }));
+        EnqueueStatus(handler);
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: true, dryRun: false, maxChanges: 20, writer);
+
+        Assert.Equal(0, exitCode);
+        var receiptPath = planPath + ".receipt.json";
+        Assert.True(File.Exists(receiptPath));
+        using var json = JsonDocument.Parse(File.ReadAllText(receiptPath));
+        var root = json.RootElement;
+        Assert.Equal("link-repair", root.GetProperty("operation").GetString());
+        Assert.Equal(new long[] { 4201 }, ReadLongArray(root.GetProperty("affectedElementIds")));
+        var action = Assert.Single(root.GetProperty("linkRepairActions").EnumerateArray());
+        Assert.Equal(4101, action.GetProperty("linkId").GetInt64());
+        Assert.Equal(4201, action.GetProperty("linkTypeId").GetInt64());
+        Assert.Equal(@"D:\coordination\old-struct.rvt", action.GetProperty("oldPath").GetString());
+        Assert.Equal(@"D:\coordination\new-struct.rvt", action.GetProperty("newPath").GetString());
+    }
+
+    [Fact]
+    public async Task Apply_ModelMapFixPlan_WritesReceiptWithModelMapRollbackActions()
+    {
+        var planPath = WriteSampleModelMapFixPlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/model/map/fix", ApiResponse<ModelMapFixResult>.Ok(new ModelMapFixResult
+        {
+            Affected = 1,
+            Preview =
+            {
+                new ModelMapFixOperation
+                {
+                    ElementId = 5101,
+                    ElementName = "Room 101",
+                    Category = "Rooms",
+                    Field = "workset",
+                    OldValue = "Interior",
+                    NewValue = "Architecture"
+                }
+            }
+        }));
+        EnqueueStatus(handler);
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: true, dryRun: false, maxChanges: 20, writer);
+
+        Assert.Equal(0, exitCode);
+        var receiptPath = planPath + ".receipt.json";
+        Assert.True(File.Exists(receiptPath));
+        using var json = JsonDocument.Parse(File.ReadAllText(receiptPath));
+        var root = json.RootElement;
+        Assert.Equal("model-map-fix", root.GetProperty("operation").GetString());
+        Assert.Equal(new long[] { 5101 }, ReadLongArray(root.GetProperty("affectedElementIds")));
+        var action = Assert.Single(root.GetProperty("modelMapActions").EnumerateArray());
+        Assert.Equal("workset", action.GetProperty("field").GetString());
+        Assert.Equal("Interior", action.GetProperty("oldValue").GetString());
+        Assert.Equal("Architecture", action.GetProperty("newValue").GetString());
+    }
+
+    [Fact]
     public async Task Apply_FixPlan_DryRunPreviewsActions()
     {
         var planPath = WriteSampleFixPlan();
@@ -653,6 +1204,197 @@ defaults:
         return planPath;
     }
 
+    private string WriteSampleSheetIssuePlan()
+    {
+        var planPath = Path.Combine(_tempDir, "sheet-issue.plan.json");
+        var plan = new SheetIssuePlan(
+            "sheet-issue-plan.v1",
+            "sheet-issue",
+            "sheets issue-meta",
+            "2026-05-20T10:00:00Z",
+            "tester",
+            true,
+            "all",
+            "R03",
+            "2026-05-20",
+            "(builtin defaults)",
+            new[]
+            {
+                new SheetIssueTargetParameter("issueCode", new[] { "Sheet Issue Code" }),
+                new SheetIssueTargetParameter("issueDate", new[] { "Sheet Issue Date" })
+            },
+            new SheetIssueModelFingerprint("Demo.rvt", @"C:\models\Demo.rvt", "abc123"),
+            new SheetIssuePlanSummary(1, 1, 2, 0),
+            new[]
+            {
+                new SheetIssuePlanAction(10, "A-101", "Level 1", null, "issueCode", "Sheet Issue Code", "R02", "R03"),
+                new SheetIssuePlanAction(10, "A-101", "Level 1", null, "issueDate", "Sheet Issue Date", "2026-05-01", "2026-05-20")
+            },
+            Array.Empty<SheetIssuePlanSkipped>(),
+            new SheetIssuePlanCommands(
+                $"revitcli plan show \"{planPath}\" --output markdown",
+                $"revitcli sheets issue-meta --selector all --issue-code R03 --issue-date 2026-05-20 --plan-output \"{planPath}\" --dry-run --output markdown"));
+        SheetIssuePlanStore.Save(planPath, plan);
+        return planPath;
+    }
+
+    private string WriteSampleSheetRenumberPlan()
+    {
+        var planPath = Path.Combine(_tempDir, "sheet-renumber.plan.json");
+        var plan = new SheetRenumberPlan(
+            "sheet-renumber-plan.v1",
+            "sheet-renumber",
+            "sheets renumber",
+            "2026-05-20T10:00:00Z",
+            "tester",
+            true,
+            "all",
+            @"C:\models\numbering.yml",
+            "Sheet Number",
+            new SheetIssueModelFingerprint("Demo.rvt", @"C:\models\Demo.rvt", "abc123"),
+            new SheetRenumberPlanSummary(2, 2, 2, 2, 0),
+            new[]
+            {
+                new SheetRenumberPlanAction(10, "TMP-001", "Level 1", "Sheet Number", "TMP-001", "A-101", 1, 1),
+                new SheetRenumberPlanAction(11, "TMP-002", "Level 2", "Sheet Number", "TMP-002", "A-102", 1, 2)
+            },
+            Array.Empty<SheetRenumberPlanSkipped>(),
+            new SheetRenumberPlanCommands(
+                $"revitcli plan show \"{planPath}\" --output markdown",
+                $"revitcli sheets renumber --rule \"C:\\models\\numbering.yml\" --selector all --plan-output \"{planPath}\" --dry-run --output markdown",
+                $"revitcli plan apply \"{planPath}\" --dry-run",
+                $"revitcli plan apply \"{planPath}\" --yes"));
+        SheetRenumberPlanStore.Save(planPath, plan);
+        return planPath;
+    }
+
+    private string WriteSampleRoomNumberingPlan()
+    {
+        var planPath = Path.Combine(_tempDir, "room-numbering.plan.json");
+        var plan = new RoomNumberingPlan(
+            "room-numbering-plan.v1",
+            "room-numbering",
+            "rooms renumber",
+            "2026-05-20T10:00:00Z",
+            "tester",
+            true,
+            "all",
+            @"C:\models\rooms.yml",
+            "Number",
+            new RoomNumberingPlanSummary(2, 2, 2, 0),
+            new[]
+            {
+                new RoomNumberingPlanAction(10, "Office", "rooms", "Number", "101", "L1-001", "L1", "L1|Office"),
+                new RoomNumberingPlanAction(11, "Lobby", "rooms", "Number", "102", "L1-002", "L1", "L1|Lobby")
+            },
+            Array.Empty<RoomNumberingPlanSkipped>(),
+            new SetPlanCommands
+            {
+                Show = $"revitcli plan show \"{planPath}\" --output markdown",
+                DryRunApply = $"revitcli plan apply \"{planPath}\" --dry-run",
+                Apply = $"revitcli plan apply \"{planPath}\" --yes"
+            });
+        RoomNumberingPlanStore.Save(planPath, plan);
+        return planPath;
+    }
+
+    private string WriteSampleLinkRepairPlan()
+    {
+        var planPath = Path.Combine(_tempDir, "link-repair.plan.json");
+        var action = SampleLinkRepairOperation();
+        var plan = new LinksCommand.LinkRepairPlan(
+            "link-repair-plan.v1",
+            "2026-05-21T10:00:00Z",
+            Path.Combine(_tempDir, "links.yml"),
+            planPath,
+            true,
+            20,
+            new LinksCommand.LinkRepairSummary(1, 1, 0, 0),
+            new[] { ToLinkRepairAction(action) },
+            Array.Empty<LinksCommand.LinkRepairIssue>(),
+            new[]
+            {
+                $"revitcli plan show \"{planPath}\" --output markdown",
+                $"revitcli plan apply \"{planPath}\" --dry-run",
+                $"revitcli plan apply \"{planPath}\" --yes --max-changes 20"
+            });
+        File.WriteAllText(planPath, JsonSerializer.Serialize(plan, TerminalJsonOptions.PrettyCamel));
+        return planPath;
+    }
+
+    private string WriteSampleModelMapFixPlan()
+    {
+        var planPath = Path.Combine(_tempDir, "model-map-fix.plan.json");
+        var plan = new ModelCommand.ModelMapFixPlan(
+            "model-map-fix-plan.v1",
+            "2026-05-21T10:00:00Z",
+            Path.Combine(_tempDir, "model-mapping.yml"),
+            planPath,
+            true,
+            "rooms",
+            20,
+            new ModelCommand.ModelMapFixSummary(1, 1, 0, 0),
+            new[]
+            {
+                new ModelCommand.ModelMapFixAction(
+                    5101,
+                    "Room 101",
+                    "Rooms",
+                    "workset",
+                    "Interior",
+                    "Architecture",
+                    true,
+                    false,
+                    null)
+            },
+            Array.Empty<ModelCommand.ModelMapIssue>(),
+            new[]
+            {
+                $"revitcli plan show \"{planPath}\" --output markdown",
+                $"revitcli plan apply \"{planPath}\" --dry-run",
+                $"revitcli plan apply \"{planPath}\" --yes --max-changes 20"
+            });
+        File.WriteAllText(planPath, JsonSerializer.Serialize(plan, TerminalJsonOptions.PrettyCamel));
+        return planPath;
+    }
+
+    private static LinkRepairOperation SampleLinkRepairOperation() =>
+        new()
+        {
+            LinkId = 4101,
+            LinkTypeId = 4201,
+            LinkName = "Structural Model",
+            TypeName = "Structural Model.rvt",
+            OldPath = @"D:\coordination\old-struct.rvt",
+            NewPath = @"D:\coordination\new-struct.rvt",
+            OldLoaded = false,
+            NewLoaded = true,
+            OldPathExists = true,
+            NewPathExists = true,
+            OldPathLastWriteTimeUtc = "2026-05-20T00:00:00Z",
+            NewPathLastWriteTimeUtc = "2026-05-21T00:00:00Z",
+            OldPathSizeBytes = 1024,
+            NewPathSizeBytes = 2048
+        };
+
+    private static LinksCommand.LinkRepairAction ToLinkRepairAction(LinkRepairOperation action) =>
+        new(
+            action.LinkId,
+            action.LinkTypeId,
+            new[] { action.LinkId },
+            action.LinkName,
+            action.TypeName,
+            action.OldPath,
+            action.NewPath,
+            action.OldLoaded,
+            action.NewLoaded,
+            action.OldPathExists,
+            action.NewPathExists,
+            action.OldPathLastWriteTimeUtc,
+            action.NewPathLastWriteTimeUtc,
+            action.OldPathSizeBytes,
+            action.NewPathSizeBytes);
+
     private static List<SetPreviewItem> SamplePreview()
     {
         return new List<SetPreviewItem>
@@ -684,6 +1426,84 @@ defaults:
             RevitYear = 2026,
             DocumentName = "Demo.rvt",
             DocumentPath = @"C:\models\Demo.rvt"
+        }));
+    }
+
+    private static void EnqueueSheetIssueSnapshot(RecordingQueueHttpHandler handler)
+    {
+        handler.Enqueue("/api/snapshot", ApiResponse<ModelSnapshot>.Ok(new ModelSnapshot
+        {
+            Revit = new SnapshotRevit
+            {
+                Version = "2026",
+                Document = "Demo.rvt",
+                DocumentPath = @"C:\models\Demo.rvt"
+            },
+            Model = new SnapshotModel { FileHash = "abc123" },
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A-101",
+                    Name = "Level 1",
+                    Parameters =
+                    {
+                        ["Sheet Issue Code"] = "R02",
+                        ["Sheet Issue Date"] = "2026-05-01"
+                    }
+                }
+            }
+        }));
+    }
+
+    private static void EnqueueSheetRenumberSnapshot(RecordingQueueHttpHandler handler)
+    {
+        handler.Enqueue("/api/snapshot", ApiResponse<ModelSnapshot>.Ok(new ModelSnapshot
+        {
+            Revit = new SnapshotRevit
+            {
+                Version = "2026",
+                Document = "Demo.rvt",
+                DocumentPath = @"C:\models\Demo.rvt"
+            },
+            Model = new SnapshotModel { FileHash = "abc123" },
+            Sheets =
+            {
+                new SnapshotSheet { ViewId = 10, Number = "TMP-001", Name = "Level 1" },
+                new SnapshotSheet { ViewId = 11, Number = "TMP-002", Name = "Level 2" },
+            }
+        }));
+    }
+
+    private static void EnqueueRooms(RecordingQueueHttpHandler handler, string firstNumber, string secondNumber)
+    {
+        handler.Enqueue("/api/elements", ApiResponse<ElementInfo[]>.Ok(new[]
+        {
+            new ElementInfo
+            {
+                Id = 10,
+                Name = "Office",
+                Category = "rooms",
+                TypeName = "Room",
+                Parameters =
+                {
+                    ["Number"] = firstNumber,
+                    ["Level"] = "L1"
+                }
+            },
+            new ElementInfo
+            {
+                Id = 11,
+                Name = "Lobby",
+                Category = "rooms",
+                TypeName = "Room",
+                Parameters =
+                {
+                    ["Number"] = secondNumber,
+                    ["Level"] = "L1"
+                }
+            }
         }));
     }
 

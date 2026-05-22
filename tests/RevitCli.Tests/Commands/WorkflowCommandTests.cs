@@ -160,6 +160,28 @@ steps:
     }
 
     [Fact]
+    public async Task Validate_IssueClosureCommands_ReturnsZero()
+    {
+        var path = Path.Combine(_root, "issue-closure.yml");
+        WriteWorkflow(path, """
+name: issue-closure
+steps:
+  - run: revitcli issue preflight --profile .revitcli/issue.yml --output markdown --fail-on warning
+    mode: read-only
+  - run: revitcli issue diff --from .revitcli/history/baseline.json --to current --review --output markdown
+    mode: read-only
+  - run: revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --include-receipts true --output markdown
+    mode: dry-run
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("OK issue-closure", output.ToString());
+    }
+
+    [Fact]
     public async Task Validate_UnknownWorkbenchSubcommand_ReturnsFailure()
     {
         var path = Path.Combine(_root, "bad.yml");

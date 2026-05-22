@@ -113,6 +113,107 @@ public class RevitClientTests
     }
 
     [Fact]
+    public async Task ListViewsAsync_ReturnsViewInventory()
+    {
+        var views = new[] { new ViewInfo { Id = 10, Name = "Level 1", ViewType = "FloorPlan" } };
+        var response = ApiResponse<ViewInfo[]>.Ok(views);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+
+        var result = await client.ListViewsAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal("/api/views", new Uri(handler.LastRequestUri!).AbsolutePath);
+        Assert.Equal("Level 1", Assert.Single(result.Data!).Name);
+    }
+
+    [Fact]
+    public async Task ListLinksAsync_ReturnsLinkInventory()
+    {
+        var links = new[] { new LinkInfo { Id = 10, Name = "Structural Model", Path = @"D:\coordination\struct.rvt" } };
+        var response = ApiResponse<LinkInfo[]>.Ok(links);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+
+        var result = await client.ListLinksAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal("/api/links", new Uri(handler.LastRequestUri!).AbsolutePath);
+        Assert.Equal("Structural Model", Assert.Single(result.Data!).Name);
+    }
+
+    [Fact]
+    public async Task ApplyLinkRepairAsync_PostsRepairRequest()
+    {
+        var response = ApiResponse<LinkRepairResult>.Ok(new LinkRepairResult
+        {
+            Affected = 1,
+            Preview = { new LinkRepairOperation { LinkId = 10, LinkTypeId = 20, LinkName = "Structural Model" } }
+        });
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+
+        var result = await client.ApplyLinkRepairAsync(new LinkRepairRequest
+        {
+            DryRun = true,
+            Actions = { new LinkRepairOperation { LinkId = 10, LinkTypeId = 20, LinkName = "Structural Model" } }
+        });
+
+        Assert.True(result.Success);
+        Assert.Equal("/api/links/repair", new Uri(handler.LastRequestUri!).AbsolutePath);
+        Assert.Contains("Structural Model", handler.LastRequestBody);
+        Assert.Equal(1, result.Data!.Affected);
+    }
+
+    [Fact]
+    public async Task ListModelMapElementsAsync_ReturnsModelMapInventory()
+    {
+        var elements = new[] { new ModelMapElementInfo { Id = 20, Name = "Room 101", Category = "Rooms", WorksetName = "Architecture" } };
+        var response = ApiResponse<ModelMapElementInfo[]>.Ok(elements);
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+
+        var result = await client.ListModelMapElementsAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal("/api/model/map", new Uri(handler.LastRequestUri!).AbsolutePath);
+        Assert.Equal("Room 101", Assert.Single(result.Data!).Name);
+    }
+
+    [Fact]
+    public async Task ApplyModelMapFixAsync_PostsFixRequest()
+    {
+        var response = ApiResponse<ModelMapFixResult>.Ok(new ModelMapFixResult
+        {
+            Affected = 1,
+            Preview = { new ModelMapFixOperation { ElementId = 20, ElementName = "Room 101", Field = "workset", NewValue = "Architecture" } }
+        });
+        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
+
+        var result = await client.ApplyModelMapFixAsync(new ModelMapFixRequest
+        {
+            DryRun = true,
+            Actions =
+            {
+                new ModelMapFixOperation
+                {
+                    ElementId = 20,
+                    ElementName = "Room 101",
+                    Field = "workset",
+                    OldValue = "Interior",
+                    NewValue = "Architecture"
+                }
+            }
+        });
+
+        Assert.True(result.Success);
+        Assert.Equal("/api/model/map/fix", new Uri(handler.LastRequestUri!).AbsolutePath);
+        Assert.Contains("Architecture", handler.LastRequestBody);
+        Assert.Equal(1, result.Data!.Affected);
+    }
+
+    [Fact]
     public async Task CaptureSnapshotAsync_PostsRequestAndParsesResponse()
     {
         var snapshot = new ModelSnapshot { SchemaVersion = 1, TakenAt = "2026-04-23T00:00:00Z" };

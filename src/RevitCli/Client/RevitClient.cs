@@ -194,6 +194,21 @@ public class RevitClient : IDisposable
     public Task<ApiResponse<ScheduleCreateResult>> CreateScheduleAsync(ScheduleCreateRequest request)
         => PostAsync<ScheduleCreateResult>("/api/schedules/create", request);
 
+    public Task<ApiResponse<ViewInfo[]>> ListViewsAsync()
+        => GetAsync<ViewInfo[]>("/api/views");
+
+    public Task<ApiResponse<LinkInfo[]>> ListLinksAsync()
+        => GetAsync<LinkInfo[]>("/api/links");
+
+    public Task<ApiResponse<LinkRepairResult>> ApplyLinkRepairAsync(LinkRepairRequest request)
+        => PostAsync<LinkRepairResult>("/api/links/repair", request);
+
+    public Task<ApiResponse<ModelMapElementInfo[]>> ListModelMapElementsAsync()
+        => GetAsync<ModelMapElementInfo[]>("/api/model/map");
+
+    public Task<ApiResponse<ModelMapFixResult>> ApplyModelMapFixAsync(ModelMapFixRequest request)
+        => PostAsync<ModelMapFixResult>("/api/model/map/fix", request);
+
     public async Task<ApiResponse<FamilyInfo[]>> ListFamiliesAsync(FamilyListRequest request)
     {
         try

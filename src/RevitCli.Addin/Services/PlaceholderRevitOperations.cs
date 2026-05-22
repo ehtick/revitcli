@@ -26,12 +26,7 @@ public class PlaceholderRevitOperations : IRevitOperations
             // Placeholder protocol tests must not masquerade as the production Add-in.
             AddinVersion = "0.0.0",
             DocumentName = "Placeholder.rvt",
-            Capabilities = new List<string>
-            {
-                "status", "query", "query.filter", "query.id",
-                "set", "set.dry-run", "audit",
-                "export.dwg", "export.pdf", "export.ifc"
-            }
+            Capabilities = RealRevitOperations.BuildCapabilities(2025)
         });
     }
 
@@ -149,6 +144,128 @@ public class PlaceholderRevitOperations : IRevitOperations
             FieldCount = request.Fields?.Count ?? 0,
             RowCount = 0,
             PlacedOnSheet = null
+        });
+    }
+
+    public Task<ViewInfo[]> ListViewsAsync()
+    {
+        return Task.FromResult(new[]
+        {
+            new ViewInfo
+            {
+                Id = 3001,
+                Name = "Level 1 Floor Plan",
+                ViewType = "FloorPlan",
+                IsTemplate = false,
+                TemplateId = 3901,
+                TemplateName = "Architectural Plan",
+                CanBePrinted = true,
+                Parameters =
+                {
+                    ["View Group"] = "Issue",
+                    ["Sub-Discipline"] = "Architecture"
+                }
+            },
+            new ViewInfo
+            {
+                Id = 3901,
+                Name = "Architectural Plan",
+                ViewType = "FloorPlan",
+                IsTemplate = true,
+                CanBePrinted = false
+            }
+        });
+    }
+
+    public Task<LinkInfo[]> ListLinksAsync()
+    {
+        return Task.FromResult(new[]
+        {
+            new LinkInfo
+            {
+                Id = 4101,
+                LinkTypeId = 4201,
+                Name = "Structural Model",
+                TypeName = "Structural Model.rvt",
+                Path = @"D:\coordination\Structural Model.rvt",
+                LinkedFileStatus = "Loaded",
+                IsLoaded = true,
+                PathExists = true,
+                WorksetName = "Shared Levels and Grids",
+                TransformOrigin = "0,0,0",
+                TransformFingerprint = "origin=0,0,0"
+            },
+            new LinkInfo
+            {
+                Id = 4102,
+                LinkTypeId = 4202,
+                Name = "MEP Model",
+                TypeName = "MEP Model.rvt",
+                Path = @"D:\coordination\MEP Model.rvt",
+                LinkedFileStatus = "NotFound",
+                IsLoaded = false,
+                PathExists = false,
+                WorksetName = "Coordination",
+                TransformOrigin = "0,0,0",
+                TransformFingerprint = "origin=0,0,0"
+            }
+        });
+    }
+
+    public Task<LinkRepairResult> ApplyLinkRepairAsync(LinkRepairRequest request)
+    {
+        return Task.FromResult(new LinkRepairResult
+        {
+            Affected = request.Actions.Count,
+            Preview = request.Actions.ToList()
+        });
+    }
+
+    public Task<ModelMapElementInfo[]> ListModelMapElementsAsync()
+    {
+        var worksets = new List<string> { "Architecture", "Interior", "Coordination" };
+        var phases = new List<string> { "Existing", "New Construction" };
+        return Task.FromResult(new[]
+        {
+            new ModelMapElementInfo
+            {
+                Id = 5101,
+                Name = "Room 101",
+                Category = "Rooms",
+                TypeName = "Room",
+                WorksetName = "Interior",
+                PhaseCreated = "New Construction",
+                PhaseDemolished = null,
+                CanWriteWorkset = true,
+                CanWritePhaseCreated = true,
+                CanWritePhaseDemolished = true,
+                AvailableWorksets = worksets,
+                AvailablePhases = phases
+            },
+            new ModelMapElementInfo
+            {
+                Id = 5102,
+                Name = "Door 101A",
+                Category = "Doors",
+                TypeName = "Single-Flush",
+                WorksetName = "Architecture",
+                PhaseCreated = "New Construction",
+                PhaseDemolished = null,
+                CanWriteWorkset = true,
+                CanWritePhaseCreated = true,
+                CanWritePhaseDemolished = true,
+                AvailableWorksets = worksets,
+                AvailablePhases = phases
+            }
+        });
+    }
+
+    public Task<ModelMapFixResult> ApplyModelMapFixAsync(ModelMapFixRequest request)
+    {
+        return Task.FromResult(new ModelMapFixResult
+        {
+            Affected = request.Actions.Count,
+            Preview = request.Actions.ToList()
         });
     }
 

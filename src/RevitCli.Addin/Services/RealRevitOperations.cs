@@ -36,9 +36,6 @@ public sealed class RealRevitOperations : IRevitOperations
     private static long ToCliElementId(ElementId elementId) =>
         elementId.Value;
 
-    private static string? NullIfEmpty(string? s) =>
-        string.IsNullOrEmpty(s) ? null : s;
-
     private const int MaxMatches = 200;
 
     // ── Element mapping ─────────────────────────────────────────
@@ -76,7 +73,7 @@ public sealed class RealRevitOperations : IRevitOperations
 
         foreach (var param in element.GetOrderedParameters())
         {
-            if (!param.HasValue)
+            if (!param.HasValue && param.StorageType != StorageType.String)
                 continue;
 
             var value = FormatParameterValue(doc, param);
@@ -145,6 +142,57 @@ public sealed class RealRevitOperations : IRevitOperations
     private static bool IsSupportedWritableStorageType(StorageType storageType) =>
         storageType is StorageType.String or StorageType.Integer or StorageType.Double or StorageType.ElementId;
 
+    private static bool IsViewLockedByTemplateParameter(IEnumerable<ElementParameterInfo> parameters) =>
+        parameters.Any(parameter =>
+            (string.Equals(parameter.DefinitionName, "View Template", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(parameter.Name, "View Template", StringComparison.OrdinalIgnoreCase)) &&
+            !parameter.CanWrite);
+
+    private static string? ResolveWorksetName(Document doc, WorksetId worksetId)
+    {
+        try
+        {
+            return doc.GetWorksetTable()?.GetWorkset(worksetId)?.Name;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static bool CanWriteParameter(Parameter? parameter) =>
+        parameter != null && !parameter.IsReadOnly && IsSupportedWritableStorageType(parameter.StorageType);
+
+    private static string? FormatOptionalParameterValue(Document doc, Parameter? parameter) =>
+        parameter == null || !parameter.HasValue ? null : FormatParameterValue(doc, parameter);
+
+    private static (bool Exists, string? LastWriteTimeUtc, long? SizeBytes) TryGetLocalFileInfo(string path, bool isCloud)
+    {
+        if (isCloud || string.IsNullOrWhiteSpace(path))
+            return (false, null, null);
+
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists
+                ? (true, info.LastWriteTimeUtc.ToString("o"), info.Length)
+                : (false, null, null);
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException or UnauthorizedAccessException)
+        {
+            return (false, null, null);
+        }
+    }
+
+    private static string FormatXyz(XYZ value) =>
+        string.Join(",",
+            value.X.ToString("G9", CultureInfo.InvariantCulture),
+            value.Y.ToString("G9", CultureInfo.InvariantCulture),
+            value.Z.ToString("G9", CultureInfo.InvariantCulture));
+
+    private static string FormatTransformFingerprint(Transform transform) =>
+        $"origin={FormatXyz(transform.Origin)};x={FormatXyz(transform.BasisX)};y={FormatXyz(transform.BasisY)};z={FormatXyz(transform.BasisZ)}";
+
     private static string? FormatParameterValue(Document doc, Parameter parameter)
     {
         var valueString = parameter.AsValueString();
@@ -153,7 +201,7 @@ public sealed class RealRevitOperations : IRevitOperations
 
         return parameter.StorageType switch
         {
-            StorageType.String => NullIfEmpty(parameter.AsString()),
+            StorageType.String => parameter.AsString() ?? "",
             StorageType.Integer => parameter.AsInteger().ToString(),
             StorageType.Double => null,
             StorageType.ElementId => FormatElementIdValue(doc, parameter.AsElementId()),
@@ -580,7 +628,7 @@ public sealed class RealRevitOperations : IRevitOperations
         });
     }
 
-    private static List<string> BuildCapabilities(int revitYear)
+    internal static List<string> BuildCapabilities(int revitYear)
     {
         var caps = new List<string>
         {
@@ -598,6 +646,41 @@ public sealed class RealRevitOperations : IRevitOperations
         // PDF export requires Revit 2022+
         if (revitYear >= 2022)
             caps.Add("export.pdf");
+
+        caps.AddRange(new[]
+        {
+            "schedule",
+            "schedule.list",
+            "schedule.export",
+            "schedule.create",
+            "schedule.create.dry-run",
+            "schedules",
+            "schedules.ensure.dry-run",
+            "schedules.batch-export",
+            "views",
+            "views.audit",
+            "views.template-apply.dry-run",
+            "views.clone-set.dry-run",
+            "links",
+            "links.audit",
+            "links.repair",
+            "links.repair.dry-run",
+            "links.repair.apply",
+            "model.map",
+            "model.map.check",
+            "model.map.fix",
+            "model.map.fix.dry-run",
+            "model.map.fix.apply",
+            "snapshot",
+            "snapshot.capture",
+            "family",
+            "family.list",
+            "family.validate",
+            "family.purge.dry-run",
+            "family.purge.apply",
+            "family.export.dry-run",
+            "family.export.apply"
+        });
 
         return caps;
     }
@@ -2173,6 +2256,495 @@ public sealed class RealRevitOperations : IRevitOperations
             };
         });
     }
+
+    public Task<ViewInfo[]> ListViewsAsync()
+    {
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+            var placedViewIds = new HashSet<long>();
+            foreach (var sheet in new FilteredElementCollector(doc).OfClass(typeof(ViewSheet)).Cast<ViewSheet>())
+            {
+                foreach (var viewId in sheet.GetAllPlacedViews())
+                    placedViewIds.Add(ToCliElementId(viewId));
+            }
+
+            return new FilteredElementCollector(doc)
+                .WhereElementIsNotElementType()
+                .OfClass(typeof(View))
+                .Cast<View>()
+                .Where(view => view is not ViewSheet)
+                .OrderBy(view => view.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(view =>
+                {
+                    var parameters = ReadVisibleParameters(doc, view);
+                    var parameterMetadata = ReadParameterMetadata(doc, view);
+                    var templateId = view.ViewTemplateId != ElementId.InvalidElementId
+                        ? ToCliElementId(view.ViewTemplateId)
+                        : (long?)null;
+                    var template = templateId.HasValue
+                        ? doc.GetElement(view.ViewTemplateId) as View
+                        : null;
+
+                    return new ViewInfo
+                    {
+                        Id = ToCliElementId(view.Id),
+                        Name = view.Name,
+                        ViewType = view.ViewType.ToString(),
+                        IsTemplate = view.IsTemplate,
+                        TemplateId = templateId,
+                        TemplateName = template?.Name,
+                        CanBePrinted = view.CanBePrinted,
+                        IsPlacedOnSheet = placedViewIds.Contains(ToCliElementId(view.Id)),
+                        IsLocked = IsViewLockedByTemplateParameter(parameterMetadata),
+                        Parameters = parameters
+                    };
+                })
+                .ToArray();
+        });
+    }
+
+    public Task<LinkInfo[]> ListLinksAsync()
+    {
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+            return new FilteredElementCollector(doc)
+                .WhereElementIsNotElementType()
+                .OfClass(typeof(RevitLinkInstance))
+                .Cast<RevitLinkInstance>()
+                .OrderBy(link => link.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(link =>
+                {
+                    var type = doc.GetElement(link.GetTypeId()) as RevitLinkType;
+                    var path = "";
+                    var status = "";
+                    var isCloud = false;
+                    try
+                    {
+                        if (type != null)
+                        {
+                            var reference = ExternalFileUtils.GetExternalFileReference(doc, type.Id);
+                            if (reference != null)
+                            {
+                                var modelPath = reference.GetPath();
+                                path = modelPath == null
+                                    ? ""
+                                    : ModelPathUtils.ConvertModelPathToUserVisiblePath(modelPath);
+                                status = reference.GetLinkedFileStatus().ToString();
+                                isCloud = path.StartsWith("BIM 360://", StringComparison.OrdinalIgnoreCase) ||
+                                          path.StartsWith("Autodesk Docs://", StringComparison.OrdinalIgnoreCase) ||
+                                          path.StartsWith("RSN://", StringComparison.OrdinalIgnoreCase);
+                            }
+                        }
+                    }
+                    catch (Autodesk.Revit.Exceptions.InvalidOperationException)
+                    {
+                        status = "Unknown";
+                    }
+
+                    var fileInfo = TryGetLocalFileInfo(path, isCloud);
+                    var transform = link.GetTransform();
+                    return new LinkInfo
+                    {
+                        Id = ToCliElementId(link.Id),
+                        LinkTypeId = type != null ? ToCliElementId(type.Id) : null,
+                        Name = link.Name,
+                        TypeName = type?.Name ?? "",
+                        Path = path,
+                        LinkedFileStatus = status,
+                        IsLoaded = link.GetLinkDocument() != null || string.Equals(status, "Loaded", StringComparison.OrdinalIgnoreCase),
+                        PathExists = fileInfo.Exists,
+                        IsCloud = isCloud,
+                        WorksetName = ResolveWorksetName(doc, link.WorksetId),
+                        TransformOrigin = FormatXyz(transform.Origin),
+                        TransformFingerprint = FormatTransformFingerprint(transform),
+                        LastWriteTimeUtc = fileInfo.LastWriteTimeUtc,
+                        SizeBytes = fileInfo.SizeBytes
+                    };
+                })
+                .ToArray();
+        });
+    }
+
+    public Task<LinkRepairResult> ApplyLinkRepairAsync(LinkRepairRequest request)
+    {
+        if (request.Actions.Count == 0)
+            throw new ArgumentException("At least one link repair action is required.");
+
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+            var result = new LinkRepairResult();
+            var validated = new List<(RevitLinkType Type, LinkRepairOperation Operation)>();
+
+            foreach (var action in request.Actions)
+            {
+                try
+                {
+                    var type = ResolveLinkType(doc, action);
+                    var current = CreateLinkRepairPreview(doc, type, action);
+                    ValidateLinkRepairCurrentState(action, current);
+                    validated.Add((type, current));
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Autodesk.Revit.Exceptions.InvalidOperationException)
+                {
+                    result.Failures.Add(new CoordinationRepairFailure
+                    {
+                        Id = action.LinkTypeId ?? action.LinkId,
+                        Name = action.LinkName,
+                        Code = "link-validation-failed",
+                        Message = ex.Message
+                    });
+                }
+            }
+
+            if (result.Failures.Count > 0)
+                return result;
+
+            if (request.DryRun)
+            {
+                result.Affected = validated.Count;
+                result.Preview = validated.Select(item => item.Operation).ToList();
+                return result;
+            }
+
+            foreach (var item in validated)
+            {
+                try
+                {
+                    ApplyLinkRepair(item.Type, item.Operation);
+                    result.Affected++;
+                    result.Preview.Add(item.Operation);
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Autodesk.Revit.Exceptions.InvalidOperationException)
+                {
+                    result.Failures.Add(new CoordinationRepairFailure
+                    {
+                        Id = item.Operation.LinkTypeId ?? item.Operation.LinkId,
+                        Name = item.Operation.LinkName,
+                        Code = "link-repair-failed",
+                        Message = ex.Message
+                    });
+                }
+            }
+
+            return result;
+        });
+    }
+
+    public Task<ModelMapElementInfo[]> ListModelMapElementsAsync()
+    {
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+            var availableWorksets = new FilteredWorksetCollector(doc)
+                .OfKind(WorksetKind.UserWorkset)
+                .Select(workset => workset.Name)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var availablePhases = doc.Phases
+                .Cast<Phase>()
+                .Select(phase => phase.Name)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return new FilteredElementCollector(doc)
+                .WhereElementIsNotElementType()
+                .Where(element => element.Category != null)
+                .Where(element => element is not RevitLinkInstance)
+                .OrderBy(element => element.Category?.Name ?? "", StringComparer.OrdinalIgnoreCase)
+                .ThenBy(element => element.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(element =>
+                {
+                    var worksetParam = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+                    var phaseCreatedParam = element.get_Parameter(BuiltInParameter.PHASE_CREATED);
+                    var phaseDemolishedParam = element.get_Parameter(BuiltInParameter.PHASE_DEMOLISHED);
+                    return new ModelMapElementInfo
+                    {
+                        Id = ToCliElementId(element.Id),
+                        Name = !string.IsNullOrWhiteSpace(element.Name) ? element.Name : element.GetType().Name,
+                        Category = element.Category?.Name ?? "",
+                        TypeName = ResolveTypeName(doc, element),
+                        WorksetName = ResolveWorksetName(doc, element.WorksetId),
+                        PhaseCreated = FormatOptionalParameterValue(doc, phaseCreatedParam),
+                        PhaseDemolished = FormatOptionalParameterValue(doc, phaseDemolishedParam),
+                        CanWriteWorkset = CanWriteParameter(worksetParam),
+                        CanWritePhaseCreated = CanWriteParameter(phaseCreatedParam),
+                        CanWritePhaseDemolished = CanWriteParameter(phaseDemolishedParam),
+                        AvailableWorksets = availableWorksets,
+                        AvailablePhases = availablePhases
+                    };
+                })
+                .ToArray();
+        });
+    }
+
+    public Task<ModelMapFixResult> ApplyModelMapFixAsync(ModelMapFixRequest request)
+    {
+        if (request.Actions.Count == 0)
+            throw new ArgumentException("At least one model map fix action is required.");
+
+        return _bridge.InvokeAsync(app =>
+        {
+            var doc = RequireActiveDocument(app);
+            var result = new ModelMapFixResult();
+            var validated = new List<(Element Element, Parameter Parameter, ElementId TargetId, ModelMapFixOperation Operation)>();
+
+            foreach (var action in request.Actions)
+            {
+                try
+                {
+                    var element = doc.GetElement(new ElementId(action.ElementId))
+                        ?? throw new ArgumentException($"Element {action.ElementId} was not found.");
+                    var parameter = ResolveModelMapParameter(element, action.Field)
+                        ?? throw new ArgumentException($"Element {action.ElementId}: field '{action.Field}' is not available.");
+                    if (!CanWriteParameter(parameter))
+                        throw new InvalidOperationException($"Element {action.ElementId}: field '{action.Field}' is read-only.");
+
+                    var current = ResolveModelMapCurrentValue(doc, element, parameter, action.Field);
+                    if (!ValueEquals(current, action.OldValue))
+                        throw new InvalidOperationException(
+                            $"Element {action.ElementId}: field '{action.Field}' expected '{action.OldValue ?? ""}' but current value is '{current ?? ""}'.");
+
+                    var targetId = ResolveModelMapTargetId(doc, action.Field, action.NewValue);
+                    validated.Add((element, parameter, targetId, new ModelMapFixOperation
+                    {
+                        ElementId = ToCliElementId(element.Id),
+                        ElementName = !string.IsNullOrWhiteSpace(element.Name) ? element.Name : element.GetType().Name,
+                        Category = element.Category?.Name ?? action.Category,
+                        Field = action.Field,
+                        OldValue = current,
+                        NewValue = action.NewValue
+                    }));
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Autodesk.Revit.Exceptions.InvalidOperationException)
+                {
+                    result.Failures.Add(new CoordinationRepairFailure
+                    {
+                        Id = action.ElementId,
+                        Name = action.ElementName,
+                        Code = "model-map-validation-failed",
+                        Message = ex.Message
+                    });
+                }
+            }
+
+            if (result.Failures.Count > 0)
+                return result;
+
+            result.Preview = validated.Select(item => item.Operation).ToList();
+            result.Affected = validated.Count;
+            if (request.DryRun)
+                return result;
+
+            using var tx = new Transaction(doc, "RevitCLI Model Map Fix");
+            tx.Start();
+            try
+            {
+                foreach (var item in validated)
+                    SetModelMapParameter(item.Parameter, item.Operation.Field, item.TargetId);
+
+                var commitStatus = tx.Commit();
+                if (commitStatus != TransactionStatus.Committed)
+                    throw new InvalidOperationException(
+                        $"Transaction failed with status: {commitStatus}. Changes were not saved.");
+            }
+            catch
+            {
+                if (tx.GetStatus() == TransactionStatus.Started)
+                    tx.RollBack();
+                throw;
+            }
+
+            return result;
+        });
+    }
+
+    private static RevitLinkType ResolveLinkType(Document doc, LinkRepairOperation action)
+    {
+        if (action.LinkTypeId.HasValue)
+        {
+            var element = doc.GetElement(new ElementId(action.LinkTypeId.Value));
+            if (element is RevitLinkType type)
+                return type;
+            throw new ArgumentException($"Link type {action.LinkTypeId.Value} was not found.");
+        }
+
+        if (action.LinkId > 0)
+        {
+            var instance = doc.GetElement(new ElementId(action.LinkId)) as RevitLinkInstance
+                ?? throw new ArgumentException($"Link instance {action.LinkId} was not found.");
+            return doc.GetElement(instance.GetTypeId()) as RevitLinkType
+                ?? throw new ArgumentException($"Link instance {action.LinkId} has no Revit link type.");
+        }
+
+        var matches = new FilteredElementCollector(doc)
+            .OfClass(typeof(RevitLinkType))
+            .Cast<RevitLinkType>()
+            .Where(type =>
+                string.Equals(type.Name, action.TypeName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(type.Name, action.LinkName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (matches.Length == 1)
+            return matches[0];
+        throw new ArgumentException($"Link '{action.LinkName}' matched {matches.Length} link type(s).");
+    }
+
+    private static LinkRepairOperation CreateLinkRepairPreview(
+        Document doc,
+        RevitLinkType type,
+        LinkRepairOperation action)
+    {
+        var path = "";
+        var status = "";
+        var isCloud = false;
+        try
+        {
+            var reference = ExternalFileUtils.GetExternalFileReference(doc, type.Id);
+            if (reference != null)
+            {
+                var modelPath = reference.GetPath();
+                path = modelPath == null ? "" : ModelPathUtils.ConvertModelPathToUserVisiblePath(modelPath);
+                status = reference.GetLinkedFileStatus().ToString();
+                isCloud = IsExternallyResolvedLinkPath(path);
+            }
+        }
+        catch (Autodesk.Revit.Exceptions.InvalidOperationException)
+        {
+            status = "Unknown";
+        }
+
+        var instances = new FilteredElementCollector(doc)
+            .WhereElementIsNotElementType()
+            .OfClass(typeof(RevitLinkInstance))
+            .Cast<RevitLinkInstance>()
+            .Where(instance => instance.GetTypeId() == type.Id)
+            .OrderBy(instance => ToCliElementId(instance.Id))
+            .ToArray();
+        var representative = instances.FirstOrDefault();
+        var fileInfo = TryGetLocalFileInfo(path, isCloud);
+        return new LinkRepairOperation
+        {
+            LinkId = representative != null ? ToCliElementId(representative.Id) : action.LinkId,
+            LinkTypeId = ToCliElementId(type.Id),
+            LinkName = representative?.Name ?? action.LinkName,
+            TypeName = type.Name,
+            OldPath = path,
+            NewPath = action.NewPath,
+            OldLoaded = RevitLinkType.IsLoaded(doc, type.Id) || string.Equals(status, "Loaded", StringComparison.OrdinalIgnoreCase),
+            NewLoaded = action.NewLoaded,
+            OldPathExists = fileInfo.Exists,
+            NewPathExists = action.NewPathExists,
+            OldPathLastWriteTimeUtc = fileInfo.LastWriteTimeUtc,
+            NewPathLastWriteTimeUtc = action.NewPathLastWriteTimeUtc,
+            OldPathSizeBytes = fileInfo.SizeBytes,
+            NewPathSizeBytes = action.NewPathSizeBytes
+        };
+    }
+
+    private static void ValidateLinkRepairCurrentState(LinkRepairOperation planned, LinkRepairOperation current)
+    {
+        if (!PathEquals(current.OldPath, planned.OldPath))
+            throw new InvalidOperationException(
+                $"Link '{planned.LinkName}' expected old path '{planned.OldPath}' but current path is '{current.OldPath}'.");
+        if (current.OldLoaded != planned.OldLoaded)
+            throw new InvalidOperationException(
+                $"Link '{planned.LinkName}' expected loaded={planned.OldLoaded.ToString().ToLowerInvariant()} but current loaded={current.OldLoaded.ToString().ToLowerInvariant()}.");
+        if (!PathEquals(planned.OldPath, planned.NewPath) && IsExternallyResolvedLinkPath(planned.NewPath))
+            throw new InvalidOperationException("Cloud/server link path changes are not supported by links repair apply.");
+        if (!PathEquals(planned.OldPath, planned.NewPath) && !File.Exists(planned.NewPath))
+            throw new InvalidOperationException($"New link path does not exist: '{planned.NewPath}'.");
+    }
+
+    private static void ApplyLinkRepair(RevitLinkType type, LinkRepairOperation action)
+    {
+        var changesPath = !PathEquals(action.OldPath, action.NewPath);
+        if (changesPath)
+        {
+            var modelPath = ModelPathUtils.ConvertUserVisiblePathToModelPath(action.NewPath);
+            type.LoadFrom(modelPath, null);
+        }
+        else if (action.NewLoaded && !action.OldLoaded)
+        {
+            type.Load();
+        }
+
+        if (!action.NewLoaded && (action.OldLoaded || changesPath))
+            type.Unload(null);
+    }
+
+    private static bool IsExternallyResolvedLinkPath(string path) =>
+        path.StartsWith("BIM 360://", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("Autodesk Docs://", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("RSN://", StringComparison.OrdinalIgnoreCase);
+
+    private static bool PathEquals(string? left, string? right) =>
+        string.Equals((left ?? "").Trim(), (right ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static Parameter? ResolveModelMapParameter(Element element, string field)
+    {
+        var builtIn = field switch
+        {
+            "workset" => BuiltInParameter.ELEM_PARTITION_PARAM,
+            "phaseCreated" => BuiltInParameter.PHASE_CREATED,
+            "phaseDemolished" => BuiltInParameter.PHASE_DEMOLISHED,
+            _ => throw new ArgumentException($"Unsupported model map field '{field}'.")
+        };
+        return element.get_Parameter(builtIn);
+    }
+
+    private static string? ResolveModelMapCurrentValue(Document doc, Element element, Parameter parameter, string field) =>
+        string.Equals(field, "workset", StringComparison.OrdinalIgnoreCase)
+            ? ResolveWorksetName(doc, element.WorksetId)
+            : FormatOptionalParameterValue(doc, parameter);
+
+    private static ElementId ResolveModelMapTargetId(Document doc, string field, string newValue)
+    {
+        if (string.Equals(field, "workset", StringComparison.OrdinalIgnoreCase))
+        {
+            var workset = new FilteredWorksetCollector(doc)
+                .OfKind(WorksetKind.UserWorkset)
+                .FirstOrDefault(item => ValueEquals(item.Name, newValue));
+            if (workset == null)
+                throw new ArgumentException($"Target workset '{newValue}' was not found.");
+            return new ElementId(workset.Id.IntegerValue);
+        }
+
+        if (string.Equals(field, "phaseDemolished", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(newValue))
+        {
+            return ElementId.InvalidElementId;
+        }
+
+        var phase = doc.Phases
+            .Cast<Phase>()
+            .FirstOrDefault(item => ValueEquals(item.Name, newValue) || ValueEquals($"{ToCliElementId(item.Id)}: {item.Name}", newValue));
+        if (phase == null)
+            throw new ArgumentException($"Target phase '{newValue}' was not found.");
+        return phase.Id;
+    }
+
+    private static void SetModelMapParameter(Parameter parameter, string field, ElementId targetId)
+    {
+        if (parameter.StorageType == StorageType.ElementId)
+        {
+            parameter.Set(targetId);
+            return;
+        }
+
+        if (parameter.StorageType == StorageType.Integer)
+        {
+            var value = checked((int)targetId.Value);
+            parameter.Set(value);
+            return;
+        }
+
+        throw new ArgumentException(
+            $"Unsupported storage type '{parameter.StorageType}' for model map field '{field}'.");
+    }
+
+    private static bool ValueEquals(string? left, string? right) =>
+        string.Equals((left ?? "").Trim(), (right ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
 
     public Task<ModelSnapshot> CaptureSnapshotAsync(SnapshotRequest request)
     {

@@ -1,15 +1,67 @@
+# RevitCli Codex orchestration registry.
+#
+# This project uses a tick-based auto-iteration loop. One tick of
+# scripts/codex-tick.sh advances one checkbox in the active feature plan
+# under .codex/features/. See docs/codex-orchestration.md for the
+# architecture. Ephemeral state lives in .codex/state/ (gitignored).
+#
+# Agent roles, briefly:
+#   coordinator          — ★ DEFAULT ★ runs codex-tick.sh and nothing else (gpt-5.4-mini)
+#   orchestrator         — picks the next checkbox + assignee each tick (gpt-5.5/high)
+#   feature-architect    — generates a fresh feature plan from the roadmap (gpt-5.5/high)
+#   spark-drafter        — fast scaffolding on Cerebras (gpt-5.3-codex-spark)
+#   cli-implementer      — sustained CLI implementation (gpt-5.3-codex)
+#   addin-implementer    — Revit add-in handlers & services (gpt-5.3-codex)
+#   test-author          — focused xUnit + Moq author (gpt-5.4-mini)
+#   rescue-diagnostician — root-cause when build/tests go red (gpt-5.5/high)
+#   code-reviewer        — review-only final pass per checkbox (gpt-5.4/medium)
+#   repo-explorer        — read-only fast lookups (gpt-5.3-codex-spark)
+#
+# RECOMMENDED USAGE: use `/goal` from the top-level Codex session for long
+# interactive work that benefits from 1-3 coordinated subagents. Use the tick
+# for audited automation: bash scripts/codex-tick.sh (or scripts/codex-loop.sh
+# for daemon mode). Write-capable project agents REFUSE direct invocation
+# outside the tick (see .codex/CONTRACT.md). If you must invoke one manually
+# for debugging, include the literal phrase "TICK BYPASS" in your prompt.
+
+default_agent = "coordinator"
+
+[agents.coordinator]
+description = "Tick-loop coordinator. Runs scripts/codex-tick.sh and reports the result; /goal orchestration happens outside this project agent."
+config_file = "agents/coordinator.toml"
+
+[agents.orchestrator]
+description = "Decides which sub-agent runs which checkbox each tick. Reads feature plan and git state, writes .codex/state/next-action.json. Never edits code."
+config_file = "agents/orchestrator.toml"
+
+[agents.feature-architect]
+description = "Generates a fresh feature plan markdown under .codex/features/ from a roadmap milestone. Runs once per new feature."
+config_file = "agents/feature-architect.toml"
+
+[agents.spark-drafter]
+description = "Fast scaffolding on gpt-5.3-codex-spark: adds flags, subcommands, output renderers, single-file CLI surface. Never touches Revit API or test assertions."
+config_file = "agents/spark-drafter.toml"
+
+[agents.cli-implementer]
+description = "Detailed CLI implementer: receipts, rollbacks, plan store, profile integration, error codes. Long context, multi-file."
+config_file = "agents/cli-implementer.toml"
+
+[agents.addin-implementer]
+description = "Revit add-in implementer: HTTP handlers, RevitBridge calls, Transactions, IRevitOperations services."
+config_file = "agents/addin-implementer.toml"
+
+[agents.test-author]
+description = "Writes focused xUnit + Moq tests around an already-implemented command path or HTTP handler. No trivial asserts."
+config_file = "agents/test-author.toml"
+
+[agents.rescue-diagnostician]
+description = "Root-cause diagnosis when build or tests go red. May write a minimal fix commit; may not skip or weaken assertions."
+config_file = "agents/rescue-diagnostician.toml"
+
+[agents.code-reviewer]
+description = "Review-only pass over the most recent commit against the active feature plan. Writes .codex/state/last-review.md."
+config_file = "agents/code-reviewer.toml"
+
 [agents.repo-explorer]
-description = "Read-only fast explorer for locating files, call chains, tests, and impact scope in this repo."
+description = "Read-only fast explorer for locating files, symbols, call chains, tests, and impact scope."
 config_file = "agents/repo-explorer.toml"
-
-[agents.cli-worker]
-description = "Worker for RevitCli CLI commands, client behavior, output, and portable CLI tests."
-config_file = "agents/cli-worker.toml"
-
-[agents.addin-worker]
-description = "Worker for Revit add-in handlers, services, bridge/protocol behavior, and add-in tests."
-config_file = "agents/addin-worker.toml"
-
-[agents.test-reviewer]
-description = "Reviewer focused on bugs, regressions, missing tests, and cross-module contract risk."
-config_file = "agents/test-reviewer.toml"

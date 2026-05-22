@@ -31,10 +31,17 @@ internal static class CliCommandCatalog
         ("workbench", "Show stable terminal workbench contract for Codex CLI"),
         ("workflow", "Create, validate, run, and review terminal workflow YAML files"),
         ("report", "Generate local project reports from history and journal data"),
-        ("deliverables", "Review local delivery manifests and receipts"),
+        ("deliverables", "Review local delivery plans, manifests, and receipts"),
+        ("issue", "Run issue preflight, diff, and package contracts"),
         ("standards", "Install and validate local office standards requirements"),
         ("release", "Verify local release readiness and CI guardrails"),
         ("sheets", "Verify sheet numbering and local sheet-frame expectations"),
+        ("rooms", "Plan and review room numbering workflows"),
+        ("marks", "Plan and verify door/window Mark numbering workflows"),
+        ("schedules", "Ensure, batch-export, and compare versioned schedule specs"),
+        ("views", "Audit, template, and clone view sets"),
+        ("links", "Audit and plan safe coordination link repairs"),
+        ("model", "Audit and plan safe model mapping fixes"),
         ("schedule", "Manage and export Revit schedules"),
         ("diff", "Diff and review two snapshot JSON files"),
         ("snapshot", "Capture model's semantic state as JSON"),
@@ -92,13 +99,32 @@ internal static class CliCommandCatalog
         ("deliverables list", "List delivery manifest entries and receipt status"),
         ("deliverables stats", "Summarize delivery manifest kinds, outcomes, and receipt status"),
         ("deliverables verify", "Verify delivery manifest entries point to readable receipts"),
+        ("deliverables plan", "Plan profile deliverable exports with baseline and risk evidence"),
         ("deliverables bundle", "Package manifest receipts and output files into a zip with a bundle receipt"),
+        ("issue preflight", "Review issue readiness and hidden mutation risks"),
+        ("issue diff", "Create issue-scoped snapshot diff reports"),
+        ("issue package", "Package deliverables, receipts, hashes, and journal evidence"),
         ("standards install <path-or-git-url>", "Install approved standards files into the local project"),
         ("standards validate", "Validate required profiles, workflows, outputs, schedules, and family rules"),
         ("release verify", "Check release files, version, tag, and CI guardrails before tagging"),
         ("sheets verify", "Verify sheet numbering, required sheets, and placed-view counts"),
+        ("sheets issue-meta", "Plan sheet issue metadata updates with frozen sheet ids"),
+        ("sheets renumber", "Plan sheet number updates from numbering rules with frozen sheet ids"),
         ("sheets index init", "Create .revitcli/sheets/index.yml from current sheets"),
         ("sheets index show", "Show the local sheet index declaration"),
+        ("rooms renumber", "Plan room Number updates from numbering rules with frozen room ids"),
+        ("marks assign", "Plan door/window Mark updates from numbering rules with frozen element ids"),
+        ("marks verify", "Verify duplicate, missing, and rule-mismatched door/window Marks"),
+        ("schedules ensure", "Plan missing or drifted schedules from schedule-spec.v1 YAML"),
+        ("schedules batch-export", "Export a schedule spec set and write a schedule-export-manifest.v1"),
+        ("schedules compare", "Compare two schedule CSV export directories"),
+        ("views audit", "Audit view templates, naming, and browser standards"),
+        ("views template-apply", "Plan view template assignment changes with frozen view ids"),
+        ("views clone-set", "Plan a cloned view set with collision checks"),
+        ("links audit", "Audit Revit link paths, load status, and coordinate fingerprints"),
+        ("links repair", "Plan link path/load repairs without moving coordinates"),
+        ("model map-check", "Audit element workset and phase mappings"),
+        ("model map-fix", "Plan workset and phase mapping fixes with writable probes"),
         ("schedule list", "List existing schedules in the model"),
         ("schedule export", "Export schedule data (--category, --name, --fields, --output)"),
         ("schedule create", "Preview or create a ViewSchedule (--dry-run, --output, --receipt-dir)"),
@@ -168,9 +194,16 @@ internal static class CliCommandCatalog
         root.AddCommand(WorkflowCommand.Create());
         root.AddCommand(ReportCommand.Create());
         root.AddCommand(DeliverablesCommand.Create());
+        root.AddCommand(IssueCommand.Create(client));
         root.AddCommand(StandardsCommand.Create());
         root.AddCommand(ReleaseCommand.Create());
         root.AddCommand(SheetsCommand.Create(client));
+        root.AddCommand(RoomsCommand.Create(client));
+        root.AddCommand(MarksCommand.Create(client));
+        root.AddCommand(SchedulesCommand.Create(client));
+        root.AddCommand(ViewsCommand.Create(client));
+        root.AddCommand(LinksCommand.Create(client));
+        root.AddCommand(ModelCommand.Create(client));
         root.AddCommand(ScheduleCommand.Create(client));
         root.AddCommand(DiffCommand.Create());
         root.AddCommand(SnapshotCommand.Create(client));

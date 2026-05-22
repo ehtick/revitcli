@@ -48,6 +48,34 @@ public static class ExamplesCommand
             },
             "Check whether this model is ready for issue; verify sheet numbering and required sheets before export."),
         new(
+            "rooms",
+            "Plan room numbering updates from local rules before applying.",
+            new[]
+            {
+                "revitcli inspect params rooms --writable-only --missing-only",
+                "revitcli rooms renumber --rule .revitcli/numbering/rooms.yml --scope all --plan-output .revitcli/plans/room-numbering.json --dry-run --output markdown",
+                "revitcli plan show .revitcli/plans/room-numbering.json --output markdown",
+                "revitcli plan apply .revitcli/plans/room-numbering.json --dry-run",
+                "revitcli plan apply .revitcli/plans/room-numbering.json --yes --max-changes 500",
+                "revitcli rollback .revitcli/plans/room-numbering.json.receipt.json --dry-run"
+            },
+            "Create a deterministic room-numbering plan, summarize collisions or skipped rooms, and wait for approval before apply."),
+        new(
+            "marks",
+            "Plan and verify door/window Mark numbering from local rules.",
+            new[]
+            {
+                "revitcli inspect params doors --writable-only --missing-only",
+                "revitcli inspect params windows --writable-only --missing-only",
+                "revitcli marks verify --category doors,windows --output markdown",
+                "revitcli marks assign --category doors --rule .revitcli/numbering/doors.yml --plan-output .revitcli/plans/door-marks.json --dry-run --output markdown",
+                "revitcli plan show .revitcli/plans/door-marks.json --output markdown",
+                "revitcli plan apply .revitcli/plans/door-marks.json --dry-run",
+                "revitcli plan apply .revitcli/plans/door-marks.json --yes --max-changes 500",
+                "revitcli rollback .revitcli/plans/door-marks.json.receipt.json --dry-run"
+            },
+            "Verify current door/window Marks, create a deterministic assignment plan, and wait for approval before apply."),
+        new(
             "schedule",
             "List and export schedule data for tables and deliverables.",
             new[]
@@ -63,6 +91,52 @@ public static class ExamplesCommand
                 "revitcli schedule create --category Doors --fields \"Mark,Level\" --name \"Door Review\" --dry-run --output json"
             },
             "Export the door schedule to CSV and report any missing schedule fields."),
+        new(
+            "schedules",
+            "Ensure versioned schedule specs, batch-export sets, and compare schedule CSV drops.",
+            new[]
+            {
+                "revitcli schedules ensure --spec .revitcli/schedules/issue.yml --plan-output .revitcli/plans/schedule-ensure.json --dry-run --mode create-only --output markdown",
+                "revitcli schedules ensure --spec .revitcli/schedules/*.yml --plan-output .revitcli/plans/schedule-sync.json --dry-run --mode sync-fields --output json",
+                "revitcli schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json",
+                "revitcli schedules compare --from exports/schedules/baseline --to exports/schedules/current --keys Number,Mark --output markdown",
+                "revitcli workbench verify --dir . --output json"
+            },
+            "Plan schedule structure changes from schedule-spec.v1 YAML, export traceable CSVs, then compare against the baseline before handoff."),
+        new(
+            "views",
+            "Audit view standards and create reviewed template or clone-set plans.",
+            new[]
+            {
+                "revitcli views audit --rules .revitcli/views/standards.yml --templates --browser --output markdown",
+                "revitcli views template-apply --selector \"Level*\" --template \"Architectural Plan\" --plan-output .revitcli/plans/view-template.json --dry-run --output markdown",
+                "revitcli views clone-set --from-set \"Level*\" --to-prefix \"Tender - \" --naming-rule \"{prefix}{name}\" --plan-output .revitcli/plans/view-clone.json --dry-run --output json",
+                "revitcli plan show .revitcli/plans/view-template.json --output markdown",
+                "revitcli workbench verify --dir . --output json"
+            },
+            "Audit view naming/templates, then freeze view ids and target names before any template or clone mutation."),
+        new(
+            "links",
+            "Audit coordination links and plan safe path/load repairs.",
+            new[]
+            {
+                "revitcli links audit --rules .revitcli/links/rules.yml --check paths,loaded,coordinates --output markdown",
+                "revitcli links repair --map .revitcli/links/paths.yml --plan-output .revitcli/plans/link-repair.json --dry-run --max-changes 20 --output json",
+                "revitcli plan show .revitcli/plans/link-repair.json --output markdown",
+                "revitcli workbench verify --dir . --output json"
+            },
+            "Audit structural and MEP link paths/load status, then create a path-only repair plan without coordinate moves."),
+        new(
+            "model",
+            "Audit and plan workset/phase mapping fixes for coordination hygiene.",
+            new[]
+            {
+                "revitcli model map-check --against .revitcli/model-mapping.yml --worksets --phases --output markdown",
+                "revitcli model map-fix --against .revitcli/model-mapping.yml --scope rooms,doors,walls --plan-output .revitcli/plans/model-map-fix.json --dry-run --output json",
+                "revitcli plan show .revitcli/plans/model-map-fix.json --output markdown",
+                "revitcli workbench verify --dir . --output json"
+            },
+            "Check workset and phase ownership before coordination meetings; require reviewed write prechecks before any future fix apply path."),
         new(
             "set",
             "Preview and save a reviewed parameter-write plan before applying.",
@@ -98,6 +172,7 @@ public static class ExamplesCommand
             {
                 "revitcli profile simulate issue",
                 "revitcli check issue",
+                "revitcli deliverables plan --profile .revitcli.yml --output markdown",
                 "revitcli publish issue --dry-run",
                 "revitcli publish issue",
                 "revitcli deliverables verify",
@@ -111,6 +186,7 @@ public static class ExamplesCommand
             {
                 "revitcli deliverables list",
                 "revitcli deliverables stats",
+                "revitcli deliverables plan --profile .revitcli.yml --output markdown",
                 "revitcli deliverables verify",
                 "revitcli deliverables verify --output json",
                 "revitcli deliverables verify --output markdown",
@@ -118,6 +194,18 @@ public static class ExamplesCommand
                 "revitcli deliverables bundle --bundle-path deliverables/review-package.zip"
             },
             "Verify today's exported deliverables, then build a review package with receipts."),
+        new(
+            "issue",
+            "Run issue preflight, model diff review, and traceable delivery packaging.",
+            new[]
+            {
+                "revitcli issue preflight --profile .revitcli/issue.yml --output markdown --fail-on warning",
+                "revitcli issue diff --from .revitcli/history/baseline.json --to current --review --output markdown",
+                "revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --dry-run --sign-journal --include-receipts true --output markdown",
+                "revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --sign-journal --include-receipts true --output json",
+                "revitcli workbench verify --contract workbench-contract.v2 --dir . --output json"
+            },
+            "Run the v5 issue closure checklist, summarize hidden-mutation blockers, then dry-run the package before any delivery files are written."),
         new(
             "review",
             "Summarize snapshot changes and flag suspicious model edits.",

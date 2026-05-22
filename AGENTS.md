@@ -37,6 +37,19 @@ Use C# with 4-space indentation, `nullable` enabled, and implicit usings. Keep p
 
 Tests use xUnit with Moq where needed. Add CLI command tests under `tests/RevitCli.Tests/Commands/`; shared behavior belongs in the matching feature folder. Prefer fake HTTP handlers and `StringWriter` for CLI output assertions. Put add-in integration coverage under `tests/RevitCli.Addin.Tests/Integration/`. Run at least `dotnet test tests/RevitCli.Tests/` before submitting changes.
 
+## Codex `/goal` Subagent Orchestration
+
+For non-trivial `/goal` work, use the repo-specific subagents deliberately instead of carrying every investigation and edit in one long context.
+
+- Ground the task first with a short read-only pass, then decide whether 1-3 subagents can do bounded sidecar work in parallel.
+- Keep the immediate critical path local. Delegate only tasks with clear ownership, such as CLI/shared DTOs, add-in handlers/services, tests, docs, or read-only impact exploration.
+- Give every write-capable subagent a disjoint file or module ownership statement and tell it that other agents may also be working in the repo; it must not revert unrelated edits.
+- Prefer `repo-explorer` for file/symbol discovery, `cli-implementer` for `src/RevitCli/` and shared DTO work, `addin-implementer` for `src/RevitCli.Addin/`, `test-author` for focused tests, and `code-reviewer` for a final risk pass. In `/goal`, these names refer to top-level subagent roles, not direct `codex exec --agent ...` calls.
+- Track live delegation state in `.codex/state/goal-delegation.md` during long goals: objective, spawned agents, ownership, pending results, integrated results, and next local action.
+- After a resume, context compaction, or long implementation stretch, reread `.codex/state/goal-delegation.md` before spawning more agents or finalizing.
+- Close completed subagents once their results have been integrated or deemed unnecessary, and record the closure in `.codex/state/goal-delegation.md`.
+- Do not call write-capable project agents directly through `.codex/agents/*.toml` outside the tick loop. In `/goal`, the top-level Codex session coordinates subagents; for audited single-checkbox automation use `scripts/codex tick` or `scripts/codex loop`.
+
 ## Commit & Pull Request Guidelines
 
 Use Conventional Commits seen in history: `feat:`, `fix:`, `test:`, `docs:`, `ci:`, and `chore:`. Example: `fix: handle null document path in status`. Pull requests should describe the change, link related issues, list test commands run, and mention any Revit-version or dashboard impact. Include screenshots only for visible dashboard changes.

@@ -59,6 +59,12 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("standards", script);
         Assert.Contains("release", script);
         Assert.Contains("sheets", script);
+        Assert.Contains("rooms", script);
+        Assert.Contains("marks", script);
+        Assert.Contains("schedules", script);
+        Assert.Contains("views", script);
+        Assert.Contains("links", script);
+        Assert.Contains("model", script);
         Assert.Contains("diff", script);
         Assert.Contains("snapshot", script);
         Assert.Contains("interactive", script);
@@ -95,10 +101,16 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("table json markdown", script);
         Assert.Contains("init validate simulate review run suggest examples receipts --dir --journal --output --dry-run --yes --continue-on-error --timeout-ms --force --min-count --max-steps --limit --failed-only --name --min-duration-ms --sort --window", script);
         Assert.Contains("weekly knowledge --window --dir --history-dir --journal --output --report", script);
-        Assert.Contains("list stats verify bundle --dir --bundle-path --dry-run --force --output", script);
+        Assert.Contains("list stats verify plan bundle --dir --profile --since --bundle-path --dry-run --force --output", script);
         Assert.Contains("install validate --manifest --dir --output --ref --subpath --force --dry-run", script);
         Assert.Contains("verify --root --output --tag --strict", script);
-        Assert.Contains("verify index init show --against --rule --issues-only --output --path --force", script);
+        Assert.Contains("verify issue-meta renumber index init show --against --rule --issues-only --output --path --force --selector --issue-code --issue-date --plan-output --param-map --dry-run --max-changes", script);
+        Assert.Contains("renumber --rule --plan-output --scope --dry-run --max-changes --output", script);
+        Assert.Contains("assign verify --category --rule --plan-output --sort --dry-run --max-changes --against --output", script);
+        Assert.Contains("ensure batch-export compare --spec --plan-output --dry-run --mode --set --output-dir --format --manifest --from --to --keys --output", script);
+        Assert.Contains("compgen -W \"create-only sync-fields\" -- \"$cur\"", script);
+        Assert.Contains("audit template-apply clone-set --rules --templates --browser --selector --template --plan-output --dry-run --exclude --from-set --to-prefix --naming-rule --include-sheets --output", script);
+        Assert.Contains("compgen -W \"locked\" -- \"$cur\"", script);
         Assert.Contains("list export create --category --name --fields --filter --sort --sort-desc --output --template --place-on-sheet --dry-run --receipt-dir", script);
         Assert.Contains("compgen -W \"table json markdown\" -- \"$cur\"", script);
         Assert.Contains("compgen -W \"table json csv markdown\" -- \"$cur\"", script);
@@ -128,10 +140,16 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'examples:Show copy-paste examples for common architect workflows'", script);
         Assert.Contains("'workflow:Create, validate, run, and review terminal workflow YAML files'", script);
         Assert.Contains("'report:Generate local project reports from history and journal data'", script);
-        Assert.Contains("'deliverables:Review local delivery manifests and receipts'", script);
+        Assert.Contains("'deliverables:Review local delivery plans, manifests, and receipts'", script);
         Assert.Contains("'standards:Install and validate local office standards requirements'", script);
         Assert.Contains("'release:Verify local release readiness and CI guardrails'", script);
         Assert.Contains("'sheets:Verify sheet numbering and local sheet-frame expectations'", script);
+        Assert.Contains("'rooms:Plan and review room numbering workflows'", script);
+        Assert.Contains("'marks:Plan and verify door/window Mark numbering workflows'", script);
+        Assert.Contains("'schedules:Ensure, batch-export, and compare versioned schedule specs'", script);
+        Assert.Contains("'views:Audit, template, and clone view sets'", script);
+        Assert.Contains("'links:Audit and plan safe coordination link repairs'", script);
+        Assert.Contains("'model:Audit and plan safe model mapping fixes'", script);
         Assert.Contains("'interactive:Enter interactive REPL mode'", script);
         Assert.Contains("categories params schedules sheets workflows plans", script);
         Assert.Contains("--empty-only[Only zero-row schedules]", script);
@@ -148,13 +166,21 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("--sort[Sort workflow receipts]:sort:(completed duration)", script);
         Assert.Contains("--window[Only show workflow receipts in a recent window]:window:", script);
         Assert.Contains("weekly", script);
-        Assert.Contains("list stats verify bundle", script);
+        Assert.Contains("list stats verify plan bundle", script);
         Assert.Contains("install validate", script);
         Assert.Contains("verify", script);
         Assert.Contains("--tag[Release tag]", script);
         Assert.Contains("--strict[Treat warnings as failures]", script);
         Assert.Contains("--issues-only[Only warning/error issues]", script);
         Assert.Contains("--path[Sheet index path]", script);
+        Assert.Contains("--scope[Room scope]", script);
+        Assert.Contains("--against[Rule YAML or glob]", script);
+        Assert.Contains("ensure batch-export compare", script);
+        Assert.Contains("--mode[Ensure mode]:mode:(create-only sync-fields)", script);
+        Assert.Contains("--manifest[Write export manifest JSON]:file:_files", script);
+        Assert.Contains("audit template-apply clone-set", script);
+        Assert.Contains("--exclude[Exclude flags]:exclude:(locked)", script);
+        Assert.Contains("--include-sheets[Plan sheet placement duplication]", script);
         Assert.Contains("list export create", script);
         Assert.Contains("--place-on-sheet[Sheet pattern]", script);
         Assert.Contains("--dry-run[Preview schedule creation without writing]", script);
@@ -201,10 +227,12 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("'examples' = 'Show copy-paste examples for common architect workflows'", script);
         Assert.Contains("'workflow' = 'Create, validate, run, and review terminal workflow YAML files'", script);
         Assert.Contains("'report' = 'Generate local project reports from history and journal data'", script);
-        Assert.Contains("'deliverables' = 'Review local delivery manifests and receipts'", script);
+        Assert.Contains("'deliverables' = 'Review local delivery plans, manifests, and receipts'", script);
         Assert.Contains("'standards' = 'Install and validate local office standards requirements'", script);
         Assert.Contains("'release' = 'Verify local release readiness and CI guardrails'", script);
         Assert.Contains("'sheets' = 'Verify sheet numbering and local sheet-frame expectations'", script);
+        Assert.Contains("'rooms' = 'Plan and review room numbering workflows'", script);
+        Assert.Contains("'marks' = 'Plan and verify door/window Mark numbering workflows'", script);
         Assert.Contains("'interactive' = 'Enter interactive REPL mode'", script);
         Assert.Contains("'rollback' = 'Restore parameters from a fix baseline or plan receipt'", script);
         Assert.Contains("'show', 'stats', 'review', 'sign', 'verify'", script);
@@ -225,14 +253,30 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("$workflowSuggestOutputFormats = @('table', 'json', 'yaml')", script);
         Assert.Contains("'weekly', 'knowledge', '--window', '--dir', '--history-dir', '--journal', '--output', '--report'", script);
         Assert.Contains("$reportOutputFormats = @('table', 'json', 'markdown')", script);
-        Assert.Contains("'list', 'stats', 'verify', 'bundle', '--dir', '--bundle-path', '--dry-run', '--force', '--output'", script);
+        Assert.Contains("'list', 'stats', 'verify', 'plan', 'bundle', '--dir', '--profile', '--since', '--bundle-path', '--dry-run', '--force', '--output'", script);
         Assert.Contains("$deliverablesOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("'install', 'validate', '--manifest', '--dir', '--output', '--ref', '--subpath', '--force', '--dry-run'", script);
         Assert.Contains("$standardsOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("'release' = @('verify', '--root', '--output', '--tag', '--strict')", script);
         Assert.Contains("$releaseOutputFormats = @('table', 'json', 'markdown')", script);
-        Assert.Contains("'sheets' = @('verify', 'index', 'init', 'show', '--against', '--rule', '--issues-only', '--output', '--path', '--force')", script);
+        Assert.Contains("'sheets' = @('verify', 'issue-meta', 'renumber', 'index', 'init', 'show', '--against', '--rule', '--issues-only', '--output', '--path', '--force', '--selector', '--issue-code', '--issue-date', '--plan-output', '--param-map', '--dry-run', '--max-changes')", script);
         Assert.Contains("$sheetsOutputFormats = @('table', 'json', 'markdown', 'yaml')", script);
+        Assert.Contains("'rooms' = @('renumber', '--rule', '--plan-output', '--scope', '--dry-run', '--max-changes', '--output')", script);
+        Assert.Contains("$roomsOutputFormats = @('table', 'json', 'markdown')", script);
+        Assert.Contains("'marks' = @('assign', 'verify', '--category', '--rule', '--plan-output', '--sort', '--dry-run', '--max-changes', '--against', '--output')", script);
+        Assert.Contains("$marksOutputFormats = @('table', 'json', 'markdown')", script);
+        Assert.Contains("'schedules' = @('ensure', 'batch-export', 'compare', '--spec', '--plan-output', '--dry-run', '--mode', '--set', '--output-dir', '--format', '--manifest', '--from', '--to', '--keys', '--output')", script);
+        Assert.Contains("$schedulesSubcommands = @('ensure', 'batch-export', 'compare')", script);
+        Assert.Contains("$schedulesModes = @('create-only', 'sync-fields')", script);
+        Assert.Contains("'views' = @('audit', 'template-apply', 'clone-set', '--rules', '--templates', '--browser', '--selector', '--template', '--plan-output', '--dry-run', '--exclude', '--from-set', '--to-prefix', '--naming-rule', '--include-sheets', '--output')", script);
+        Assert.Contains("$viewsSubcommands = @('audit', 'template-apply', 'clone-set')", script);
+        Assert.Contains("$viewsExcludeValues = @('locked')", script);
+        Assert.Contains("'links' = @('audit', 'repair', '--rules', '--check', '--map', '--plan-output', '--dry-run', '--max-changes', '--output')", script);
+        Assert.Contains("$linksSubcommands = @('audit', 'repair')", script);
+        Assert.Contains("$linkCheckValues = @('paths', 'loaded', 'coordinates', 'paths,loaded,coordinates')", script);
+        Assert.Contains("'model' = @('map-check', 'map-fix', '--against', '--worksets', '--phases', '--plan-output', '--scope', '--dry-run', '--max-changes', '--output')", script);
+        Assert.Contains("$modelSubcommands = @('map-check', 'map-fix')", script);
+        Assert.Contains("$modelScopeValues = @('rooms', 'doors', 'walls', 'rooms,doors,walls', 'all')", script);
         Assert.Contains("$scheduleSubcommands = @('list', 'export', 'create')", script);
         Assert.Contains("$scheduleListOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("$scheduleExportOutputFormats = @('table', 'json', 'csv', 'markdown')", script);
@@ -251,7 +295,7 @@ public class CompletionsCommandTests : IDisposable
             script,
             "        'examples' = @(",
             "        'publish' = @(");
-        Assert.Contains("'inspect', 'sheets', 'schedule'", examplesOptionsBlock);
+        Assert.Contains("'inspect', 'sheets', 'rooms', 'marks', 'schedule'", examplesOptionsBlock);
         Assert.Contains("'--output'", examplesOptionsBlock);
         Assert.Contains("$exampleOutputFormats = @('table', 'json', 'markdown')", script);
         var rollbackOptionsBlock = ExtractBlock(
@@ -443,8 +487,9 @@ public class CompletionsCommandTests : IDisposable
 
         Assert.Equal(0, bashExitCode);
         Assert.Contains("workbench)", bash);
-        Assert.Contains("contract verify receipts paths exits extensions outputs safeguards project handoff --dir --output", bash);
+        Assert.Contains("contract verify receipts paths exits extensions outputs safeguards project handoff --dir --output --contract", bash);
         Assert.Contains("compgen -W \"table json markdown\" -- \"$cur\"", bash);
+        Assert.Contains("compgen -W \"workbench-contract.v1 workbench-contract.v2\" -- \"$cur\"", bash);
 
         var zshOut = new StringWriter();
         Console.SetOut(zshOut);
@@ -456,6 +501,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("workbench)", zsh);
         Assert.Contains("_values 'subcommand' contract verify receipts paths exits extensions outputs safeguards project handoff", zsh);
         Assert.Contains("--dir[Project directory]:dir:_directories", zsh);
+        Assert.Contains("--contract[Contract schema]:schema:(workbench-contract.v1 workbench-contract.v2)", zsh);
         Assert.Contains("--output[Output format]:format:(table json markdown)", zsh);
 
         var pwshOut = new StringWriter();
@@ -465,8 +511,9 @@ public class CompletionsCommandTests : IDisposable
 
         Assert.Equal(0, pwshExitCode);
         Assert.Contains("'workbench' = 'Show stable terminal workbench contract for Codex CLI'", pwsh);
-        Assert.Contains("'workbench' = @('contract', 'verify', 'receipts', 'paths', 'exits', 'extensions', 'outputs', 'safeguards', 'project', 'handoff', '--dir', '--output')", pwsh);
+        Assert.Contains("'workbench' = @('contract', 'verify', 'receipts', 'paths', 'exits', 'extensions', 'outputs', 'safeguards', 'project', 'handoff', '--dir', '--output', '--contract')", pwsh);
         Assert.Contains("$workbenchOutputFormats = @('table', 'json', 'markdown')", pwsh);
+        Assert.Contains("$workbenchContractSchemas = @('workbench-contract.v1', 'workbench-contract.v2')", pwsh);
     }
 
     [Fact]

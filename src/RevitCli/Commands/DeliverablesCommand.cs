@@ -21,10 +21,11 @@ public static class DeliverablesCommand
 
     public static Command Create()
     {
-        var command = new Command("deliverables", "Review local delivery manifests and receipts");
+        var command = new Command("deliverables", "Review local delivery plans, manifests, and receipts");
         command.AddCommand(CreateListCommand());
         command.AddCommand(CreateStatsCommand());
         command.AddCommand(CreateVerifyCommand());
+        command.AddCommand(CreatePlanCommand());
         command.AddCommand(CreateBundleCommand());
         return command;
     }
@@ -43,6 +44,29 @@ public static class DeliverablesCommand
         {
             Environment.ExitCode = await ExecuteListAsync(dir, output, Console.Out);
         }, dirOpt, outputOpt);
+
+        return command;
+    }
+
+    private static Command CreatePlanCommand()
+    {
+        var profileOpt = new Option<string?>("--profile", "Path to .revitcli.yml profile")
+        {
+            IsRequired = true
+        };
+        var sinceOpt = new Option<string?>("--since", "Baseline snapshot JSON file for incremental delivery evidence");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table|json|markdown");
+        var command = new Command("plan", "Plan deliverable exports from a profile without contacting Revit")
+        {
+            profileOpt,
+            sinceOpt,
+            outputOpt,
+        };
+
+        command.SetHandler(async (string? profile, string? since, string output) =>
+        {
+            Environment.ExitCode = await ExecutePlanAsync(profile, since, output, Console.Out);
+        }, profileOpt, sinceOpt, outputOpt);
 
         return command;
     }
@@ -172,6 +196,36 @@ public static class DeliverablesCommand
         };
     }
 
+    internal static async Task<int> ExecutePlanAsync(
+        string? profilePath,
+        string? sincePath,
+        string outputFormat,
+        TextWriter output)
+    {
+        if (!TryParseOutput(outputFormat, out var normalizedOutput, out var outputError))
+            return await WriteError(output, outputError);
+
+        DeliveryPlanReport report;
+        try
+        {
+            report = DeliveryPlanPlanner.Plan(profilePath, sincePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        {
+            return normalizedOutput == "json"
+                ? await WriteJson(output, DeliveryPlanReport.Failure(ex.Message), 1)
+                : await WriteError(output, ex.Message);
+        }
+
+        var exitCode = report.Success ? 0 : 1;
+        return normalizedOutput switch
+        {
+            "json" => await WriteJson(output, report, exitCode),
+            "markdown" => await WriteLines(output, exitCode, RenderPlanMarkdown(report)),
+            _ => await WriteLines(output, exitCode, RenderPlan(report))
+        };
+    }
+
     internal static async Task<int> ExecuteBundleAsync(
         string? dir,
         string? bundlePath,
@@ -296,6 +350,116 @@ public static class DeliverablesCommand
         }
 
         AppendIssuesMarkdown(lines, report.Issues);
+        return lines;
+    }
+
+    private static IReadOnlyList<string> RenderPlan(DeliveryPlanReport report)
+    {
+        var lines = new List<string>
+        {
+            $"{StatusText(report.Success)}: Delivery plan: {report.ProfilePath}",
+            $"OK: Schema: {report.SchemaVersion}",
+            $"OK: Pipelines: {report.PipelineCount}",
+            $"OK: Exports: {report.ExportCount}",
+            $"OK: Risks: {report.RiskCount}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(report.SincePath))
+            lines.Add($"OK: Since baseline: {report.SincePath}");
+        if (report.Baseline is { Readable: true } baseline)
+            lines.Add($"OK: Baseline sheets: {baseline.SheetCount}");
+
+        foreach (var pipeline in report.Pipelines)
+        {
+            lines.Add($"Pipeline: {pipeline.Name} exports={pipeline.ExportCount} risks={pipeline.RiskCount}");
+            foreach (var export in pipeline.Exports)
+            {
+                var estimate = export.EstimatedSheetCount.HasValue
+                    ? $" estimatedSheets={export.EstimatedSheetCount.Value}"
+                    : "";
+                lines.Add(
+                    $"  {export.Preset,-18} {export.Format,-5} {export.Selector}{estimate} outputDir={export.OutputDir}");
+            }
+        }
+
+        AppendPlanRisks(lines, report.Risks);
+        return lines;
+    }
+
+    private static IReadOnlyList<string> RenderPlanMarkdown(DeliveryPlanReport report)
+    {
+        var lines = new List<string>
+        {
+            "# Delivery Plan",
+            "",
+            $"- Schema: `{report.SchemaVersion}`",
+            $"- Status: `{StatusText(report.Success)}`",
+            $"- Profile: `{EscapeInlineCode(report.ProfilePath)}`",
+            $"- Profile hash: `{EscapeInlineCode(report.ProfileHash ?? "-")}`",
+            $"- Since: `{EscapeInlineCode(report.SincePath ?? "-")}`",
+            $"- Pipelines: `{report.PipelineCount}`",
+            $"- Exports: `{report.ExportCount}`",
+            $"- Risks: `{report.RiskCount}`",
+            ""
+        };
+
+        if (report.Baseline != null)
+        {
+            lines.Add("## Baseline");
+            lines.Add("");
+            lines.Add($"- Path: `{EscapeInlineCode(report.Baseline.Path)}`");
+            lines.Add($"- Exists: `{BoolText(report.Baseline.Exists)}`");
+            lines.Add($"- Readable: `{BoolText(report.Baseline.Readable)}`");
+            if (report.Baseline.Readable)
+            {
+                lines.Add($"- Document: `{EscapeInlineCode(report.Baseline.Document ?? "-")}`");
+                lines.Add($"- Taken at: `{EscapeInlineCode(report.Baseline.TakenAt ?? "-")}`");
+                lines.Add($"- Sheets: `{report.Baseline.SheetCount}`");
+                lines.Add($"- Schedules: `{report.Baseline.ScheduleCount}`");
+            }
+
+            lines.Add("");
+        }
+
+        if (report.Pipelines.Count > 0)
+        {
+            lines.Add("## Pipelines");
+            lines.Add("");
+            lines.Add("| Pipeline | Precheck | Incremental | Since mode | Exports | Risks |");
+            lines.Add("|---|---|---|---|---:|---:|");
+            foreach (var pipeline in report.Pipelines)
+            {
+                lines.Add(
+                    $"| {EscapeTableCell(pipeline.Name)} | {EscapeTableCell(pipeline.Precheck ?? "-")} | {BoolText(pipeline.Incremental)} | {EscapeTableCell(pipeline.SinceMode)} | {pipeline.ExportCount} | {pipeline.RiskCount} |");
+            }
+
+            lines.Add("");
+            lines.Add("## Exports");
+            lines.Add("");
+            lines.Add("| Pipeline | Preset | Format | Selector | Estimated sheets | Output dir |");
+            lines.Add("|---|---|---|---|---:|---|");
+            foreach (var pipeline in report.Pipelines)
+            {
+                foreach (var export in pipeline.Exports)
+                {
+                    lines.Add(
+                        $"| {EscapeTableCell(pipeline.Name)} | {EscapeTableCell(export.Preset)} | {EscapeTableCell(export.Format)} | {EscapeTableCell(export.Selector)} | {EscapeTableCell(export.EstimatedSheetCount?.ToString() ?? "-")} | {EscapeTableCell(export.OutputDir)} |");
+                }
+            }
+
+            lines.Add("");
+        }
+
+        if (report.CommandPaths.Count > 0)
+        {
+            lines.Add("## Command Paths");
+            lines.Add("");
+            foreach (var command in report.CommandPaths)
+                lines.Add($"- `{EscapeInlineCode(command)}`");
+            lines.Add("");
+        }
+
+        AppendPlanRisksMarkdown(lines, report.Risks);
         return lines;
     }
 
@@ -492,6 +656,52 @@ public static class DeliverablesCommand
         foreach (var count in counts)
             lines.Add($"| {EscapeTableCell(count.Name)} | {count.Count} |");
         lines.Add("");
+    }
+
+    private static void AppendPlanRisks(IList<string> lines, IReadOnlyList<DeliveryPlanRisk> risks)
+    {
+        if (risks.Count == 0)
+            return;
+
+        lines.Add("Risks:");
+        foreach (var risk in risks)
+        {
+            var prefix = string.Equals(risk.Severity, "error", StringComparison.OrdinalIgnoreCase)
+                ? "FAIL"
+                : string.Equals(risk.Severity, "warning", StringComparison.OrdinalIgnoreCase)
+                    ? "WARN"
+                    : "INFO";
+            var scope = string.IsNullOrWhiteSpace(risk.Pipeline)
+                ? "profile"
+                : string.IsNullOrWhiteSpace(risk.Preset)
+                    ? risk.Pipeline!
+                    : $"{risk.Pipeline}/{risk.Preset}";
+            lines.Add($"  {prefix}: {scope}: {risk.Code}: {risk.Message}");
+        }
+    }
+
+    private static void AppendPlanRisksMarkdown(IList<string> lines, IReadOnlyList<DeliveryPlanRisk> risks)
+    {
+        lines.Add("## Risks");
+        lines.Add("");
+        if (risks.Count == 0)
+        {
+            lines.Add("- None.");
+            return;
+        }
+
+        lines.Add("| Severity | Scope | Code | Message |");
+        lines.Add("|---|---|---|---|");
+        foreach (var risk in risks)
+        {
+            var scope = string.IsNullOrWhiteSpace(risk.Pipeline)
+                ? "profile"
+                : string.IsNullOrWhiteSpace(risk.Preset)
+                    ? risk.Pipeline!
+                    : $"{risk.Pipeline}/{risk.Preset}";
+            lines.Add(
+                $"| {EscapeTableCell(risk.Severity.ToUpperInvariant())} | {EscapeTableCell(scope)} | {EscapeTableCell(risk.Code)} | {EscapeTableCell(risk.Message)} |");
+        }
     }
 
     private static void AppendIssues(IList<string> lines, DeliveryManifestReport report)

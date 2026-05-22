@@ -17,8 +17,15 @@ public sealed class ExamplesCommandTests
         Assert.Contains("Available example topics:", text);
         Assert.Contains("inspect", text);
         Assert.Contains("sheets", text);
+        Assert.Contains("rooms", text);
+        Assert.Contains("marks", text);
+        Assert.Contains("schedules", text);
+        Assert.Contains("views", text);
+        Assert.Contains("links", text);
+        Assert.Contains("model", text);
         Assert.Contains("workflow", text);
         Assert.Contains("workbench", text);
+        Assert.Contains("issue", text);
         Assert.Contains("report", text);
         Assert.Contains("deliverables", text);
         Assert.Contains("standards", text);
@@ -43,6 +50,54 @@ public sealed class ExamplesCommandTests
         Assert.Contains("revitcli sheets index init", text);
         Assert.Contains("revitcli export --format pdf --sheets \"A1*\" --dry-run", text);
         Assert.Contains("Codex prompt:", text);
+    }
+
+    [Fact]
+    public async Task Execute_IssueTopic_PrintsClosureWorkflow()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "issue");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# issue", text);
+        Assert.Contains("revitcli issue preflight --profile .revitcli/issue.yml --output markdown --fail-on warning", text);
+        Assert.Contains("revitcli issue diff --from .revitcli/history/baseline.json --to current --review --output markdown", text);
+        Assert.Contains("revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --dry-run --sign-journal --include-receipts true --output markdown", text);
+        Assert.Contains("revitcli workbench verify --contract workbench-contract.v2 --dir . --output json", text);
+        Assert.Contains("hidden-mutation blockers", text);
+    }
+
+    [Fact]
+    public async Task Execute_RoomsTopic_PrintsRenumberPlanWorkflow()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "rooms");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# rooms", text);
+        Assert.Contains("revitcli inspect params rooms --writable-only --missing-only", text);
+        Assert.Contains("revitcli rooms renumber --rule .revitcli/numbering/rooms.yml --scope all --plan-output .revitcli/plans/room-numbering.json --dry-run --output markdown", text);
+        Assert.Contains("revitcli plan apply .revitcli/plans/room-numbering.json --yes --max-changes 500", text);
+        Assert.Contains("deterministic room-numbering plan", text);
+    }
+
+    [Fact]
+    public async Task Execute_MarksTopic_PrintsAssignAndVerifyWorkflow()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "marks");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# marks", text);
+        Assert.Contains("revitcli marks verify --category doors,windows --output markdown", text);
+        Assert.Contains("revitcli marks assign --category doors --rule .revitcli/numbering/doors.yml --plan-output .revitcli/plans/door-marks.json --dry-run --output markdown", text);
+        Assert.Contains("deterministic assignment plan", text);
     }
 
     [Fact]
@@ -93,6 +148,66 @@ public sealed class ExamplesCommandTests
         Assert.Contains("revitcli schedule export --name \"Door Schedule\" --output csv", text);
         Assert.Contains("revitcli schedule export --name \"Door Schedule\" --output markdown", text);
         Assert.Contains("revitcli schedule create --category Doors --fields \"Mark,Level\" --name \"Door Review\" --dry-run --output json", text);
+    }
+
+    [Fact]
+    public async Task Execute_SchedulesTopic_PrintsEnsureExportAndCompareWorkflow()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "schedules");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# schedules", text);
+        Assert.Contains("revitcli schedules ensure --spec .revitcli/schedules/issue.yml --plan-output .revitcli/plans/schedule-ensure.json --dry-run --mode create-only --output markdown", text);
+        Assert.Contains("revitcli schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json", text);
+        Assert.Contains("revitcli schedules compare --from exports/schedules/baseline --to exports/schedules/current --keys Number,Mark --output markdown", text);
+    }
+
+    [Fact]
+    public async Task Execute_ViewsTopic_PrintsAuditTemplateAndCloneWorkflow()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "views");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# views", text);
+        Assert.Contains("revitcli views audit --rules .revitcli/views/standards.yml --templates --browser --output markdown", text);
+        Assert.Contains("revitcli views template-apply --selector \"Level*\" --template \"Architectural Plan\" --plan-output .revitcli/plans/view-template.json --dry-run --output markdown", text);
+        Assert.Contains("revitcli views clone-set --from-set \"Level*\" --to-prefix \"Tender - \" --naming-rule \"{prefix}{name}\" --plan-output .revitcli/plans/view-clone.json --dry-run --output json", text);
+    }
+
+    [Fact]
+    public async Task Execute_LinksTopic_PrintsAuditAndRepairWorkflow()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "links");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# links", text);
+        Assert.Contains("revitcli links audit --rules .revitcli/links/rules.yml --check paths,loaded,coordinates --output markdown", text);
+        Assert.Contains("revitcli links repair --map .revitcli/links/paths.yml --plan-output .revitcli/plans/link-repair.json --dry-run --max-changes 20 --output json", text);
+        Assert.Contains("without coordinate moves", text);
+    }
+
+    [Fact]
+    public async Task Execute_ModelTopic_PrintsMapCheckAndFixWorkflow()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ExamplesCommand.ExecuteAsync(output, "model");
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("# model", text);
+        Assert.Contains("revitcli model map-check --against .revitcli/model-mapping.yml --worksets --phases --output markdown", text);
+        Assert.Contains("revitcli model map-fix --against .revitcli/model-mapping.yml --scope rooms,doors,walls --plan-output .revitcli/plans/model-map-fix.json --dry-run --output json", text);
+        Assert.Contains("write prechecks", text);
     }
 
     [Fact]
@@ -289,6 +404,12 @@ public sealed class ExamplesCommandTests
         var topics = root.GetProperty("topics").EnumerateArray().ToArray();
         Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "publish");
         Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "journal");
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "rooms");
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "marks");
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "schedules");
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "views");
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "links");
+        Assert.Contains(topics, topic => topic.GetProperty("name").GetString() == "model");
     }
 
     [Fact]

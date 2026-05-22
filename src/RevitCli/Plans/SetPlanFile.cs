@@ -220,6 +220,12 @@ public sealed class PlanReceipt
     [JsonPropertyName("rollbackActions")]
     public List<PlanReceiptRollbackAction> RollbackActions { get; set; } = new();
 
+    [JsonPropertyName("linkRepairActions")]
+    public List<PlanReceiptLinkRepairAction> LinkRepairActions { get; set; } = new();
+
+    [JsonPropertyName("modelMapActions")]
+    public List<PlanReceiptModelMapAction> ModelMapActions { get; set; } = new();
+
     [JsonPropertyName("groupCount")]
     public int GroupCount { get; set; }
 
@@ -258,6 +264,72 @@ public sealed class PlanReceiptRollbackAction
 
     [JsonPropertyName("source")]
     public string Source { get; set; } = "";
+}
+
+public sealed class PlanReceiptLinkRepairAction
+{
+    [JsonPropertyName("linkId")]
+    public long LinkId { get; set; }
+
+    [JsonPropertyName("linkTypeId")]
+    public long? LinkTypeId { get; set; }
+
+    [JsonPropertyName("linkName")]
+    public string LinkName { get; set; } = "";
+
+    [JsonPropertyName("typeName")]
+    public string TypeName { get; set; } = "";
+
+    [JsonPropertyName("oldPath")]
+    public string OldPath { get; set; } = "";
+
+    [JsonPropertyName("newPath")]
+    public string NewPath { get; set; } = "";
+
+    [JsonPropertyName("oldLoaded")]
+    public bool OldLoaded { get; set; }
+
+    [JsonPropertyName("newLoaded")]
+    public bool NewLoaded { get; set; }
+
+    [JsonPropertyName("oldPathExists")]
+    public bool OldPathExists { get; set; }
+
+    [JsonPropertyName("newPathExists")]
+    public bool NewPathExists { get; set; }
+
+    [JsonPropertyName("oldPathLastWriteTimeUtc")]
+    public string? OldPathLastWriteTimeUtc { get; set; }
+
+    [JsonPropertyName("newPathLastWriteTimeUtc")]
+    public string? NewPathLastWriteTimeUtc { get; set; }
+
+    [JsonPropertyName("oldPathSizeBytes")]
+    public long? OldPathSizeBytes { get; set; }
+
+    [JsonPropertyName("newPathSizeBytes")]
+    public long? NewPathSizeBytes { get; set; }
+}
+
+public sealed class PlanReceiptModelMapAction
+{
+    [JsonPropertyName("elementId")]
+    public long ElementId { get; set; }
+
+    [JsonPropertyName("elementName")]
+    public string ElementName { get; set; } = "";
+
+    [JsonPropertyName("category")]
+    public string Category { get; set; } = "";
+
+    [JsonPropertyName("field")]
+    public string Field { get; set; } = "";
+
+    [JsonPropertyName("oldValue")]
+    public string? OldValue { get; set; }
+
+    [JsonPropertyName("newValue")]
+    public string NewValue { get; set; } = "";
 }
 
 public sealed class ImportPlanFile

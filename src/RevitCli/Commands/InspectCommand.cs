@@ -11,6 +11,7 @@ using RevitCli.Client;
 using RevitCli.Output;
 using RevitCli.Plans;
 using RevitCli.Shared;
+using RevitCli.Sheets;
 using RevitCli.Workflows;
 
 namespace RevitCli.Commands;
@@ -822,6 +823,8 @@ public static class InspectCommand
                 "set" => BuildSetPlanInspectItem(fullPath, relativePath, receiptPath, commands),
                 "import" => BuildImportPlanInspectItem(fullPath, relativePath, receiptPath, commands),
                 "fix" => BuildFixPlanInspectItem(fullPath, relativePath, receiptPath, commands),
+                "sheet-issue" => BuildSheetIssuePlanInspectItem(fullPath, relativePath, receiptPath, commands),
+                "sheet-renumber" => BuildSheetRenumberPlanInspectItem(fullPath, relativePath, receiptPath, commands),
                 _ => InvalidPlanInspectItem(relativePath, fullPath, commands, $"Unsupported plan type '{type}'.")
             };
         }
@@ -912,6 +915,60 @@ public static class InspectCommand
             plan.Summary.ProfilePath ?? "",
             string.Join(",", plan.Summary.Rules),
             issues.ToArray(),
+            File.Exists(receiptPath),
+            File.Exists(receiptPath) ? NormalizePath(Path.GetFileName(receiptPath)) : "",
+            commands);
+    }
+
+    private static PlanInspectItem BuildSheetIssuePlanInspectItem(
+        string fullPath,
+        string relativePath,
+        string receiptPath,
+        PlanInspectCommands commands)
+    {
+        var plan = SheetIssuePlanStore.Load(fullPath);
+        var issues = plan.Skipped
+            .Select(skipped => $"skipped {skipped.SheetNumber} {skipped.Key}: {skipped.Reason}")
+            .ToArray();
+        return new PlanInspectItem(
+            relativePath,
+            "sheet-issue",
+            BuildPlanStatus(plan.Summary.ActionCount),
+            plan.Summary.ActionCount,
+            plan.CreatedAtUtc,
+            plan.CreatedBy,
+            plan.Selector,
+            $"{plan.Summary.SkippedCount} skipped",
+            plan.ParamMap,
+            $"{plan.IssueCode} / {plan.IssueDate}",
+            issues,
+            File.Exists(receiptPath),
+            File.Exists(receiptPath) ? NormalizePath(Path.GetFileName(receiptPath)) : "",
+            commands);
+    }
+
+    private static PlanInspectItem BuildSheetRenumberPlanInspectItem(
+        string fullPath,
+        string relativePath,
+        string receiptPath,
+        PlanInspectCommands commands)
+    {
+        var plan = SheetRenumberPlanStore.Load(fullPath);
+        var issues = plan.Skipped
+            .Select(skipped => $"skipped {skipped.SheetNumber}: {skipped.Reason}")
+            .ToArray();
+        return new PlanInspectItem(
+            relativePath,
+            "sheet-renumber",
+            BuildPlanStatus(plan.Summary.ActionCount),
+            plan.Summary.ActionCount,
+            plan.CreatedAtUtc,
+            plan.CreatedBy,
+            plan.Selector,
+            $"{plan.Summary.SkippedCount} skipped",
+            plan.RulePath,
+            plan.Parameter,
+            issues,
             File.Exists(receiptPath),
             File.Exists(receiptPath) ? NormalizePath(Path.GetFileName(receiptPath)) : "",
             commands);

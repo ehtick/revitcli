@@ -4,6 +4,7 @@ using System.Text.Json;
 using RevitCli.Client;
 using RevitCli.Config;
 using RevitCli.Output;
+using RevitCli.Plans;
 using RevitCli.Workflows;
 
 namespace RevitCli.Commands;
@@ -94,14 +95,74 @@ public static class WorkbenchCommand
             "0 when live or history score renders; 1 for invalid windows, history paths, output, or failed live audit."),
         new(
             "sheets",
-            "Verify sheet numbering and local sheet-index expectations.",
-            "read-only",
+            "Verify sheet numbering and plan sheet issue metadata or renumber updates.",
+            "mixed",
             SupportsJson: true,
             SupportsMarkdown: true,
-            "none",
-            "none",
-            "revitcli sheets verify --output json --issues-only",
-            "0 when rules pass; non-zero when validation or sheet-index requirements fail."),
+            "required for issue-meta and renumber",
+            "sheet-issue-plan.v1 or sheet-renumber-plan.v1 dry-run plan; plan-receipt.v1 after plan apply",
+            "revitcli sheets issue-meta --selector all --issue-code R03 --issue-date 2026-05-20 --plan-output .revitcli/plans/sheet-issue.json --dry-run --output json",
+            "0 when rules pass or sheet changes are planned; non-zero when validation, sheet-index requirements, or planning fail."),
+        new(
+            "rooms",
+            "Plan reviewed room numbering updates from deterministic rules.",
+            "write",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "required before apply",
+            "room-numbering-plan.v1 dry-run plan; plan-receipt.v1 after plan apply",
+            "revitcli rooms renumber --rule .revitcli/numbering/rooms.yml --scope all --plan-output .revitcli/plans/room-numbering.json --dry-run --output json",
+            "0 when room number changes are planned; 1 for invalid rules or API failures; 2 when the plan has no actions."),
+        new(
+            "marks",
+            "Plan and verify door/window Mark numbering updates.",
+            "mixed",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "required before assign apply",
+            "mark-assignment-plan.v1 dry-run plan; mark-verify-report.v1 for read-only verification; plan-receipt.v1 after plan apply",
+            "revitcli marks assign --category doors --rule .revitcli/numbering/doors.yml --plan-output .revitcli/plans/door-marks.json --dry-run --output json",
+            "0 when mark changes are planned or verify has no errors; 1 for invalid options/API failures; 2 for no-op plans or verify errors."),
+        new(
+            "schedules",
+            "Ensure versioned schedule specs, batch-export schedule sets, and compare exported schedule CSVs.",
+            "mixed",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "required before ensure writes",
+            "schedule-ensure-plan.v1 dry-run plan; schedule-export-manifest.v1 export trace",
+            "revitcli schedules ensure --spec .revitcli/schedules/issue.yml --plan-output .revitcli/plans/schedule-ensure.json --dry-run --output json",
+            "0 when ensure/export/compare succeeds without diffs; 1 for invalid options/API failures; 2 for no-op plans, export issues, or schedule diffs."),
+        new(
+            "views",
+            "Audit view standards and create reviewed plans for template assignment or cloned view sets.",
+            "mixed",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "required before template or clone apply",
+            "view-template-plan.v1 or view-clone-plan.v1 dry-run plan; future view-mutation receipts after apply",
+            "revitcli views audit --rules .revitcli/views/standards.yml --templates --browser --output markdown",
+            "0 when audit/plans succeed; 1 for invalid options/API failures; 2 for audit errors or no-op plans."),
+        new(
+            "links",
+            "Audit Revit link paths, load status, and coordinate fingerprints; plan path/load repairs.",
+            "mixed",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "required before repair writes",
+            "link-audit-report.v1 read-only report; link-repair-plan.v1 dry-run plan; plan-receipt.v1 after approved apply with link rollback payloads",
+            "revitcli links audit --rules .revitcli/links/rules.yml --check paths,loaded,coordinates --output markdown",
+            "0 when audit/plans succeed; 1 for invalid options/API failures or blocked repair plans; 2 for audit errors or no-op repair plans."),
+        new(
+            "model",
+            "Audit and plan workset/phase model mapping fixes with write precheck evidence.",
+            "mixed",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "required before map-fix writes",
+            "model-map-report.v1 read-only report; model-map-fix-plan.v1 dry-run plan; plan-receipt.v1 after approved apply with model rollback payloads",
+            "revitcli model map-check --against .revitcli/model-mapping.yml --worksets --phases --output json",
+            "0 when map checks/plans succeed; 1 for invalid options/API failures or blocked fix plans; 2 for map-check errors or no-op fix plans."),
         new(
             "schedule",
             "List/export schedule data and preview schedule creation before reviewed writes.",
@@ -192,6 +253,16 @@ public static class WorkbenchCommand
             "delivery-bundle-receipt.v1 sidecars",
             "revitcli deliverables verify --output json",
             "0 when manifest and receipt checks pass; non-zero for missing or invalid delivery evidence."),
+        new(
+            "issue",
+            "Run issue preflight, diff review, and traceable delivery packaging.",
+            "mixed",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "required before package write",
+            "issue-package-receipt.v1 after approved package",
+            "revitcli issue preflight --profile .revitcli/issue.yml --output markdown",
+            "0 when issue preflight/diff/package succeeds; 1 for invalid profiles or package evidence; 2 for preflight fail-on thresholds."),
         new(
             "standards",
             "Install and validate portable office standards packs.",
@@ -287,6 +358,14 @@ public static class WorkbenchCommand
             "revitcli deliverables bundle --dry-run --output markdown",
             "revitcli deliverables verify --output json"),
         new(
+            "issue-package-receipt.v1",
+            "issue.package",
+            "revitcli issue package",
+            "Successful issue package writes; dry-runs do not write bundles or receipts.",
+            ".revitcli/receipts/issue-package-*.json",
+            "revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --dry-run --output markdown",
+            "revitcli issue preflight --profile .revitcli/issue.yml --output markdown"),
+        new(
             "schedule-create-receipt.v1",
             "schedule.create",
             "revitcli schedule create",
@@ -357,6 +436,13 @@ public static class WorkbenchCommand
             SupportsMarkdown: true,
             "Readiness checks for callable paths, non-goals, receipts, workflows, outputs, and exit codes."),
         new(
+            "workbench-verification-v2",
+            "workbench verify --contract workbench-contract.v2",
+            SupportsTable: true,
+            "workbench-verify-report.v2",
+            SupportsMarkdown: true,
+            "v5 issue-closure readiness checks for callable paths, package traceability, hidden mutation gates, and dashboard optionality."),
+        new(
             "workbench-receipts",
             "workbench receipts",
             SupportsTable: true,
@@ -419,6 +505,146 @@ public static class WorkbenchCommand
             "schedule-create.v1",
             SupportsMarkdown: true,
             "Dry-run and result envelope for reviewed schedule creation with receipt path after writes."),
+        new(
+            "schedule-ensure-plan",
+            "schedules ensure",
+            SupportsTable: true,
+            "schedule-ensure-plan.v1",
+            SupportsMarkdown: true,
+            "Dry-run plan for missing or drifted schedules from schedule-spec.v1 YAML with old structure baselines."),
+        new(
+            "schedule-export-manifest",
+            "schedules batch-export",
+            SupportsTable: true,
+            "schedule-export-manifest.v1",
+            SupportsMarkdown: true,
+            "Traceable schedule CSV export manifest with schedule ids, output paths, row counts, and issues."),
+        new(
+            "schedule-diff-report",
+            "schedules compare",
+            SupportsTable: true,
+            "schedule-diff-report.v1",
+            SupportsMarkdown: true,
+            "Read-only CSV directory comparison report keyed by schedule columns."),
+        new(
+            "view-standards-report",
+            "views audit",
+            SupportsTable: true,
+            "view-standards-report.v1",
+            SupportsMarkdown: true,
+            "Read-only view naming, template, and browser organization standards report."),
+        new(
+            "view-template-plan",
+            "views template-apply",
+            SupportsTable: true,
+            "view-template-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for view template assignment with old/new template ids."),
+        new(
+            "view-clone-plan",
+            "views clone-set",
+            SupportsTable: true,
+            "view-clone-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for cloned view names with source view ids and rollback guards."),
+        new(
+            "link-audit-report",
+            "links audit",
+            SupportsTable: true,
+            "link-audit-report.v1",
+            SupportsMarkdown: true,
+            "Read-only Revit link path, loaded-state, and coordinate fingerprint audit report."),
+        new(
+            "link-repair-plan",
+            "links repair",
+            SupportsTable: true,
+            "link-repair-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for link path/load repairs with old/new path existence and timestamp evidence."),
+        new(
+            "model-map-report",
+            "model map-check",
+            SupportsTable: true,
+            "model-map-report.v1",
+            SupportsMarkdown: true,
+            "Read-only workset and phase mapping report for coordination hygiene."),
+        new(
+            "model-map-fix-plan",
+            "model map-fix",
+            SupportsTable: true,
+            "model-map-fix-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for workset/phase fixes with write precheck evidence."),
+        new(
+            "sheet-issue-plan",
+            "sheets issue-meta",
+            SupportsTable: true,
+            "sheet-issue-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for sheet issue metadata updates with skipped-parameter evidence."),
+        new(
+            "sheet-renumber-plan",
+            "sheets renumber",
+            SupportsTable: true,
+            "sheet-renumber-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for sheet number updates with duplicate-target and skipped-sheet evidence."),
+        new(
+            "room-numbering-plan",
+            "rooms renumber",
+            SupportsTable: true,
+            "room-numbering-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for room number updates with deterministic ordering and collision evidence."),
+        new(
+            "mark-assignment-plan",
+            "marks assign",
+            SupportsTable: true,
+            "mark-assignment-plan.v1",
+            SupportsMarkdown: true,
+            "Frozen dry-run plan for door/window Mark updates with deterministic sorting and collision evidence."),
+        new(
+            "mark-verify-report",
+            "marks verify",
+            SupportsTable: true,
+            "mark-verify-report.v1",
+            SupportsMarkdown: true,
+            "Read-only duplicate, missing, and rule-conformance report for door/window Marks."),
+        new(
+            "delivery-plan",
+            "deliverables plan",
+            SupportsTable: true,
+            "delivery-plan.v1",
+            SupportsMarkdown: true,
+            "Read-only export delivery plan from profile publish pipelines with baseline and risk evidence."),
+        new(
+            "issue-preflight-report",
+            "issue preflight",
+            SupportsTable: true,
+            "issue-preflight-report.v1",
+            SupportsMarkdown: true,
+            "Issue readiness report with explicit hidden-mutation checks and handoff commands."),
+        new(
+            "issue-diff-report",
+            "issue diff",
+            SupportsTable: true,
+            "issue-diff-report.v1",
+            SupportsMarkdown: true,
+            "Issue-scoped snapshot diff report with anomaly/notable/routine review groups."),
+        new(
+            "issue-package-receipt",
+            "issue package",
+            SupportsTable: true,
+            "issue-package-receipt.v1",
+            SupportsMarkdown: true,
+            "Issue package receipt with manifest path, child receipts, bundle hash, and optional journal signature path."),
+        new(
+            "workbench-contract-v2",
+            "workbench contract --contract workbench-contract.v2",
+            SupportsTable: true,
+            "workbench-contract.v2",
+            SupportsMarkdown: true,
+            "v5 workbench contract compatibility marker for issue closure command and receipt schemas."),
         new(
             "inspect-workflows",
             "inspect workflows",
@@ -545,6 +771,15 @@ public static class WorkbenchCommand
             "revitcli deliverables verify --output json",
             "Bundle dry-runs preview receipts and output files before writing the zip."),
         new(
+            "issue-package",
+            "issue package",
+            "export",
+            "revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --dry-run --output markdown",
+            "revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --include-receipts true",
+            "issue-package-receipt.v1",
+            "revitcli issue preflight --profile .revitcli/issue.yml --output markdown",
+            "Issue package dry-runs must expose planned files, child receipts, bundle path, and hidden-mutation checks before writing."),
+        new(
             "standards-install",
             "standards install",
             "local-write",
@@ -579,28 +814,113 @@ public static class WorkbenchCommand
             "revitcli schedule create --category Doors --fields \"Mark,Level\" --name \"Door Review\" --output json",
             ".revitcli/receipts/schedule-create-*.json",
             "revitcli journal review --output json",
-            "Schedule creation must be dry-run reviewed before writing a ViewSchedule.")
+            "Schedule creation must be dry-run reviewed before writing a ViewSchedule."),
+        new(
+            "schedules-ensure",
+            "schedules ensure",
+            "write",
+            "revitcli schedules ensure --spec .revitcli/schedules/issue.yml --plan-output .revitcli/plans/schedule-ensure.json --dry-run --output json",
+            "revitcli plan show .revitcli/plans/schedule-ensure.json --output markdown",
+            "future .revitcli/receipts/schedule-ensure-*.json with old schedule structure baselines",
+            "revitcli schedules compare --from exports/baseline --to exports/current --output markdown",
+            "Schedule structure writes must start from a dry-run plan with old fields/filter/sort baseline evidence."),
+        new(
+            "views-template-apply",
+            "views template-apply",
+            "write",
+            "revitcli views template-apply --selector \"Level*\" --template \"Architectural Plan\" --plan-output .revitcli/plans/view-template.json --dry-run --output json",
+            "revitcli plan show .revitcli/plans/view-template.json --output markdown",
+            "future view-mutation-receipt.v1 after approved apply",
+            "revitcli views audit --rules .revitcli/views/standards.yml --templates --output markdown",
+            "View template writes must start from a frozen dry-run plan with source view ids and old/new template ids."),
+        new(
+            "views-clone-set",
+            "views clone-set",
+            "write",
+            "revitcli views clone-set --from-set \"Level*\" --to-prefix \"T-\" --naming-rule \"{prefix}{name}\" --plan-output .revitcli/plans/view-clone.json --dry-run --output json",
+            "revitcli plan show .revitcli/plans/view-clone.json --output markdown",
+            "future view-mutation-receipt.v1 after approved apply",
+            "revitcli views audit --rules .revitcli/views/standards.yml --browser --output markdown",
+            "View clone writes must fail on name collisions and guard rollback deletes for views placed on sheets."),
+        new(
+            "links-repair",
+            "links repair",
+            "write",
+            "revitcli links repair --map .revitcli/links/paths.yml --plan-output .revitcli/plans/link-repair.json --dry-run --output json",
+            "revitcli plan show .revitcli/plans/link-repair.json --output markdown",
+            "plan-receipt.v1 with old/new path and load-state rollback evidence",
+            "revitcli links audit --rules .revitcli/links/rules.yml --output markdown",
+            "Link repair plans may change only path/load state; coordinate move, rotate, or align is outside the contract."),
+        new(
+            "model-map-fix",
+            "model map-fix",
+            "write",
+            "revitcli model map-fix --against .revitcli/model-mapping.yml --plan-output .revitcli/plans/model-map-fix.json --dry-run --output json",
+            "revitcli plan show .revitcli/plans/model-map-fix.json --output markdown",
+            "plan-receipt.v1 with old/new phase or workset rollback values",
+            "revitcli model map-check --against .revitcli/model-mapping.yml --worksets --phases --output markdown",
+            "Model map fixes must prove target element writability before approved apply."),
+        new(
+            "sheet-issue-meta",
+            "sheets issue-meta",
+            "mixed",
+            "revitcli sheets issue-meta --selector all --issue-code R03 --issue-date 2026-05-20 --plan-output .revitcli/plans/sheet-issue.json --dry-run --output json",
+            "revitcli plan apply .revitcli/plans/sheet-issue.json --yes --max-changes 250",
+            "sheet-issue-plan.v1 plus plan-receipt.v1 after apply",
+            "revitcli plan show .revitcli/plans/sheet-issue.json --output markdown",
+            "Sheet issue metadata writes are gated behind a frozen dry-run plan with skipped-parameter evidence."),
+        new(
+            "sheet-renumber",
+            "sheets renumber",
+            "mixed",
+            "revitcli sheets renumber --rule .revitcli/sheets/numbering.yml --selector all --plan-output .revitcli/plans/sheet-renumber.json --dry-run --output json",
+            "revitcli plan apply .revitcli/plans/sheet-renumber.json --yes --max-changes 250",
+            "sheet-renumber-plan.v1 plus plan-receipt.v1 after apply",
+            "revitcli plan show .revitcli/plans/sheet-renumber.json --output markdown",
+            "Sheet renumber writes are gated behind a frozen dry-run plan and stale-number validation."),
+        new(
+            "rooms-renumber",
+            "rooms renumber",
+            "write",
+            "revitcli rooms renumber --rule .revitcli/numbering/rooms.yml --scope all --plan-output .revitcli/plans/room-numbering.json --dry-run --output json",
+            "revitcli plan apply .revitcli/plans/room-numbering.json --yes --max-changes 500",
+            "room-numbering-plan.v1 plus plan-receipt.v1 after apply",
+            "revitcli plan show .revitcli/plans/room-numbering.json --output markdown",
+            "Room renumber writes are gated behind a frozen dry-run plan, duplicate-target checks, and stale-number validation."),
+        new(
+            "marks-assign",
+            "marks assign",
+            "write",
+            "revitcli marks assign --category doors --rule .revitcli/numbering/doors.yml --plan-output .revitcli/plans/door-marks.json --dry-run --output json",
+            "revitcli plan apply .revitcli/plans/door-marks.json --yes --max-changes 500",
+            "mark-assignment-plan.v1 plus plan-receipt.v1 after apply",
+            "revitcli plan show .revitcli/plans/door-marks.json --output markdown",
+            "Mark assignment writes are gated behind a frozen dry-run plan, duplicate-target checks, and stale-value validation.")
     };
 
     public static Command Create()
     {
         var contract = new Command("contract", "Show stable terminal workbench contract for Codex CLI");
         var contractOutputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+        var contractSchemaOpt = new Option<string?>("--contract", "Contract schema to emit: workbench-contract.v1 or workbench-contract.v2");
         contract.AddOption(contractOutputOpt);
-        contract.SetHandler(async outputFormat =>
+        contract.AddOption(contractSchemaOpt);
+        contract.SetHandler(async (outputFormat, contractSchema) =>
         {
-            Environment.ExitCode = await ExecuteContractAsync(Console.Out, outputFormat);
-        }, contractOutputOpt);
+            Environment.ExitCode = await ExecuteContractAsync(Console.Out, outputFormat, contractSchema);
+        }, contractOutputOpt, contractSchemaOpt);
 
         var verify = new Command("verify", "Verify terminal workbench contract and recipe readiness");
         var verifyDirOpt = new Option<string?>("--dir", "Project directory for project-inventory readiness (default: current directory)");
         var verifyOutputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+        var verifyContractOpt = new Option<string?>("--contract", "Contract schema to verify: workbench-contract.v1 or workbench-contract.v2");
         verify.AddOption(verifyDirOpt);
         verify.AddOption(verifyOutputOpt);
-        verify.SetHandler(async (projectDirectory, outputFormat) =>
+        verify.AddOption(verifyContractOpt);
+        verify.SetHandler(async (projectDirectory, outputFormat, contractSchema) =>
         {
-            Environment.ExitCode = await ExecuteVerifyAsync(Console.Out, outputFormat, projectDirectory);
-        }, verifyDirOpt, verifyOutputOpt);
+            Environment.ExitCode = await ExecuteVerifyAsync(Console.Out, outputFormat, projectDirectory, contractSchema);
+        }, verifyDirOpt, verifyOutputOpt, verifyContractOpt);
 
         var receipts = new Command("receipts", "Show stable receipt schemas, paths, dry-runs, and review commands");
         var receiptsOutputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
@@ -685,7 +1005,7 @@ public static class WorkbenchCommand
         };
     }
 
-    public static async Task<int> ExecuteContractAsync(TextWriter output, string outputFormat)
+    public static async Task<int> ExecuteContractAsync(TextWriter output, string outputFormat, string? contractSchema = null)
     {
         if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
@@ -693,7 +1013,10 @@ public static class WorkbenchCommand
             return 1;
         }
 
-        var contract = CreateContract();
+        if (!TryNormalizeWorkbenchContract(contractSchema, output, out var normalizedContract, out _))
+            return 1;
+
+        var contract = CreateContract(normalizedContract);
         switch (normalized)
         {
             case "json":
@@ -713,13 +1036,17 @@ public static class WorkbenchCommand
     public static async Task<int> ExecuteVerifyAsync(
         TextWriter output,
         string outputFormat,
-        string? projectDirectory = null)
+        string? projectDirectory = null,
+        string? contractSchema = null)
     {
         if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalized, "table", "json", "markdown"))
         {
             await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
             return 1;
         }
+
+        if (!TryNormalizeWorkbenchContract(contractSchema, output, out var normalizedContract, out var verificationSchema))
+            return 1;
 
         string root;
         try
@@ -740,7 +1067,7 @@ public static class WorkbenchCommand
             return 1;
         }
 
-        var verification = CreateVerification(root);
+        var verification = CreateVerification(root, normalizedContract, verificationSchema);
         switch (normalized)
         {
             case "json":
@@ -1001,9 +1328,9 @@ public static class WorkbenchCommand
         return handoff.Success ? 0 : 1;
     }
 
-    private static WorkbenchContract CreateContract() =>
+    private static WorkbenchContract CreateContract(string schemaVersion = "workbench-contract.v1") =>
         new(
-            "workbench-contract.v1",
+            schemaVersion,
             DateTimeOffset.UtcNow,
             "RevitCli Architect Terminal BIM Workbench",
             "Stable local command surface that Codex CLI can call through visible terminal commands.",
@@ -1384,6 +1711,75 @@ public static class WorkbenchCommand
         }
     }
 
+    private static bool SheetPlanReceiptShapeReady(WorkbenchSafeguardIndex safeguardIndex)
+    {
+        var sheetSafeguards = safeguardIndex.Safeguards
+            .Where(safeguard =>
+                string.Equals(safeguard.Name, "sheet-issue-meta", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(safeguard.Name, "sheet-renumber", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (sheetSafeguards.Length != 2 ||
+            sheetSafeguards.Any(safeguard =>
+                !safeguard.Receipt.Contains("plan-receipt.v1", StringComparison.OrdinalIgnoreCase) ||
+                !safeguard.ReviewCommand.Contains("plan show", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return SerializedSheetReceiptShapeReady("sheet-issue", "Sheet Issue Date", "2026-05-01", "2026-05-20") &&
+               SerializedSheetReceiptShapeReady("sheet-renumber", "Sheet Number", "TMP-001", "A-101");
+    }
+
+    private static bool SerializedSheetReceiptShapeReady(
+        string operation,
+        string param,
+        string oldValue,
+        string newValue)
+    {
+        var receipt = new PlanReceipt
+        {
+            Operation = operation,
+            PlanPath = $".revitcli/plans/{operation}.json",
+            ModelPath = "D:/models/tower.rvt",
+            DocumentName = "tower.rvt",
+            DocumentVersion = "2026",
+            Affected = 1,
+            AffectedElementIds = new List<long> { 10 },
+            Param = param,
+            RollbackActions = new List<PlanReceiptRollbackAction>
+            {
+                new()
+                {
+                    ElementId = 10,
+                    Param = param,
+                    OldValue = oldValue,
+                    NewValue = newValue,
+                    Source = operation
+                }
+            }
+        };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(receipt, SetPlanFileStore.JsonOptions));
+        var root = document.RootElement;
+        if (root.GetProperty("schemaVersion").GetString() != "plan-receipt.v1" ||
+            root.GetProperty("operation").GetString() != operation ||
+            string.IsNullOrWhiteSpace(root.GetProperty("modelPath").GetString()) ||
+            string.IsNullOrWhiteSpace(root.GetProperty("documentName").GetString()) ||
+            string.IsNullOrWhiteSpace(root.GetProperty("documentVersion").GetString()) ||
+            root.GetProperty("affectedElementIds").EnumerateArray().All(id => id.GetInt64() != 10))
+        {
+            return false;
+        }
+
+        var rollback = root.GetProperty("rollbackActions").EnumerateArray().SingleOrDefault();
+        return rollback.ValueKind == JsonValueKind.Object &&
+               rollback.GetProperty("elementId").GetInt64() == 10 &&
+               rollback.GetProperty("param").GetString() == param &&
+               rollback.GetProperty("oldValue").GetString() == oldValue &&
+               rollback.GetProperty("newValue").GetString() == newValue &&
+               rollback.GetProperty("source").GetString() == operation;
+    }
+
     private static WorkbenchPathIndex CreatePathIndex()
     {
         var paths = CommandContracts
@@ -1431,13 +1827,17 @@ public static class WorkbenchCommand
             commands);
     }
 
-    private static WorkbenchVerification CreateVerification(string projectDirectory)
+    private static WorkbenchVerification CreateVerification(
+        string projectDirectory,
+        string contractSchema = "workbench-contract.v1",
+        string verificationSchema = "workbench-verification.v1")
     {
         var checks = BuildVerificationChecks(projectDirectory).ToArray();
         var issueCount = checks.Count(check => check.Status != "pass");
 
         return new WorkbenchVerification(
-            "workbench-verification.v1",
+            verificationSchema,
+            contractSchema,
             DateTimeOffset.UtcNow,
             projectDirectory,
             issueCount == 0,
@@ -1486,7 +1886,9 @@ public static class WorkbenchCommand
         var requiredCommandPaths = new[]
         {
             "workbench contract",
+            "workbench contract --contract workbench-contract.v2",
             "workbench verify",
+            "workbench verify --contract workbench-contract.v2",
             "workbench receipts",
             "workbench paths",
             "workbench exits",
@@ -1499,11 +1901,28 @@ public static class WorkbenchCommand
             "examples workflow",
             "score --history",
             "inspect workflows",
+            "schedules ensure",
+            "schedules batch-export",
+            "schedules compare",
+            "views audit",
+            "views template-apply",
+            "views clone-set",
+            "links audit",
+            "links repair",
+            "model map-check",
+            "model map-fix",
             "schedule create",
+            "sheets renumber",
+            "rooms renumber",
+            "marks assign",
+            "marks verify",
             "workflow review",
             "workflow run",
             "plan apply",
             "deliverables bundle",
+            "issue preflight",
+            "issue diff",
+            "issue package",
             "standards validate",
             "family purge",
             "journal review",
@@ -1639,6 +2058,7 @@ public static class WorkbenchCommand
             "plan-receipt.v1",
             "workflow-run-receipt.v1",
             "delivery-bundle-receipt.v1",
+            "issue-package-receipt.v1",
             "schedule-create-receipt.v1"
         };
         var receiptSchemas = ReceiptContracts
@@ -1681,6 +2101,7 @@ public static class WorkbenchCommand
         {
             "workbench-contract.v1",
             "workbench-verification.v1",
+            "workbench-verify-report.v2",
             "workbench-paths.v1",
             "workbench-receipts.v1",
             "workbench-exit-codes.v1",
@@ -1691,6 +2112,20 @@ public static class WorkbenchCommand
             "workbench-handoff.v1",
             "inspect-workflows.v1",
             "inspect-plans.v1",
+            "schedule-ensure-plan.v1",
+            "schedule-export-manifest.v1",
+            "schedule-diff-report.v1",
+            "view-standards-report.v1",
+            "view-template-plan.v1",
+            "view-clone-plan.v1",
+            "link-audit-report.v1",
+            "link-repair-plan.v1",
+            "model-map-report.v1",
+            "model-map-fix-plan.v1",
+            "issue-preflight-report.v1",
+            "issue-diff-report.v1",
+            "issue-package-receipt.v1",
+            "workbench-contract.v2",
             "schedule-create.v1",
             "workflow-review.v1",
             "workflow-receipts.v1",
@@ -1725,7 +2160,7 @@ public static class WorkbenchCommand
             completionIssues,
             "workbench options",
             CompletionsCommand.WorkbenchCompletionOptions,
-            new[] { "--dir", "--output" });
+            new[] { "--dir", "--output", "--contract" });
         AddMissingCompletionValues(
             completionIssues,
             "workbench output formats",
@@ -1788,6 +2223,96 @@ public static class WorkbenchCommand
             new[] { "table", "json", "yaml" });
         AddMissingCompletionValues(
             completionIssues,
+            "schedules subcommands",
+            CompletionsCommand.SchedulesCompletionSubcommands,
+            new[] { "ensure", "batch-export", "compare" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "schedules options",
+            CompletionsCommand.SchedulesCompletionOptions,
+            new[] { "--spec", "--plan-output", "--dry-run", "--mode", "--set", "--output-dir", "--format", "--manifest", "--from", "--to", "--keys", "--output" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "schedules output formats",
+            CompletionsCommand.SchedulesCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
+        AddUnexpectedCompletionValues(
+            completionIssues,
+            "schedules output formats",
+            CompletionsCommand.SchedulesCompletionOutputFormats,
+            new[] { "csv", "yaml" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "schedules modes",
+            CompletionsCommand.SchedulesCompletionModes,
+            new[] { "create-only", "sync-fields" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "views subcommands",
+            CompletionsCommand.ViewsCompletionSubcommands,
+            new[] { "audit", "template-apply", "clone-set" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "views options",
+            CompletionsCommand.ViewsCompletionOptions,
+            new[] { "--rules", "--templates", "--browser", "--selector", "--template", "--plan-output", "--dry-run", "--exclude", "--from-set", "--to-prefix", "--naming-rule", "--include-sheets", "--output" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "views output formats",
+            CompletionsCommand.ViewsCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
+        AddUnexpectedCompletionValues(
+            completionIssues,
+            "views output formats",
+            CompletionsCommand.ViewsCompletionOutputFormats,
+            new[] { "csv", "yaml" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "views exclude values",
+            CompletionsCommand.ViewsCompletionExcludeValues,
+            new[] { "locked" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "links subcommands",
+            CompletionsCommand.LinksCompletionSubcommands,
+            new[] { "audit", "repair" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "links options",
+            CompletionsCommand.LinksCompletionOptions,
+            new[] { "--rules", "--check", "--map", "--plan-output", "--dry-run", "--max-changes", "--output" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "links output formats",
+            CompletionsCommand.LinksCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "links checks",
+            CompletionsCommand.LinksCompletionCheckValues,
+            new[] { "paths", "loaded", "coordinates" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "model subcommands",
+            CompletionsCommand.ModelCompletionSubcommands,
+            new[] { "map-check", "map-fix" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "model options",
+            CompletionsCommand.ModelCompletionOptions,
+            new[] { "--against", "--worksets", "--phases", "--plan-output", "--scope", "--dry-run", "--max-changes", "--output" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "model output formats",
+            CompletionsCommand.ModelCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "model scope values",
+            CompletionsCommand.ModelCompletionScopeValues,
+            new[] { "rooms", "doors", "walls", "all" });
+        AddMissingCompletionValues(
+            completionIssues,
             "schedule subcommands",
             CompletionsCommand.ScheduleCompletionSubcommands,
             new[] { "list", "export", "create" });
@@ -1821,11 +2346,66 @@ public static class WorkbenchCommand
             "schedule create output formats",
             CompletionsCommand.ScheduleCreateCompletionOutputFormats,
             new[] { "csv" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "rooms subcommands",
+            CompletionsCommand.RoomsCompletionSubcommands,
+            new[] { "renumber" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "rooms options",
+            CompletionsCommand.RoomsCompletionOptions,
+            new[] { "--rule", "--plan-output", "--scope", "--dry-run", "--max-changes", "--output" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "rooms output formats",
+            CompletionsCommand.RoomsCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
+        AddUnexpectedCompletionValues(
+            completionIssues,
+            "rooms output formats",
+            CompletionsCommand.RoomsCompletionOutputFormats,
+            new[] { "csv", "yaml" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "marks subcommands",
+            CompletionsCommand.MarksCompletionSubcommands,
+            new[] { "assign", "verify" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "marks options",
+            CompletionsCommand.MarksCompletionOptions,
+            new[] { "--category", "--rule", "--plan-output", "--sort", "--dry-run", "--max-changes", "--against", "--output" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "marks output formats",
+            CompletionsCommand.MarksCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
+        AddUnexpectedCompletionValues(
+            completionIssues,
+            "marks output formats",
+            CompletionsCommand.MarksCompletionOutputFormats,
+            new[] { "csv", "yaml" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "issue subcommands",
+            CompletionsCommand.IssueCompletionSubcommands,
+            new[] { "preflight", "diff", "package" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "issue options",
+            CompletionsCommand.IssueCompletionOptions,
+            new[] { "--profile", "--output", "--fail-on", "--from", "--to", "--review", "--report", "--max-rows", "--bundle-path", "--dry-run", "--sign-journal", "--include-receipts" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "issue output formats",
+            CompletionsCommand.IssueCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
         yield return Check(
             "completion-surface",
             completionIssues.Count == 0,
             completionIssues.Count == 0
-                ? "Shell completions cover inspect, workbench, workflow, and schedule v4 subcommands, options, and output-format contracts."
+                ? "Shell completions cover inspect, workbench, workflow, schedules, views, links, model, schedule, rooms, marks, and issue subcommands, options, and output-format contracts."
                 : $"Completion surface incomplete: {string.Join("; ", completionIssues)}");
 
         var projectInventory = CreateProjectInventory(projectDirectory);
@@ -1920,7 +2500,7 @@ public static class WorkbenchCommand
         var safeguardIndex = CreateSafeguardIndex();
         var requiredSafeguards = new[]
         {
-            "export", "publish", "plan-apply", "rollback", "workflow-run", "deliverables-bundle", "schedule-create"
+            "export", "publish", "plan-apply", "rollback", "workflow-run", "deliverables-bundle", "issue-package", "schedule-create", "schedules-ensure", "views-template-apply", "views-clone-set", "links-repair", "model-map-fix", "sheet-issue-meta", "sheet-renumber", "rooms-renumber", "marks-assign"
         };
         var safeguardNames = safeguardIndex.Safeguards
             .Select(safeguard => safeguard.Name)
@@ -1954,6 +2534,276 @@ public static class WorkbenchCommand
             scheduleCreateReady
                 ? "Schedule create is callable only with dry-run, output, receipt, and safeguard contracts indexed."
                 : "Schedule create is missing callable path, receipt schema, output schema, or safeguard coverage.");
+
+        var scheduleSpecSchemaReady =
+            typeof(SchedulesCommand.ScheduleSpecSet).GetProperty(nameof(SchedulesCommand.ScheduleSpecSet.SchemaVersion)) != null &&
+            typeof(SchedulesCommand.ScheduleSpecSet).GetProperty(nameof(SchedulesCommand.ScheduleSpecSet.Schedules)) != null &&
+            typeof(SchedulesCommand.ScheduleSpec).GetProperty(nameof(SchedulesCommand.ScheduleSpec.Fields)) != null &&
+            typeof(SchedulesCommand.ScheduleSpec).GetProperty(nameof(SchedulesCommand.ScheduleSpec.Filter)) != null &&
+            typeof(SchedulesCommand.ScheduleSpec).GetProperty(nameof(SchedulesCommand.ScheduleSpec.Sort)) != null &&
+            typeof(SchedulesCommand.ScheduleSpec).GetProperty(nameof(SchedulesCommand.ScheduleSpec.KeyColumns)) != null;
+        yield return Check(
+            "schedule-spec-schema",
+            scheduleSpecSchemaReady,
+            scheduleSpecSchemaReady
+                ? "schedule-spec.v1 exposes fields, filters, sort, and key-column contracts for validation."
+                : "schedule-spec.v1 is missing fields, filters, sort, or key-column contracts.");
+
+        var scheduleExportTraceableReady =
+            commandPaths.Contains("schedules batch-export") &&
+            outputSchemas.Contains("schedule-export-manifest.v1") &&
+            typeof(SchedulesCommand.ScheduleExportManifestEntry).GetProperty(nameof(SchedulesCommand.ScheduleExportManifestEntry.ScheduleId)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifestEntry).GetProperty(nameof(SchedulesCommand.ScheduleExportManifestEntry.OutputPath)) != null;
+        yield return Check(
+            "schedule-export-traceable",
+            scheduleExportTraceableReady,
+            scheduleExportTraceableReady
+                ? "Schedule batch exports write schedule-export-manifest.v1 entries with schedule ids and CSV paths."
+                : "Schedule batch export is missing callable path, manifest schema, schedule id, or output path evidence.");
+
+        var scheduleEnsureRollbackReady =
+            commandPaths.Contains("schedules ensure") &&
+            outputSchemas.Contains("schedule-ensure-plan.v1") &&
+            safeguardNames.Contains("schedules-ensure") &&
+            typeof(SchedulesCommand.ScheduleEnsurePlan).GetProperty(nameof(SchedulesCommand.ScheduleEnsurePlan.Baselines)) != null &&
+            typeof(SchedulesCommand.ScheduleEnsureBaseline).GetProperty(nameof(SchedulesCommand.ScheduleEnsureBaseline.FieldCount)) != null &&
+            typeof(SchedulesCommand.ScheduleEnsureBaseline).GetProperty(nameof(SchedulesCommand.ScheduleEnsureBaseline.Fields)) != null &&
+            typeof(SchedulesCommand.ScheduleEnsureBaseline).GetProperty(nameof(SchedulesCommand.ScheduleEnsureBaseline.Filter)) != null &&
+            typeof(SchedulesCommand.ScheduleEnsureBaseline).GetProperty(nameof(SchedulesCommand.ScheduleEnsureBaseline.Sort)) != null;
+        yield return Check(
+            "schedule-ensure-rollback",
+            scheduleEnsureRollbackReady,
+            scheduleEnsureRollbackReady
+                ? "Schedule ensure plans include old schedule baselines before any future structure write path."
+                : "Schedule ensure is missing callable path, output schema, safeguard, or baseline shape.");
+
+        var viewMutationPlanIdsFrozen =
+            commandPaths.Contains("views template-apply") &&
+            outputSchemas.Contains("view-template-plan.v1") &&
+            safeguardNames.Contains("views-template-apply") &&
+            typeof(ViewsCommand.ViewTemplatePlanAction).GetProperty(nameof(ViewsCommand.ViewTemplatePlanAction.ViewId)) != null &&
+            typeof(ViewsCommand.ViewTemplatePlanAction).GetProperty(nameof(ViewsCommand.ViewTemplatePlanAction.OldTemplateId)) != null &&
+            typeof(ViewsCommand.ViewTemplatePlanAction).GetProperty(nameof(ViewsCommand.ViewTemplatePlanAction.NewTemplateId)) != null;
+        yield return Check(
+            "view-mutation-plan-ids-frozen",
+            viewMutationPlanIdsFrozen,
+            viewMutationPlanIdsFrozen
+                ? "View template plans freeze source view ids and old/new template ids."
+                : "View template planning is missing callable path, schema, safeguard, or frozen id fields.");
+
+        var viewCloneNoNameCollision =
+            commandPaths.Contains("views clone-set") &&
+            outputSchemas.Contains("view-clone-plan.v1") &&
+            safeguardNames.Contains("views-clone-set") &&
+            typeof(ViewsCommand.ViewClonePlan).GetProperty(nameof(ViewsCommand.ViewClonePlan.Issues)) != null &&
+            typeof(ViewsCommand.ViewClonePlanAction).GetProperty(nameof(ViewsCommand.ViewClonePlanAction.TargetName)) != null;
+        yield return Check(
+            "view-clone-no-name-collision",
+            viewCloneNoNameCollision,
+            viewCloneNoNameCollision
+                ? "View clone plans expose target names and collision issues before writes."
+                : "View clone planning is missing callable path, schema, safeguard, target names, or issue reporting.");
+
+        var viewRollbackGuardsPlacedViews =
+            typeof(ViewsCommand.ViewClonePlanAction).GetProperty(nameof(ViewsCommand.ViewClonePlanAction.SourceIsPlacedOnSheet)) != null &&
+            typeof(ViewsCommand.ViewClonePlanAction).GetProperty(nameof(ViewsCommand.ViewClonePlanAction.RollbackGuard)) != null;
+        yield return Check(
+            "view-rollback-guards-placed-views",
+            viewRollbackGuardsPlacedViews,
+            viewRollbackGuardsPlacedViews
+                ? "View clone plans carry placed-view evidence and rollback guard text before cloned views can be deleted."
+                : "View clone rollback guards are missing placed-view evidence or rollback guard fields.");
+
+        var linkRepairNoCoordinateMove =
+            commandPaths.Contains("links repair") &&
+            outputSchemas.Contains("link-repair-plan.v1") &&
+            safeguardNames.Contains("links-repair") &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.OldPath)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewPath)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.OldLoaded)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewLoaded)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty("TransformFingerprint") == null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty("Coordinate") == null;
+        yield return Check(
+            "linkRepairNoCoordinateMove",
+            linkRepairNoCoordinateMove,
+            linkRepairNoCoordinateMove
+                ? "Link repair plans expose only old/new path and load-state changes; no coordinate move fields are present."
+                : "Link repair planning is missing callable path, schema, safeguard, path/load fields, or it exposes coordinate mutation fields.");
+
+        var modelMapWritableProbe =
+            commandPaths.Contains("model map-fix") &&
+            outputSchemas.Contains("model-map-fix-plan.v1") &&
+            safeguardNames.Contains("model-map-fix") &&
+            typeof(ModelCommand.ModelMapFixAction).GetProperty(nameof(ModelCommand.ModelMapFixAction.CanWrite)) != null &&
+            typeof(ModelCommand.ModelMapFixAction).GetProperty(nameof(ModelCommand.ModelMapFixAction.WritableProbe)) != null &&
+            typeof(ModelCommand.ModelMapFixAction).GetProperty(nameof(ModelCommand.ModelMapFixAction.UnwritableReason)) != null &&
+            ModelCommand.ResolveWritableProbe(canWrite: true, targetExists: true) &&
+            !ModelCommand.ResolveWritableProbe(canWrite: false, targetExists: true) &&
+            !ModelCommand.ResolveWritableProbe(canWrite: true, targetExists: false);
+        yield return Check(
+            "modelMapWritableProbe",
+            modelMapWritableProbe,
+            modelMapWritableProbe
+                ? "Model map-fix plans include positive writable/access probe evidence and blocked-reason evidence before future writes."
+                : "Model map-fix is missing callable path, schema, safeguard, writable probe semantics, or write precheck fields.");
+
+        var coordinationReceiptPaths =
+            safeguardNames.Contains("links-repair") &&
+            safeguardNames.Contains("model-map-fix") &&
+            typeof(PlanReceipt).GetProperty(nameof(PlanReceipt.LinkRepairActions)) != null &&
+            typeof(PlanReceipt).GetProperty(nameof(PlanReceipt.ModelMapActions)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.OldPath)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.NewPath)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.OldLoaded)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.NewLoaded)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.OldPathExists)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.NewPathExists)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.OldPathLastWriteTimeUtc)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.NewPathLastWriteTimeUtc)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.OldPathSizeBytes)) != null &&
+            typeof(PlanReceiptLinkRepairAction).GetProperty(nameof(PlanReceiptLinkRepairAction.NewPathSizeBytes)) != null &&
+            typeof(PlanReceiptModelMapAction).GetProperty(nameof(PlanReceiptModelMapAction.Field)) != null &&
+            typeof(PlanReceiptModelMapAction).GetProperty(nameof(PlanReceiptModelMapAction.OldValue)) != null &&
+            typeof(PlanReceiptModelMapAction).GetProperty(nameof(PlanReceiptModelMapAction.NewValue)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.OldPath)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewPath)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.OldPathExists)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewPathExists)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewPathLastWriteTimeUtc)) != null &&
+            typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewPathSizeBytes)) != null;
+        yield return Check(
+            "coordinationReceiptPaths",
+            coordinationReceiptPaths,
+            coordinationReceiptPaths
+                ? "Coordination plan receipts include link path/load rollback evidence and model map old/new values."
+                : "Coordination plan receipts are missing link path/load evidence or model map old/new value fields.");
+
+        var contractV2Compat =
+            commandPaths.Contains("issue preflight") &&
+            commandPaths.Contains("issue diff") &&
+            commandPaths.Contains("issue package") &&
+            commandPaths.Contains("workbench contract --contract workbench-contract.v2") &&
+            outputSchemas.Contains("workbench-contract.v2") &&
+            outputSchemas.Contains("workbench-verify-report.v2") &&
+            receiptSchemas.Contains("issue-package-receipt.v1");
+        yield return Check(
+            "contractV2Compat",
+            contractV2Compat,
+            contractV2Compat
+                ? "Workbench v2 compatibility declares issue command paths, issue package receipts, and v2 contract markers while retaining v1 surfaces."
+                : "Workbench v2 compatibility is missing issue command paths, issue package receipt schema, or v2 contract markers.");
+
+        var issueNoHiddenMutation =
+            commandPaths.Contains("issue preflight") &&
+            outputSchemas.Contains("issue-preflight-report.v1") &&
+            typeof(IssueCommand.IssuePreflightReport).GetProperty(nameof(IssueCommand.IssuePreflightReport.NoHiddenMutation)) != null &&
+            typeof(IssueCommand.IssueContractIssue).GetProperty(nameof(IssueCommand.IssueContractIssue.Code)) != null &&
+            typeof(IssueCommand.IssueContractIssue).GetProperty(nameof(IssueCommand.IssueContractIssue.Command)) != null;
+        yield return Check(
+            "issueNoHiddenMutation",
+            issueNoHiddenMutation,
+            issueNoHiddenMutation
+                ? "Issue preflight exposes hidden-mutation checks so package flows cannot hide model writes."
+                : "Issue preflight is missing command path, output schema, or hidden-mutation issue fields.");
+
+        var issuePackageTraceability =
+            commandPaths.Contains("issue package") &&
+            outputSchemas.Contains("issue-package-receipt.v1") &&
+            receiptSchemas.Contains("issue-package-receipt.v1") &&
+            safeguardNames.Contains("issue-package") &&
+            typeof(IssueCommand.IssuePackageReport).GetProperty(nameof(IssueCommand.IssuePackageReport.ManifestPath)) != null &&
+            typeof(IssueCommand.IssuePackageReport).GetProperty(nameof(IssueCommand.IssuePackageReport.BundleHash)) != null &&
+            typeof(IssueCommand.IssuePackageReport).GetProperty(nameof(IssueCommand.IssuePackageReport.JournalSignaturePath)) != null &&
+            typeof(IssueCommand.IssuePackageReport).GetProperty(nameof(IssueCommand.IssuePackageReport.Files)) != null &&
+            typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.ArchivePath)) != null &&
+            typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.SourcePath)) != null;
+        yield return Check(
+            "issuePackageTraceability",
+            issuePackageTraceability,
+            issuePackageTraceability
+                ? "Issue package receipts trace manifest, child files, bundle hash, and optional journal signature evidence."
+                : "Issue package is missing receipt schema, safeguard, manifest, bundle hash, journal signature, or file trace fields.");
+
+        var dashboardOptional =
+            !CommandContracts.Any(command => string.Equals(command.Name, "dashboard", StringComparison.OrdinalIgnoreCase)) &&
+            !commandPaths.Any(path => path.StartsWith("dashboard", StringComparison.OrdinalIgnoreCase));
+        yield return Check(
+            "dashboardOptional",
+            dashboardOptional,
+            dashboardOptional
+                ? "Dashboard remains optional and outside the CLI issue closure contract."
+                : "Dashboard is incorrectly required by the issue closure workbench contract.");
+
+        var sheetIssueDryRunReady =
+            commandPaths.Contains("sheets issue-meta") &&
+            outputSchemas.Contains("sheet-issue-plan.v1") &&
+            safeguardNames.Contains("sheet-issue-meta") &&
+            safeguardIndex.Safeguards.Any(safeguard =>
+                string.Equals(safeguard.Name, "sheet-issue-meta", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--dry-run", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--plan-output", StringComparison.OrdinalIgnoreCase));
+        yield return Check(
+            "sheet-issue-dry-run-required",
+            sheetIssueDryRunReady,
+            sheetIssueDryRunReady
+                ? "Sheet issue metadata updates are indexed only through dry-run plan-output review."
+                : "Sheet issue metadata planning is missing callable path, output schema, or dry-run plan-output safeguard coverage.");
+
+        var sheetRenumberDryRunReady =
+            commandPaths.Contains("sheets renumber") &&
+            outputSchemas.Contains("sheet-renumber-plan.v1") &&
+            safeguardNames.Contains("sheet-renumber") &&
+            safeguardIndex.Safeguards.Any(safeguard =>
+                string.Equals(safeguard.Name, "sheet-renumber", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--dry-run", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--plan-output", StringComparison.OrdinalIgnoreCase));
+        yield return Check(
+            "sheet-renumber-dry-run-required",
+            sheetRenumberDryRunReady,
+            sheetRenumberDryRunReady
+                ? "Sheet renumber updates are indexed only through dry-run plan-output review."
+                : "Sheet renumber planning is missing callable path, output schema, or dry-run plan-output safeguard coverage.");
+
+        var roomRenumberDryRunReady =
+            commandPaths.Contains("rooms renumber") &&
+            outputSchemas.Contains("room-numbering-plan.v1") &&
+            safeguardNames.Contains("rooms-renumber") &&
+            safeguardIndex.Safeguards.Any(safeguard =>
+                string.Equals(safeguard.Name, "rooms-renumber", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--dry-run", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--plan-output", StringComparison.OrdinalIgnoreCase));
+        yield return Check(
+            "room-renumber-dry-run-required",
+            roomRenumberDryRunReady,
+            roomRenumberDryRunReady
+                ? "Room renumber updates are indexed only through dry-run plan-output review."
+                : "Room renumber planning is missing callable path, output schema, or dry-run plan-output safeguard coverage.");
+
+        var markAssignDryRunReady =
+            commandPaths.Contains("marks assign") &&
+            commandPaths.Contains("marks verify") &&
+            outputSchemas.Contains("mark-assignment-plan.v1") &&
+            outputSchemas.Contains("mark-verify-report.v1") &&
+            safeguardNames.Contains("marks-assign") &&
+            safeguardIndex.Safeguards.Any(safeguard =>
+                string.Equals(safeguard.Name, "marks-assign", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--dry-run", StringComparison.OrdinalIgnoreCase) &&
+                safeguard.DryRunCommand.Contains("--plan-output", StringComparison.OrdinalIgnoreCase));
+        yield return Check(
+            "mark-assignment-dry-run-required",
+            markAssignDryRunReady,
+            markAssignDryRunReady
+                ? "Door/window Mark assignments are indexed through dry-run plan-output review plus read-only verify."
+                : "Mark assignment planning is missing callable paths, output schemas, or dry-run plan-output safeguard coverage.");
+
+        var sheetReceiptRollbackShapeReady = SheetPlanReceiptShapeReady(safeguardIndex);
+        yield return Check(
+            "sheet-receipt-rollback-shape",
+            sheetReceiptRollbackShapeReady,
+            sheetReceiptRollbackShapeReady
+                ? "Sheet plan receipts expose rollback actions, affected ids, and model/document context."
+                : "Sheet plan receipts are missing rollback actions, affected ids, model context, or review commands.");
 
         var workflowDurationReady =
             typeof(WorkflowRunReport).GetProperty(nameof(WorkflowRunReport.DurationMs)) != null &&
@@ -2628,7 +3478,9 @@ public static class WorkbenchCommand
             "workbench" => new[]
             {
                 "workbench contract",
+                "workbench contract --contract workbench-contract.v2",
                 "workbench verify",
+                "workbench verify --contract workbench-contract.v2",
                 "workbench receipts",
                 "workbench paths",
                 "workbench exits",
@@ -2640,7 +3492,13 @@ public static class WorkbenchCommand
             },
             "check" => new[] { "check" },
             "score" => new[] { "score", "score --history" },
-            "sheets" => new[] { "sheets verify", "sheets index init", "sheets index show" },
+            "sheets" => new[] { "sheets verify", "sheets issue-meta", "sheets renumber", "sheets index init", "sheets index show" },
+            "rooms" => new[] { "rooms renumber" },
+            "marks" => new[] { "marks assign", "marks verify" },
+            "schedules" => new[] { "schedules ensure", "schedules batch-export", "schedules compare" },
+            "views" => new[] { "views audit", "views template-apply", "views clone-set" },
+            "links" => new[] { "links audit", "links repair" },
+            "model" => new[] { "model map-check", "model map-fix" },
             "schedule" => new[] { "schedule list", "schedule export", "schedule create" },
             "export" => new[] { "export" },
             "publish" => new[] { "publish" },
@@ -2659,7 +3517,8 @@ public static class WorkbenchCommand
                 "workflow examples",
                 "workflow receipts"
             },
-            "deliverables" => new[] { "deliverables list", "deliverables stats", "deliverables verify", "deliverables bundle" },
+            "deliverables" => new[] { "deliverables list", "deliverables stats", "deliverables verify", "deliverables plan", "deliverables bundle" },
+            "issue" => new[] { "issue preflight", "issue diff", "issue package" },
             "standards" => new[] { "standards install", "standards validate" },
             "family" => new[] { "family ls", "family validate", "family purge", "family export" },
             "history" => new[] { "history capture", "history list", "history prune", "history diff", "history trend" },
@@ -2675,6 +3534,34 @@ public static class WorkbenchCommand
 
     private static string NormalizePath(string value) =>
         value.Replace('\\', '/');
+
+    private static bool TryNormalizeWorkbenchContract(
+        string? contractSchema,
+        TextWriter output,
+        out string normalizedContract,
+        out string verificationSchema)
+    {
+        normalizedContract = string.IsNullOrWhiteSpace(contractSchema)
+            ? "workbench-contract.v1"
+            : contractSchema.Trim();
+        verificationSchema = "workbench-verification.v1";
+
+        if (string.Equals(normalizedContract, "workbench-contract.v1", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedContract = "workbench-contract.v1";
+            return true;
+        }
+
+        if (string.Equals(normalizedContract, "workbench-contract.v2", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedContract = "workbench-contract.v2";
+            verificationSchema = "workbench-verify-report.v2";
+            return true;
+        }
+
+        output.WriteLine("Error: --contract must be 'workbench-contract.v1' or 'workbench-contract.v2'.");
+        return false;
+    }
 
     private static string ProjectDirOption(string projectDirectory)
     {
@@ -2897,6 +3784,7 @@ public static class WorkbenchCommand
 
     public sealed record WorkbenchVerification(
         string SchemaVersion,
+        string ContractSchema,
         DateTimeOffset GeneratedAt,
         string ProjectDirectory,
         bool Success,

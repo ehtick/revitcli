@@ -36,6 +36,9 @@ revitcli workflow run .revitcli/workflows/pre-issue.yml --dry-run # preview work
 revitcli workflow review .revitcli/workflows/pre-issue.yml --output markdown # review approval/evidence handoff
 revitcli workflow suggest --output yaml                       # draft workflow from repeated journal commands
 revitcli workflow receipts --name pre-issue --output markdown # review one workflow's receipts
+revitcli issue preflight --profile .revitcli/issue.yml --output markdown --fail-on warning # issue readiness gate
+revitcli issue diff --from .revitcli/history/baseline.json --to current --review --output markdown # issue diff review
+revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --include-receipts true --output markdown # dry-run delivery package
 revitcli score --history 30d --output json                    # machine-readable model health trend
 revitcli workbench contract --output json                     # machine-readable command contract
 revitcli workbench verify --dir . --output markdown           # verify local workbench contract readiness
@@ -88,6 +91,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli rollback <artifact>` | Restore parameters from a fix baseline or plan receipt |
 | `revitcli export --format <fmt>` | Export DWG/PDF/IFC; supports JSON dry-run plans, receipts, and delivery manifests |
 | `revitcli schedule list` / `export` / `create` | Manage Revit schedules; list/export support table/JSON/Markdown, export also supports CSV, and create supports dry-run JSON/Markdown plus write receipts |
+| `revitcli schedules ensure` / `batch-export` / `compare` | Manage versioned schedule specs with dry-run ensure plans, traceable CSV export manifests, and baseline/current CSV diff reports |
 | `revitcli audit` | Run model quality checks |
 | `revitcli check` | Profile-driven check pipeline; supports table/JSON/HTML/SARIF/PR-comment output |
 | `revitcli publish [name]` | Profile-driven export pipeline (DWG/PDF/IFC), with JSON dry-run plans, receipts, and delivery manifests |
@@ -100,12 +104,18 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli inspect sheets` | Discover sheets, issues, filters, and export candidates for CLI/Codex workflows |
 | `revitcli inspect workflows` | Discover local workflow YAML files with validate/simulate/review/dry-run/receipt next commands |
 | `revitcli inspect plans` | Discover saved mutation plans with show, dry-run apply, approved apply, receipt, and rollback-preview commands |
-| `revitcli sheets verify` / `index` | Verify sheet numbering, required sheets, and local sheet-frame expectations |
+| `revitcli sheets verify` / `issue-meta` / `renumber` / `index` | Verify sheet numbering, plan dry-run issue metadata and renumber updates, and manage local sheet-frame expectations |
+| `revitcli rooms renumber` | Plan deterministic room number updates from local YAML rules with frozen room ids |
+| `revitcli marks assign` / `verify` | Plan door/window Mark updates from local YAML rules and verify duplicates, missing Marks, and rule conformance |
 | `revitcli examples <topic>` | Show copy-paste examples for common architect workflows; supports table/JSON/Markdown output |
+| `revitcli views audit` / `template-apply` / `clone-set` | Audit view standards and create dry-run plans for view template assignment or cloned view sets |
+| `revitcli links audit` / `repair` | Audit coordination links and create dry-run path/load repair plans without coordinate moves |
+| `revitcli model map-check` / `map-fix` | Audit and plan workset/phase mapping fixes with write precheck evidence |
 | `revitcli workbench contract` / `verify` / `receipts` / `paths` / `exits` / `extensions` / `outputs` / `safeguards` / `project` / `handoff` | Show and verify the stable command/output/dry-run/receipt/exit-code contract, receipt schema index, callable path index, exit-code index, extension-point index, output schema index, dry-run/approval safety index, local project artifact inventory, and one-command terminal handoff for Codex CLI |
 | `revitcli workflow validate` / `simulate` / `review` / `run` / `suggest` / `receipts` | Check, review, run, draft, and inspect reusable terminal workflow YAML with approval gates |
+| `revitcli issue preflight` / `diff` / `package` | Run the v5 issue closure contract with hidden-mutation preflight, issue-scoped diff review, dry-run package planning, child receipt traceability, bundle hash, and optional journal signature evidence |
 | `revitcli report weekly` / `knowledge` | Generate local weekly reports and project knowledge summaries from RevitCli artifacts |
-| `revitcli deliverables list` / `stats` / `verify` / `bundle` | Review delivery manifest entries, receipt traceability, and package handoff zips |
+| `revitcli deliverables list` / `stats` / `verify` / `plan` / `bundle` | Review delivery plans, manifest entries, receipt traceability, and package handoff zips |
 | `revitcli standards install` / `validate` | Install and validate required profiles, workflows, outputs, schedules, and family rules |
 | `revitcli release verify` | Check local release files, version/tag consistency, CI guardrails, and smoke documentation; use `--output markdown` for handoff notes |
 | `revitcli snapshot` | Capture model semantic state as JSON |
@@ -167,6 +177,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - Pre-publish hook can run `check` first; failed checks abort by default
 - Webhook + journal logging for CI integration
 - Successful real exports and publishes write receipts plus `.revitcli/deliveries/manifest.jsonl` entries; dry-runs never write delivery files
+- `deliverables plan --profile .revitcli.yml --since baseline.json --output markdown` prints a read-only `delivery-plan.v1` profile export plan with pipeline/preset output paths, baseline sheet counts when available, review command paths, and risk evidence before publish
 - `deliverables list`, `deliverables stats`, and `deliverables verify` review the local delivery manifest in table, JSON, or Markdown and confirm each entry points back to a readable receipt
 - `deliverables bundle --dry-run --output markdown` previews the manifest receipts and output files that would be packaged; real bundle runs write a zip plus `delivery-bundle-receipt.v1` sidecar
 
@@ -216,7 +227,9 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 ### Workbench Contract
 
 - `workbench contract --output json` prints a compact `workbench-contract.v1` envelope for Codex CLI and shell scripts
-- `workbench verify --dir <path> --output json|markdown` prints `workbench-verification.v1`, checking root-command alignment, MCP public exclusion plus hidden/deprecated legacy MCP compatibility, LLM/dashboard/cloud exclusion, recipe output support, model-health terminal output, risky-command dry-run/receipt coverage, workflow and saved-plan discovery, built-in workflow template validity, workflow duration telemetry, workflow receipt triage, workflow-review pre-run/post-run handoff and artifact-readiness coverage, shell completion coverage, project inventory coverage, handoff readiness actions, handoff recommended command phases, schedule-create safety, and exit-code notes
+- `workbench contract --contract workbench-contract.v2 --output json|markdown` prints the v5-compatible `workbench-contract.v2` envelope with the same visible command vocabulary plus issue closure paths
+- `workbench verify --dir <path> --output json|markdown` prints `workbench-verification.v1`, checking root-command alignment, MCP public exclusion plus hidden/deprecated legacy MCP compatibility, LLM/dashboard/cloud exclusion, recipe output support, model-health terminal output, risky-command dry-run/receipt coverage, workflow and saved-plan discovery, built-in workflow template validity, workflow duration telemetry, workflow receipt triage, workflow-review pre-run/post-run handoff and artifact-readiness coverage, shell completion coverage, project inventory coverage, handoff readiness actions, handoff recommended command phases, schedule-create safety, schedule spec/export/rollback readiness, view plan id/collision/rollback-guard readiness, and exit-code notes
+- `workbench verify --contract workbench-contract.v2 --dir <path> --output json|markdown` prints `workbench-verify-report.v2`, adding v5 issue closure checks for hidden model mutations, package traceability, dashboard optionality, and v2 command/schema compatibility while preserving v1 surfaces
 - `workbench receipts --output json|markdown` prints `workbench-receipts.v1`, indexing write/export receipt schemas, path patterns, dry-run commands, and review commands
 - `workbench paths --output json|markdown` prints `workbench-paths.v1`, a flat list of concrete `revitcli ...` command paths with risk, output, dry-run, receipt, and exit-code notes
 - `workbench exits --output json|markdown` prints `workbench-exit-codes.v1`, a compact command-to-exit-code index for scripts and Codex CLI
@@ -225,11 +238,29 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - `workbench safeguards --output json|markdown` prints `workbench-safeguards.v1`, listing dry-run, approval, receipt, and review commands for risky terminal paths
 - `workbench project --dir <path> --output json|markdown` prints `workbench-project.v1`, a read-only local inventory of profile, standards, workflows, receipts, history, journal, delivery manifest, plans, and reports with review commands
 - `workbench handoff --dir <path> --output json|markdown` prints `workbench-handoff.v1`, combining verification status, readiness check summaries, project artifact counts, machine-readable readiness actions for actionable missing or empty artifacts, recommended next commands such as workflow discovery, saved-plan discovery, and schedule-create dry-run, and non-goal reminders for terminal handoff
+- `sheets issue-meta --selector all --issue-code R03 --issue-date 2026-05-20 --plan-output .revitcli/plans/sheet-issue.json --dry-run --output json|markdown` writes a `sheet-issue-plan.v1` dry-run artifact with frozen sheet ids, old/new issue parameter values, skipped-parameter evidence, `plan show` review support, and `plan apply` receipts/rollback actions
+- `sheets renumber --rule .revitcli/sheets/numbering.yml --selector all --plan-output .revitcli/plans/sheet-renumber.json --dry-run --output json|markdown` writes a `sheet-renumber-plan.v1` dry-run artifact with frozen sheet ids, old/new sheet numbers, duplicate-target protection, stale-number apply validation, and receipt rollback actions
+- `rooms renumber --rule .revitcli/numbering/rooms.yml --scope all --plan-output .revitcli/plans/room-numbering.json --dry-run --output json|markdown` writes a `room-numbering-plan.v1` dry-run artifact with frozen room ids, deterministic level/zone/type sorting, duplicate-target protection, stale-number apply validation, and receipt rollback actions
+- `marks assign --category doors --rule .revitcli/numbering/doors.yml --plan-output .revitcli/plans/door-marks.json --dry-run --output json|markdown` writes a `mark-assignment-plan.v1` dry-run artifact with frozen element ids, deterministic level/zone/type/location sorting, duplicate-target protection, stale-Mark apply validation, and receipt rollback actions
+- `marks verify --category doors,windows --against ".revitcli/numbering/*.yml" --output json|markdown` prints `mark-verify-report.v1` with duplicate Marks, missing Marks, and optional rule-conformance issues without writing the model
+- `schedules ensure --spec .revitcli/schedules/*.yml --plan-output .revitcli/plans/schedule-ensure.json --dry-run --mode create-only|sync-fields --output json|markdown` writes a `schedule-ensure-plan.v1` from `schedule-spec.v1` YAML with fields, filters, sort, key columns, and old structure baselines
+- `schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json|markdown` writes CSVs plus `schedule-export-manifest.v1` entries traceable to schedule ids and output paths
+- `schedules compare --from exports/schedules/baseline --to exports/schedules/current --keys Number,Mark --output json|markdown` prints a read-only `schedule-diff-report.v1` for changed, added, and removed CSV rows
+- `views audit --rules .revitcli/views/standards.yml --templates --browser --output json|markdown` prints `view-standards-report.v1` for template mismatches, browser parameter gaps, and naming issues
+- `views template-apply --selector "Level*" --template "Architectural Plan" --plan-output .revitcli/plans/view-template.json --dry-run --output json|markdown` writes `view-template-plan.v1` with frozen view ids plus old/new template ids
+- `views clone-set --from-set "Level*" --to-prefix "Tender - " --naming-rule "{prefix}{name}" --plan-output .revitcli/plans/view-clone.json --dry-run --output json|markdown` writes `view-clone-plan.v1`, fails on target-name collisions, and carries rollback guards for placed views
+- `links audit --rules .revitcli/links/rules.yml --check paths,loaded,coordinates --output json|markdown` prints `link-audit-report.v1` for link path, loaded-state, and coordinate fingerprint drift without writing the model
+- `links repair --map .revitcli/links/paths.yml --plan-output .revitcli/plans/link-repair.json --dry-run --max-changes 20 --output json|markdown` writes `link-repair-plan.v1` with old/new paths, load-state changes, file existence, and timestamp/size evidence; it does not plan coordinate moves
+- `model map-check --against .revitcli/model-mapping.yml --worksets --phases --output json|markdown` prints `model-map-report.v1` for workset and phase ownership drift
+- `model map-fix --against .revitcli/model-mapping.yml --scope rooms,doors,walls --plan-output .revitcli/plans/model-map-fix.json --dry-run --output json|markdown` writes `model-map-fix-plan.v1` with element ids, old/new workset or phase values, and write precheck/probe-status fields before any future apply path
+- `issue preflight --profile .revitcli/issue.yml --output json|markdown --fail-on warning|error` prints `issue-preflight-report.v1` with artifact, command, mutation-plan, deliverables, and hidden-mutation checks before issue work proceeds
+- `issue diff --from baseline.json --to current --review --output json|markdown` prints `issue-diff-report.v1`, reusing snapshot diff review groups for issue-day anomaly/notable/routine triage
+- `issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --sign-journal --include-receipts true --output json|markdown` prints `issue-package-receipt.v1` without writing delivery files in dry-run; approved package writes include manifest path, child files/receipts, bundle hash, and optional journal signature evidence
 - `schedule create --dry-run --output json|markdown` prints `schedule-create.v1` without calling Revit; real schedule creates write `schedule-create-receipt.v1` under `.revitcli/receipts` by default, expose `receiptRequired`/`receiptSaved`, and JSON/Markdown failures use the same schema
-- Shell completions keep inspect, workflow, and schedule output formats aligned by subcommand, and `workbench verify` guards the inspect/workbench/workflow/schedule completion surface: inspect commands include `inspect plans`, workflow suggest uses table/JSON/YAML, workflow reports use table/JSON/Markdown, schedule list/create use table/JSON/Markdown, and schedule export also offers CSV
+- Shell completions keep inspect, workflow, schedules, views, links, model, schedule, rooms, marks, and issue output formats aligned by subcommand, and `workbench verify` guards the inspect/workbench/workflow/schedules/views/links/model/schedule/rooms/marks/issue completion surface: inspect commands include `inspect plans`, workflow suggest uses table/JSON/YAML, workflow reports use table/JSON/Markdown, schedules ensure/batch-export/compare, views audit/template-apply/clone-set, links audit/repair, model map-check/map-fix, issue preflight/diff/package use table/JSON/Markdown, schedule list/create use table/JSON/Markdown, schedule export also offers CSV, and rooms/marks numbering commands offer table/JSON/Markdown
 - The contract lists stable command vocabulary, callable command paths, recipe discovery, risk mode, JSON/Markdown support, recommended first command, dry-run expectations, receipt locations, and exit-code notes
 - Write paths without a dry-run/receipt contract are intentionally excluded from the Codex callable path index; `schedule create` is included now that it has a dry-run preview and receipt contract
-- JSON includes `commandPaths` entries such as `plan apply`, `score --history`, `inspect workflows`, `inspect plans`, `workflow review`, `workbench verify`, `workbench receipts`, `workbench paths`, `workbench exits`, `workbench extensions`, `workbench outputs`, `workbench safeguards`, `workbench project`, `workbench handoff`, and `deliverables bundle` so Codex CLI can choose concrete commands without scraping help text
+- JSON includes `commandPaths` entries such as `plan apply`, `score --history`, `inspect workflows`, `inspect plans`, `workflow review`, `workbench contract --contract workbench-contract.v2`, `workbench verify`, `workbench verify --contract workbench-contract.v2`, `workbench receipts`, `workbench paths`, `workbench exits`, `workbench extensions`, `workbench outputs`, `workbench safeguards`, `workbench project`, `workbench handoff`, `schedules ensure`, `schedules batch-export`, `schedules compare`, `views audit`, `views template-apply`, `views clone-set`, `links audit`, `links repair`, `model map-check`, `model map-fix`, `rooms renumber`, `marks assign`, `marks verify`, `issue preflight`, `issue diff`, `issue package`, `deliverables plan`, and `deliverables bundle` so Codex CLI can choose concrete commands without scraping help text
 - Output formats are table, JSON, and Markdown; workbench commands are read-only and have no Revit API, dashboard, cloud, LLM runtime, or MCP dependency
 
 ### Reports — local project summaries
@@ -448,6 +479,7 @@ revitcli check
 revitcli check --report report.html
 
 # 4. Publish deliverables
+revitcli deliverables plan --profile .revitcli.yml --output markdown
 revitcli publish --dry-run
 revitcli publish
 revitcli deliverables verify --output markdown

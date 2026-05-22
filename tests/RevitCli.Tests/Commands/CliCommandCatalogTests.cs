@@ -42,6 +42,9 @@ public class CliCommandCatalogTests
         Assert.Contains("standards", names);
         Assert.Contains("release", names);
         Assert.Contains("sheets", names);
+        Assert.Contains("views", names);
+        Assert.Contains("links", names);
+        Assert.Contains("model", names);
         Assert.Contains("rollback", names);
         Assert.Contains("journal", names);
         Assert.Contains("mcp", names);
@@ -82,6 +85,9 @@ public class CliCommandCatalogTests
         Assert.Contains("deliverables", names);
         Assert.Contains("release", names);
         Assert.Contains("sheets", names);
+        Assert.Contains("views", names);
+        Assert.Contains("links", names);
+        Assert.Contains("model", names);
         Assert.Contains("journal", names);
     }
 
@@ -102,6 +108,9 @@ public class CliCommandCatalogTests
         Assert.Contains("standards", names);
         Assert.Contains("release", names);
         Assert.Contains("sheets", names);
+        Assert.Contains("views", names);
+        Assert.Contains("links", names);
+        Assert.Contains("model", names);
         Assert.Contains("journal", names);
         Assert.DoesNotContain("mcp", names);
     }
@@ -212,6 +221,19 @@ public class CliCommandCatalogTests
             CliCommandCatalog.InteractiveHelpEntries,
             entry => entry.Command == "inspect plans" &&
                      entry.Description.Contains("saved mutation plans", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void InteractiveHelpEntries_IncludeCoordinationCommands()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "links audit" &&
+                     entry.Description.Contains("coordinate", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "model map-fix" &&
+                     entry.Description.Contains("writable", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

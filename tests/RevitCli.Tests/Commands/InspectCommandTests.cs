@@ -138,6 +138,122 @@ public class InspectCommandTests
     }
 
     [Fact]
+    public async Task Plans_Json_RecognizesSheetIssuePlan()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-inspect-plans-{Guid.NewGuid():N}");
+        try
+        {
+            var planDir = Path.Combine(root, ".revitcli", "plans");
+            Directory.CreateDirectory(planDir);
+            File.WriteAllText(Path.Combine(planDir, "sheet-issue.json"), """
+{
+  "schemaVersion": "sheet-issue-plan.v1",
+  "type": "sheet-issue",
+  "command": "sheets issue-meta",
+  "createdAtUtc": "2026-05-20T10:00:00Z",
+  "createdBy": "tester",
+  "dryRun": true,
+  "selector": "all",
+  "issueCode": "R03",
+  "issueDate": "2026-05-20",
+  "paramMap": "(builtin defaults)",
+  "targetParameters": [],
+  "modelFingerprint": { "document": "tower.rvt", "documentPath": "D:/tower.rvt", "fileHash": "abc" },
+  "summary": { "totalSheets": 1, "matchedSheets": 1, "actionCount": 2, "skippedCount": 0 },
+  "actions": [
+    { "sheetId": 10, "sheetNumber": "A-101", "sheetName": "Level 1", "titleblockId": null, "key": "issueCode", "parameter": "Sheet Issue Code", "oldValue": "R02", "newValue": "R03" },
+    { "sheetId": 10, "sheetNumber": "A-101", "sheetName": "Level 1", "titleblockId": null, "key": "issueDate", "parameter": "Sheet Issue Date", "oldValue": "2026-05-01", "newValue": "2026-05-20" }
+  ],
+  "skipped": [],
+  "commands": {
+    "show": "revitcli plan show \"sheet-issue.json\" --output markdown",
+    "regenerateDryRun": "revitcli sheets issue-meta --selector all --issue-code R03 --issue-date 2026-05-20 --plan-output sheet-issue.json --dry-run --output markdown"
+  }
+}
+""");
+            File.WriteAllText(
+                Path.Combine(planDir, "sheet-issue.json.receipt.json"),
+                """{"schemaVersion":"plan-receipt.v1","operation":"sheet-issue","rollbackActions":[]}""");
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecutePlansAsync(root, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var plan = Assert.Single(json.RootElement.GetProperty("plans").EnumerateArray());
+            Assert.Equal("sheet-issue", plan.GetProperty("type").GetString());
+            Assert.Equal("ready", plan.GetProperty("status").GetString());
+            Assert.Equal(2, plan.GetProperty("actionCount").GetInt32());
+            Assert.True(plan.GetProperty("hasReceipt").GetBoolean());
+            Assert.Contains("plan apply", plan.GetProperty("commands").GetProperty("dryRunApplyCommand").GetString());
+            Assert.Contains("plan apply", plan.GetProperty("commands").GetProperty("applyCommand").GetString());
+            Assert.Contains("rollback", plan.GetProperty("commands").GetProperty("rollbackPreviewCommand").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Plans_Json_RecognizesSheetRenumberPlan()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-inspect-plans-{Guid.NewGuid():N}");
+        try
+        {
+            var planDir = Path.Combine(root, ".revitcli", "plans");
+            Directory.CreateDirectory(planDir);
+            File.WriteAllText(Path.Combine(planDir, "sheet-renumber.json"), """
+{
+  "schemaVersion": "sheet-renumber-plan.v1",
+  "type": "sheet-renumber",
+  "command": "sheets renumber",
+  "createdAtUtc": "2026-05-20T10:00:00Z",
+  "createdBy": "tester",
+  "dryRun": true,
+  "selector": "all",
+  "rulePath": ".revitcli/sheets/numbering.yml",
+  "parameter": "Sheet Number",
+  "modelFingerprint": { "document": "tower.rvt", "documentPath": "D:/tower.rvt", "fileHash": "abc" },
+  "summary": { "totalSheets": 1, "matchedSheets": 1, "generatedNumbers": 1, "actionCount": 1, "skippedCount": 0 },
+  "actions": [
+    { "sheetId": 10, "sheetNumber": "TMP-001", "sheetName": "Level 1", "parameter": "Sheet Number", "oldNumber": "TMP-001", "newNumber": "A-101", "floor": 1, "seq": 1 }
+  ],
+  "skipped": [],
+  "commands": {
+    "show": "revitcli plan show \"sheet-renumber.json\" --output markdown",
+    "regenerateDryRun": "revitcli sheets renumber --rule .revitcli/sheets/numbering.yml --selector all --plan-output sheet-renumber.json --dry-run --output markdown",
+    "dryRunApply": "revitcli plan apply sheet-renumber.json --dry-run",
+    "apply": "revitcli plan apply sheet-renumber.json --yes"
+  }
+}
+""");
+            File.WriteAllText(
+                Path.Combine(planDir, "sheet-renumber.json.receipt.json"),
+                """{"schemaVersion":"plan-receipt.v1","operation":"sheet-renumber","rollbackActions":[]}""");
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecutePlansAsync(root, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var plan = Assert.Single(json.RootElement.GetProperty("plans").EnumerateArray());
+            Assert.Equal("sheet-renumber", plan.GetProperty("type").GetString());
+            Assert.Equal("ready", plan.GetProperty("status").GetString());
+            Assert.Equal(1, plan.GetProperty("actionCount").GetInt32());
+            Assert.True(plan.GetProperty("hasReceipt").GetBoolean());
+            Assert.Contains("plan apply", plan.GetProperty("commands").GetProperty("dryRunApplyCommand").GetString());
+            Assert.Contains("rollback", plan.GetProperty("commands").GetProperty("rollbackPreviewCommand").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Plans_Markdown_PrintsReviewCommands()
     {
         var root = Path.Combine(Path.GetTempPath(), $"revitcli-inspect-plans-{Guid.NewGuid():N}");
@@ -157,6 +273,38 @@ public class InspectCommandTests
             Assert.Contains("| Plan | Type | Status | Actions | Receipt | Show | Dry-run apply | Apply | Rollback preview |", text);
             Assert.Contains("`invalid`", text);
             Assert.Contains("## Issues", text);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Plans_Json_InvalidSheetIssuePlanReportsIssue()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-inspect-plans-{Guid.NewGuid():N}");
+        try
+        {
+            var planDir = Path.Combine(root, ".revitcli", "plans");
+            Directory.CreateDirectory(planDir);
+            File.WriteAllText(Path.Combine(planDir, "bad-sheet-issue.json"), """
+{
+  "schemaVersion": "sheet-issue-plan.v1",
+  "type": "sheet-issue"
+}
+""");
+            var writer = new StringWriter();
+
+            var exitCode = await InspectCommand.ExecutePlansAsync(root, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var plan = Assert.Single(json.RootElement.GetProperty("plans").EnumerateArray());
+            Assert.Equal("invalid", plan.GetProperty("status").GetString());
+            var issue = Assert.Single(plan.GetProperty("issues").EnumerateArray());
+            Assert.Contains("missing", issue.GetString(), StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

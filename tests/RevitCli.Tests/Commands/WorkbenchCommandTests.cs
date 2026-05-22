@@ -34,6 +34,8 @@ public sealed class WorkbenchCommandTests
             command.GetProperty("name").GetString() == "workbench" &&
             command.GetProperty("supportsJson").GetBoolean() &&
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench verify") &&
+            command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench contract --contract workbench-contract.v2") &&
+            command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench verify --contract workbench-contract.v2") &&
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench receipts") &&
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench paths") &&
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench exits") &&
@@ -64,6 +66,63 @@ public sealed class WorkbenchCommandTests
             schedule.GetProperty("commandPaths").EnumerateArray(),
             path => path.GetString() == "schedule create");
         Assert.Contains("schedule-create", schedule.GetProperty("receipt").GetString()!);
+        var rooms = commands.Single(command => command.GetProperty("name").GetString() == "rooms");
+        Assert.Equal("write", rooms.GetProperty("risk").GetString());
+        Assert.Contains(
+            rooms.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "rooms renumber");
+        Assert.Contains("room-numbering-plan.v1", rooms.GetProperty("receipt").GetString()!);
+        var marks = commands.Single(command => command.GetProperty("name").GetString() == "marks");
+        Assert.Equal("mixed", marks.GetProperty("risk").GetString());
+        Assert.Contains(
+            marks.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "marks assign");
+        Assert.Contains(
+            marks.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "marks verify");
+        Assert.Contains("mark-assignment-plan.v1", marks.GetProperty("receipt").GetString()!);
+        var schedules = commands.Single(command => command.GetProperty("name").GetString() == "schedules");
+        Assert.Equal("mixed", schedules.GetProperty("risk").GetString());
+        Assert.Contains(
+            schedules.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "schedules ensure");
+        Assert.Contains(
+            schedules.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "schedules batch-export");
+        Assert.Contains(
+            schedules.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "schedules compare");
+        Assert.Contains("schedule-export-manifest.v1", schedules.GetProperty("receipt").GetString()!);
+        var views = commands.Single(command => command.GetProperty("name").GetString() == "views");
+        Assert.Equal("mixed", views.GetProperty("risk").GetString());
+        Assert.Contains(
+            views.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "views audit");
+        Assert.Contains(
+            views.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "views template-apply");
+        Assert.Contains(
+            views.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "views clone-set");
+        Assert.Contains("view-template-plan.v1", views.GetProperty("receipt").GetString()!);
+        var links = commands.Single(command => command.GetProperty("name").GetString() == "links");
+        Assert.Equal("mixed", links.GetProperty("risk").GetString());
+        Assert.Contains(
+            links.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "links audit");
+        Assert.Contains(
+            links.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "links repair");
+        Assert.Contains("link-repair-plan.v1", links.GetProperty("receipt").GetString()!);
+        var model = commands.Single(command => command.GetProperty("name").GetString() == "model");
+        Assert.Equal("mixed", model.GetProperty("risk").GetString());
+        Assert.Contains(
+            model.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "model map-check");
+        Assert.Contains(
+            model.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "model map-fix");
+        Assert.Contains("model-map-fix-plan.v1", model.GetProperty("receipt").GetString()!);
     }
 
     [Fact]
@@ -81,6 +140,23 @@ public sealed class WorkbenchCommandTests
         Assert.Contains("Recommended first commands:", text);
         Assert.Contains("revitcli publish issue --dry-run --output json", text);
         Assert.Contains("revitcli report knowledge --output json", text);
+    }
+
+    [Fact]
+    public async Task Contract_Json_WithContractV2_PrintsV2Envelope()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkbenchCommand.ExecuteContractAsync(output, "json", "workbench-contract.v2");
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(output.ToString());
+        var root = document.RootElement;
+        Assert.Equal("workbench-contract.v2", root.GetProperty("schemaVersion").GetString());
+        Assert.Contains(
+            root.GetProperty("commands").EnumerateArray(),
+            command => command.GetProperty("name").GetString() == "issue" &&
+                command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "issue package"));
     }
 
     [Fact]
@@ -119,6 +195,17 @@ public sealed class WorkbenchCommandTests
 
         Assert.Equal(1, exitCode);
         Assert.Equal("Error: --output must be 'table', 'json', or 'markdown'." + Environment.NewLine, output.ToString());
+    }
+
+    [Fact]
+    public async Task Contract_UnknownContract_ReturnsFailureBeforeWritingContract()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkbenchCommand.ExecuteContractAsync(output, "json", "workbench-contract.v3");
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal("Error: --contract must be 'workbench-contract.v1' or 'workbench-contract.v2'." + Environment.NewLine, output.ToString());
     }
 
     [Fact]
@@ -184,6 +271,58 @@ public sealed class WorkbenchCommandTests
             check.GetProperty("status").GetString() == "pass" &&
             check.GetProperty("evidence").GetString()!.Contains("dry-run", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "sheet-renumber-dry-run-required" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "room-renumber-dry-run-required" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "mark-assignment-dry-run-required" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "schedule-spec-schema" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "schedule-export-traceable" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "schedule-ensure-rollback" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "view-mutation-plan-ids-frozen" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "view-clone-no-name-collision" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "view-rollback-guards-placed-views" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "linkRepairNoCoordinateMove" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "modelMapWritableProbe" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "coordinationReceiptPaths" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "contractV2Compat" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "issueNoHiddenMutation" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "issuePackageTraceability" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "dashboardOptional" &&
+            check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "sheet-receipt-rollback-shape" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("rollback actions", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "project-inventory-surface" &&
             check.GetProperty("status").GetString() == "pass");
         Assert.Contains(checks, check =>
@@ -234,6 +373,29 @@ public sealed class WorkbenchCommandTests
         Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "exit-code-index-surface" &&
             check.GetProperty("status").GetString() == "pass");
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_PrintsV2Envelope()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+            output,
+            "json",
+            projectDirectory: null,
+            contractSchema: "workbench-contract.v2");
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(output.ToString());
+        var root = document.RootElement;
+        Assert.Equal("workbench-verify-report.v2", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("workbench-contract.v2", root.GetProperty("contractSchema").GetString());
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "issuePackageTraceability" &&
+                check.GetProperty("status").GetString() == "pass");
     }
 
     [Fact]
@@ -303,6 +465,17 @@ public sealed class WorkbenchCommandTests
 
         Assert.Equal(1, exitCode);
         Assert.Equal("Error: --output must be 'table', 'json', or 'markdown'." + Environment.NewLine, output.ToString());
+    }
+
+    [Fact]
+    public async Task Verify_UnknownContract_ReturnsFailureBeforeWritingVerification()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(output, "json", contractSchema: "workbench-contract.v3");
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal("Error: --contract must be 'workbench-contract.v1' or 'workbench-contract.v2'." + Environment.NewLine, output.ToString());
     }
 
     [Fact]
@@ -462,6 +635,30 @@ public sealed class WorkbenchCommandTests
             path.GetProperty("command").GetString() == "schedule" &&
             path.GetProperty("dryRun").GetString()!.Contains("required", StringComparison.OrdinalIgnoreCase) &&
             path.GetProperty("receipt").GetString()!.Contains("schedule-create", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(paths, path =>
+            path.GetProperty("path").GetString() == "rooms renumber" &&
+            path.GetProperty("command").GetString() == "rooms" &&
+            path.GetProperty("dryRun").GetString()!.Contains("required", StringComparison.OrdinalIgnoreCase) &&
+            path.GetProperty("receipt").GetString()!.Contains("room-numbering-plan.v1", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(paths, path =>
+            path.GetProperty("path").GetString() == "marks assign" &&
+            path.GetProperty("command").GetString() == "marks" &&
+            path.GetProperty("dryRun").GetString()!.Contains("required", StringComparison.OrdinalIgnoreCase) &&
+            path.GetProperty("receipt").GetString()!.Contains("mark-assignment-plan.v1", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(paths, path =>
+            path.GetProperty("path").GetString() == "marks verify" &&
+            path.GetProperty("command").GetString() == "marks" &&
+            path.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(paths, path =>
+            path.GetProperty("path").GetString() == "links repair" &&
+            path.GetProperty("command").GetString() == "links" &&
+            path.GetProperty("dryRun").GetString()!.Contains("required", StringComparison.OrdinalIgnoreCase) &&
+            path.GetProperty("receipt").GetString()!.Contains("link-repair-plan.v1", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(paths, path =>
+            path.GetProperty("path").GetString() == "model map-fix" &&
+            path.GetProperty("command").GetString() == "model" &&
+            path.GetProperty("dryRun").GetString()!.Contains("required", StringComparison.OrdinalIgnoreCase) &&
+            path.GetProperty("receipt").GetString()!.Contains("model-map-fix-plan.v1", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -646,6 +843,18 @@ public sealed class WorkbenchCommandTests
             contract.GetProperty("jsonSchema").GetString() == "workbench-verification.v1" &&
             contract.GetProperty("supportsMarkdown").GetBoolean());
         Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "workbench contract --contract workbench-contract.v2" &&
+            contract.GetProperty("jsonSchema").GetString() == "workbench-contract.v2" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "workbench verify --contract workbench-contract.v2" &&
+            contract.GetProperty("jsonSchema").GetString() == "workbench-verify-report.v2" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "issue package" &&
+            contract.GetProperty("jsonSchema").GetString() == "issue-package-receipt.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
             contract.GetProperty("commandPath").GetString() == "workflow review <file>" &&
             contract.GetProperty("jsonSchema").GetString() == "workflow-review.v1" &&
             contract.GetProperty("notes").GetString()!.Contains("receipt triage", StringComparison.OrdinalIgnoreCase));
@@ -664,6 +873,26 @@ public sealed class WorkbenchCommandTests
         Assert.Contains(outputs, contract =>
             contract.GetProperty("commandPath").GetString() == "schedule create" &&
             contract.GetProperty("jsonSchema").GetString() == "schedule-create.v1");
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "rooms renumber" &&
+            contract.GetProperty("jsonSchema").GetString() == "room-numbering-plan.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "marks assign" &&
+            contract.GetProperty("jsonSchema").GetString() == "mark-assignment-plan.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "marks verify" &&
+            contract.GetProperty("jsonSchema").GetString() == "mark-verify-report.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "links audit" &&
+            contract.GetProperty("jsonSchema").GetString() == "link-audit-report.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "model map-fix" &&
+            contract.GetProperty("jsonSchema").GetString() == "model-map-fix-plan.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
     }
 
     [Fact]
@@ -731,6 +960,30 @@ public sealed class WorkbenchCommandTests
             safeguard.GetProperty("name").GetString() == "schedule-create" &&
             safeguard.GetProperty("dryRunCommand").GetString()!.Contains("schedule create", StringComparison.OrdinalIgnoreCase) &&
             safeguard.GetProperty("receipt").GetString()!.Contains("schedule-create", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(safeguards, safeguard =>
+            safeguard.GetProperty("name").GetString() == "sheet-renumber" &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("--plan-output", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("receipt").GetString()!.Contains("plan-receipt.v1", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(safeguards, safeguard =>
+            safeguard.GetProperty("name").GetString() == "rooms-renumber" &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("rooms renumber", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("--plan-output", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("receipt").GetString()!.Contains("room-numbering-plan.v1", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(safeguards, safeguard =>
+            safeguard.GetProperty("name").GetString() == "marks-assign" &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("marks assign", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("--plan-output", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("receipt").GetString()!.Contains("mark-assignment-plan.v1", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(safeguards, safeguard =>
+            safeguard.GetProperty("name").GetString() == "links-repair" &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("links repair", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("--plan-output", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("reviewCommand").GetString()!.Contains("links audit", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(safeguards, safeguard =>
+            safeguard.GetProperty("name").GetString() == "model-map-fix" &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("model map-fix", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("--plan-output", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("reviewCommand").GetString()!.Contains("model map-check", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

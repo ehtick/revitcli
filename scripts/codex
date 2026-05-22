@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# scripts/codex
+# Single canonical entrypoint for the RevitCli Codex loop.
+#
+# Usage:
+#   scripts/codex          # one tick
+#   scripts/codex loop     # daemon: ticks until HALT or feature done
+#   scripts/codex halt     # pause the daemon (touches .codex/HALT)
+#   scripts/codex resume   # unpause
+#   scripts/codex status   # show current feature + last tick summary
+#
+# For interactive long-form work, use a top-level `/goal` session. Do not
+# invoke write-capable project agents directly; they will refuse outside the
+# tick gate — see .codex/CONTRACT.md.
+
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+cmd="${1:-tick}"
+case "$cmd" in
+  tick|"")
+    exec bash scripts/codex-tick.sh
+    ;;
+  loop)
+    exec bash scripts/codex-loop.sh
+    ;;
+  halt)
+    exec bash scripts/codex-halt.sh
+    ;;
+  resume)
+    exec bash scripts/codex-resume.sh
+    ;;
+  status)
+    echo "== Current feature =="
+    if [ -f .codex/state/current-feature.txt ]; then
+      cat .codex/state/current-feature.txt
+      echo
+      echo "== Last tick =="
+      cat .codex/state/last-tick.md 2>/dev/null || echo "(no tick has run yet)"
+      echo
+      echo "== Needs attention =="
+      cat .codex/state/needs-attention.md 2>/dev/null || echo "(none)"
+    else
+      echo "(no active feature; run \`scripts/codex tick\` once to bootstrap)"
+    fi
+    ;;
+  *)
+    echo "Usage: $0 [tick|loop|halt|resume|status]" >&2
+    exit 64
+    ;;
+esac

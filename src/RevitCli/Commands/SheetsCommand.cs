@@ -27,7 +27,52 @@ public static class SheetsCommand
     {
         var command = new Command("sheets", "Verify and manage local sheet-frame expectations");
         command.AddCommand(CreateVerifyCommand(client));
+        command.AddCommand(CreateIssueMetaCommand(client));
+        command.AddCommand(CreateRenumberCommand(client));
         command.AddCommand(CreateIndexCommand(client));
+        return command;
+    }
+
+    private static Command CreateIssueMetaCommand(RevitClient client)
+    {
+        var selectorOpt = new Option<string>("--selector", () => "all", "Sheet selector: all, sheet number/name text, or glob");
+        var issueCodeOpt = new Option<string>("--issue-code", "Issue/revision code to write") { IsRequired = true };
+        var issueDateOpt = new Option<string>("--issue-date", "Issue date to write") { IsRequired = true };
+        var planOutputOpt = new Option<string>("--plan-output", "Write the frozen sheet issue plan JSON") { IsRequired = true };
+        var paramMapOpt = new Option<string?>("--param-map", "Titleblock parameter map YAML path");
+        var dryRunOpt = new Option<bool>("--dry-run", () => true, "Preview only; no model writes are performed");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+
+        var command = new Command("issue-meta", "Plan sheet issue metadata updates without writing the model")
+        {
+            selectorOpt, issueCodeOpt, issueDateOpt, planOutputOpt, paramMapOpt, dryRunOpt, outputOpt
+        };
+        command.SetHandler(async (selector, issueCode, issueDate, planOutput, paramMap, dryRun, output) =>
+        {
+            Environment.ExitCode = await ExecuteIssueMetaAsync(
+                client, selector, issueCode, issueDate, planOutput, paramMap, dryRun, output, Console.Out);
+        }, selectorOpt, issueCodeOpt, issueDateOpt, planOutputOpt, paramMapOpt, dryRunOpt, outputOpt);
+        return command;
+    }
+
+    private static Command CreateRenumberCommand(RevitClient client)
+    {
+        var ruleOpt = new Option<string>("--rule", "Sheet numbering rule YAML path") { IsRequired = true };
+        var planOutputOpt = new Option<string>("--plan-output", "Write the frozen sheet renumber plan JSON") { IsRequired = true };
+        var selectorOpt = new Option<string>("--selector", () => "all", "Sheet selector: all, sheet number/name text, or glob");
+        var maxChangesOpt = new Option<int?>("--max-changes", "Maximum planned sheet number changes");
+        var dryRunOpt = new Option<bool>("--dry-run", () => true, "Preview only; no model writes are performed");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table, json, markdown");
+
+        var command = new Command("renumber", "Plan sheet renumbering from a numbering rule without writing the model")
+        {
+            ruleOpt, planOutputOpt, selectorOpt, maxChangesOpt, dryRunOpt, outputOpt
+        };
+        command.SetHandler(async (rule, planOutput, selector, maxChanges, dryRun, output) =>
+        {
+            Environment.ExitCode = await ExecuteRenumberAsync(
+                client, rule, planOutput, selector, maxChanges, dryRun, output, Console.Out);
+        }, ruleOpt, planOutputOpt, selectorOpt, maxChangesOpt, dryRunOpt, outputOpt);
         return command;
     }
 
@@ -148,6 +193,206 @@ public static class SheetsCommand
         }
 
         return report.Summary.ExitCode;
+    }
+
+    public static async Task<int> ExecuteIssueMetaAsync(
+        RevitClient client,
+        string selector,
+        string issueCode,
+        string issueDate,
+        string planOutputPath,
+        string? paramMapPath,
+        bool dryRun,
+        string outputFormat,
+        TextWriter output)
+    {
+        var normalizedOutput = NormalizeOutput(outputFormat, "table", "json", "markdown");
+        if (normalizedOutput is null)
+        {
+            await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, markdown.");
+            return 1;
+        }
+
+        if (!dryRun)
+        {
+            await output.WriteLineAsync("Error: sheets issue-meta only creates reviewed plans. Use --dry-run, then apply the saved plan with revitcli plan apply.");
+            return 1;
+        }
+
+        if (string.IsNullOrWhiteSpace(issueCode))
+        {
+            await output.WriteLineAsync("Error: --issue-code is required.");
+            return 1;
+        }
+
+        if (string.IsNullOrWhiteSpace(issueDate))
+        {
+            await output.WriteLineAsync("Error: --issue-date is required.");
+            return 1;
+        }
+
+        if (string.IsNullOrWhiteSpace(planOutputPath))
+        {
+            await output.WriteLineAsync("Error: --plan-output is required.");
+            return 1;
+        }
+
+        LoadedSheetIssueParamMap paramMap;
+        try
+        {
+            paramMap = SheetIssueParamMapStore.LoadOrDefault(paramMapPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or YamlException)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        var snapshotResult = await client.CaptureSnapshotAsync(new SnapshotRequest
+        {
+            IncludeCategories = Array.Empty<string>().ToList(),
+            IncludeSheets = true,
+            IncludeSchedules = false,
+            SummaryOnly = false,
+        });
+
+        if (!snapshotResult.Success)
+        {
+            await output.WriteLineAsync($"Error: {snapshotResult.Error}");
+            return 4;
+        }
+
+        var plan = SheetIssuePlanner.Create(
+            snapshotResult.Data ?? new ModelSnapshot(),
+            selector,
+            issueCode,
+            issueDate,
+            paramMap,
+            planOutputPath);
+
+        SheetIssuePlanStore.Save(planOutputPath, plan);
+
+        switch (normalizedOutput)
+        {
+            case "json":
+                await output.WriteLineAsync(JsonSerializer.Serialize(plan, JsonOptions));
+                break;
+            case "markdown":
+                await output.WriteLineAsync(RenderIssuePlanMarkdown(plan, planOutputPath));
+                break;
+            default:
+                await output.WriteLineAsync(RenderIssuePlanTable(plan, planOutputPath));
+                break;
+        }
+
+        return plan.Summary.ActionCount == 0 ? 2 : 0;
+    }
+
+    public static async Task<int> ExecuteRenumberAsync(
+        RevitClient client,
+        string rulePath,
+        string planOutputPath,
+        string selector,
+        int? maxChanges,
+        bool dryRun,
+        string outputFormat,
+        TextWriter output)
+    {
+        var normalizedOutput = NormalizeOutput(outputFormat, "table", "json", "markdown");
+        if (normalizedOutput is null)
+        {
+            await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, markdown.");
+            return 1;
+        }
+
+        if (!dryRun)
+        {
+            await output.WriteLineAsync("Error: sheets renumber only creates reviewed plans. Use --dry-run, then apply the saved plan with revitcli plan apply.");
+            return 1;
+        }
+
+        if (string.IsNullOrWhiteSpace(rulePath))
+        {
+            await output.WriteLineAsync("Error: --rule is required.");
+            return 1;
+        }
+
+        if (string.IsNullOrWhiteSpace(planOutputPath))
+        {
+            await output.WriteLineAsync("Error: --plan-output is required.");
+            return 1;
+        }
+
+        LoadedSheetIndex rule;
+        try
+        {
+            rule = SheetIndexStore.Load(rulePath);
+            SheetRenumberPlanner.ValidateRule(rule.Index);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or YamlException)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        var snapshotResult = await client.CaptureSnapshotAsync(new SnapshotRequest
+        {
+            IncludeCategories = Array.Empty<string>().ToList(),
+            IncludeSheets = true,
+            IncludeSchedules = false,
+            SummaryOnly = false,
+        });
+
+        if (!snapshotResult.Success)
+        {
+            await output.WriteLineAsync($"Error: {snapshotResult.Error}");
+            return 4;
+        }
+
+        SheetRenumberPlan plan;
+        try
+        {
+            plan = SheetRenumberPlanner.Create(
+                snapshotResult.Data ?? new ModelSnapshot(),
+                selector,
+                rule,
+                planOutputPath);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await output.WriteLineAsync($"Error: {ex.Message}");
+            return 1;
+        }
+
+        if (maxChanges.HasValue && maxChanges.Value < 1)
+        {
+            await output.WriteLineAsync("Error: --max-changes must be at least 1.");
+            return 1;
+        }
+
+        if (maxChanges.HasValue && plan.Summary.ActionCount > maxChanges.Value)
+        {
+            await output.WriteLineAsync(
+                $"Error: plan has {plan.Summary.ActionCount} change(s), exceeds --max-changes {maxChanges.Value}.");
+            return 1;
+        }
+
+        SheetRenumberPlanStore.Save(planOutputPath, plan);
+
+        switch (normalizedOutput)
+        {
+            case "json":
+                await output.WriteLineAsync(JsonSerializer.Serialize(plan, JsonOptions));
+                break;
+            case "markdown":
+                await output.WriteLineAsync(RenderRenumberPlanMarkdown(plan, planOutputPath));
+                break;
+            default:
+                await output.WriteLineAsync(RenderRenumberPlanTable(plan, planOutputPath));
+                break;
+        }
+
+        return plan.Summary.ActionCount == 0 ? 2 : 0;
     }
 
     public static async Task<int> ExecuteIndexInitAsync(
@@ -347,6 +592,157 @@ public static class SheetsCommand
         return writer.ToString().TrimEnd();
     }
 
+    private static string RenderIssuePlanTable(SheetIssuePlan plan, string planOutputPath)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("Sheet issue metadata dry-run plan");
+        writer.WriteLine($"Plan: {Path.GetFullPath(planOutputPath)}");
+        writer.WriteLine($"Selector: {plan.Selector}");
+        writer.WriteLine($"Issue: {plan.IssueCode} / {plan.IssueDate}");
+        writer.WriteLine($"Actions: {plan.Summary.ActionCount}, skipped: {plan.Summary.SkippedCount}, matched sheets: {plan.Summary.MatchedSheets}");
+        writer.WriteLine();
+
+        if (plan.Actions.Count == 0)
+        {
+            writer.WriteLine("No sheet metadata changes planned.");
+        }
+        else
+        {
+            writer.WriteLine($"{"Sheet",-18} {"Parameter",-24} Old -> New");
+            writer.WriteLine(new string('-', 100));
+            foreach (var action in plan.Actions.Take(20))
+            {
+                writer.WriteLine(
+                    $"{Trim($"{action.SheetNumber} {action.SheetName}".Trim(), 18),-18} {Trim(action.Parameter, 24),-24} \"{action.OldValue}\" -> \"{action.NewValue}\"");
+            }
+
+            if (plan.Actions.Count > 20)
+                writer.WriteLine($"... and {plan.Actions.Count - 20} more action(s).");
+        }
+
+        writer.WriteLine();
+        writer.WriteLine($"Review: {plan.Commands.Show}");
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderIssuePlanMarkdown(SheetIssuePlan plan, string planOutputPath)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Sheet Issue Metadata Plan");
+        writer.WriteLine();
+        writer.WriteLine("- Schema: `sheet-issue-plan.v1`");
+        writer.WriteLine($"- Plan: `{EscapeInlineCode(Path.GetFullPath(planOutputPath))}`");
+        writer.WriteLine($"- Selector: `{EscapeInlineCode(plan.Selector)}`");
+        writer.WriteLine($"- Issue code: `{EscapeInlineCode(plan.IssueCode)}`");
+        writer.WriteLine($"- Issue date: `{EscapeInlineCode(plan.IssueDate)}`");
+        writer.WriteLine($"- Actions: `{plan.Summary.ActionCount}`");
+        writer.WriteLine($"- Skipped: `{plan.Summary.SkippedCount}`");
+        writer.WriteLine();
+
+        if (plan.Actions.Count > 0)
+        {
+            writer.WriteLine("| Sheet | Parameter | Old | New |");
+            writer.WriteLine("| --- | --- | --- | --- |");
+            foreach (var action in plan.Actions.Take(30))
+            {
+                writer.WriteLine(
+                    $"| {EscapeTableCell($"{action.SheetNumber} {action.SheetName}".Trim())} | `{EscapeInlineCode(action.Parameter)}` | {EscapeTableCell(action.OldValue)} | {EscapeTableCell(action.NewValue)} |");
+            }
+
+            writer.WriteLine();
+        }
+
+        if (plan.Skipped.Count > 0)
+        {
+            writer.WriteLine("## Skipped");
+            writer.WriteLine();
+            writer.WriteLine("| Sheet | Key | Reason |");
+            writer.WriteLine("| --- | --- | --- |");
+            foreach (var skipped in plan.Skipped.Take(30))
+            {
+                writer.WriteLine(
+                    $"| {EscapeTableCell($"{skipped.SheetNumber} {skipped.SheetName}".Trim())} | `{EscapeInlineCode(skipped.Key)}` | {EscapeTableCell(skipped.Message)} |");
+            }
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderRenumberPlanTable(SheetRenumberPlan plan, string planOutputPath)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("Sheet renumber dry-run plan");
+        writer.WriteLine($"Plan: {Path.GetFullPath(planOutputPath)}");
+        writer.WriteLine($"Rule: {plan.RulePath}");
+        writer.WriteLine($"Selector: {plan.Selector}");
+        writer.WriteLine($"Actions: {plan.Summary.ActionCount}, skipped: {plan.Summary.SkippedCount}, matched sheets: {plan.Summary.MatchedSheets}");
+        writer.WriteLine();
+
+        if (plan.Actions.Count == 0)
+        {
+            writer.WriteLine("No sheet renumber changes planned.");
+        }
+        else
+        {
+            writer.WriteLine($"{"Sheet",-18} Old -> New");
+            writer.WriteLine(new string('-', 80));
+            foreach (var action in plan.Actions.Take(20))
+            {
+                writer.WriteLine(
+                    $"{Trim($"{action.SheetNumber} {action.SheetName}".Trim(), 18),-18} \"{action.OldNumber}\" -> \"{action.NewNumber}\"");
+            }
+
+            if (plan.Actions.Count > 20)
+                writer.WriteLine($"... and {plan.Actions.Count - 20} more action(s).");
+        }
+
+        writer.WriteLine();
+        writer.WriteLine($"Review: {plan.Commands.Show}");
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderRenumberPlanMarkdown(SheetRenumberPlan plan, string planOutputPath)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Sheet Renumber Plan");
+        writer.WriteLine();
+        writer.WriteLine("- Schema: `sheet-renumber-plan.v1`");
+        writer.WriteLine($"- Plan: `{EscapeInlineCode(Path.GetFullPath(planOutputPath))}`");
+        writer.WriteLine($"- Rule: `{EscapeInlineCode(plan.RulePath)}`");
+        writer.WriteLine($"- Selector: `{EscapeInlineCode(plan.Selector)}`");
+        writer.WriteLine($"- Actions: `{plan.Summary.ActionCount}`");
+        writer.WriteLine($"- Skipped: `{plan.Summary.SkippedCount}`");
+        writer.WriteLine();
+
+        if (plan.Actions.Count > 0)
+        {
+            writer.WriteLine("| Sheet | Old number | New number |");
+            writer.WriteLine("| --- | --- | --- |");
+            foreach (var action in plan.Actions.Take(30))
+            {
+                writer.WriteLine(
+                    $"| {EscapeTableCell($"{action.SheetNumber} {action.SheetName}".Trim())} | {EscapeTableCell(action.OldNumber)} | {EscapeTableCell(action.NewNumber)} |");
+            }
+
+            writer.WriteLine();
+        }
+
+        if (plan.Skipped.Count > 0)
+        {
+            writer.WriteLine("## Skipped");
+            writer.WriteLine();
+            writer.WriteLine("| Sheet | Reason | Message |");
+            writer.WriteLine("| --- | --- | --- |");
+            foreach (var skipped in plan.Skipped.Take(30))
+            {
+                writer.WriteLine(
+                    $"| {EscapeTableCell($"{skipped.SheetNumber} {skipped.SheetName}".Trim())} | `{EscapeInlineCode(skipped.Reason)}` | {EscapeTableCell(skipped.Message)} |");
+            }
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
     private static string? NormalizeOutput(string? output, params string[] allowed)
     {
         var normalized = (output ?? allowed[0]).Trim().ToLowerInvariant();
@@ -360,6 +756,12 @@ public static class SheetsCommand
 
         return value[..Math.Max(0, max - 3)] + "...";
     }
+
+    private static string EscapeTableCell(string value) =>
+        (value ?? "").Replace("|", "\\|", StringComparison.Ordinal);
+
+    private static string EscapeInlineCode(string value) =>
+        (value ?? "").Replace("`", "\\`", StringComparison.Ordinal);
 
     private static string Quote(string path) => $"\"{path.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 }

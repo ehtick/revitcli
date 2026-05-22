@@ -176,6 +176,9 @@ public class ApiServer : IDisposable
                 .WithController(() => new SetController(_operations))
                 .WithController(() => new AuditController(_operations))
                 .WithController(() => new ScheduleController(_operations))
+                .WithController(() => new ViewsController(_operations))
+                .WithController(() => new LinksController(_operations))
+                .WithController(() => new ModelMapController(_operations))
                 .WithController(() => new SnapshotController(_operations))
                 .WithController(() => new FamiliesController(_operations)))
             .WithModule(new ActionModule("/", HttpVerbs.Any, ctx =>

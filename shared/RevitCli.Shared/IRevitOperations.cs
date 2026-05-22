@@ -14,6 +14,11 @@ public interface IRevitOperations
     Task<ScheduleInfo[]> ListSchedulesAsync();
     Task<ScheduleData> ExportScheduleAsync(ScheduleExportRequest request);
     Task<ScheduleCreateResult> CreateScheduleAsync(ScheduleCreateRequest request);
+    Task<ViewInfo[]> ListViewsAsync();
+    Task<LinkInfo[]> ListLinksAsync();
+    Task<LinkRepairResult> ApplyLinkRepairAsync(LinkRepairRequest request);
+    Task<ModelMapElementInfo[]> ListModelMapElementsAsync();
+    Task<ModelMapFixResult> ApplyModelMapFixAsync(ModelMapFixRequest request);
     Task<ModelSnapshot> CaptureSnapshotAsync(SnapshotRequest request);
     Task<FamilyInfo[]> ListFamiliesAsync(FamilyListRequest request);
     Task<FamilyPurgeResult> PurgeFamiliesAsync(FamilyPurgeRequest request);

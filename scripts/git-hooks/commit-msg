@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# scripts/git-hooks/commit-msg
+#
+# Reject commits that didn't go through the tick loop, unless they
+# carry one of the allow-list prefixes.
+#
+# Enable along with the pre-commit hook:
+#   git config core.hooksPath scripts/git-hooks
+#
+# Allowed forms:
+#   1. Tick-produced commits          — message body contains `Tick: agent=...`
+#   2. Manual override                — first non-comment line begins with `manual-override:`
+#   3. Git tooling subjects           — `Merge `, `Revert `, `fixup! `, `squash! `, `amend! `
+#
+# Anything else fails. To bypass:
+#   git commit --no-verify           (emergency only; no visible hook marker)
+# or rewrite the message with `manual-override: <reason>`.
+
+set -uo pipefail
+
+MSG_FILE="${1:-}"
+[ -f "$MSG_FILE" ] || exit 0
+
+red()   { printf '\033[31m%s\033[0m\n' "$*"; }
+yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
+
+# First non-comment, non-blank line (git strips comments at commit time,
+# but the hook runs before stripping)
+first_line=$(grep -m1 -E -v '^(#|$)' "$MSG_FILE" 2>/dev/null || true)
+
+# Empty / comments-only message → git will abort the commit on its own
+# with "aborting due to empty commit message". Let it.
+if [ -z "$first_line" ]; then
+  exit 0
+fi
+
+case "$first_line" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*)
+    exit 0
+    ;;
+  "manual-override:"*)
+    yellow "⚠ commit-msg: manual-override accepted."
+    yellow "  Subject: $first_line"
+    yellow "  (Visible in branch history for audit.)"
+    exit 0
+    ;;
+esac
+
+# Look anywhere in body for the Tick marker
+if grep -qE '^Tick: agent=' "$MSG_FILE"; then
+  exit 0
+fi
+
+red "✘ commit-msg: this commit lacks a Tick: marker AND is not"
+red "  prefixed with 'manual-override:'."
+red ""
+red "  Acceptable commit forms in this repo:"
+red "    1. Run via scripts/codex tick (preferred) — the script"
+red "       auto-includes the 'Tick: agent=<name>' line."
+red "    2. Prefix the subject with 'manual-override: <reason>' —"
+red "       accepted with audit trail."
+red "    3. Git tool subjects (Merge / Revert / fixup! / squash! /"
+red "       amend!) are auto-allowed."
+red ""
+red "  This rule ensures every change traces to a feature checkbox."
+red "  See .codex/CONTRACT.md for details."
+red ""
+red "  Emergency bypass: git commit --no-verify (no visible hook marker)."
+
+exit 1

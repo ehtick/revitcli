@@ -1039,6 +1039,292 @@ public class RollbackCommandTests
     }
 
     [Fact]
+    public async Task Execute_SheetIssuePlanReceiptApply_UsesPerParameterRollbackActions()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                operation: "sheet-issue",
+                actions: new List<PlanReceiptRollbackAction>
+                {
+                    new()
+                    {
+                        ElementId = 10,
+                        Param = "Sheet Issue Date",
+                        OldValue = "2026-05-01",
+                        NewValue = "2026-05-20",
+                        Source = "sheet-issue"
+                    }
+                });
+
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 10, Name = "A-101", OldValue = "2026-05-20", NewValue = "2026-05-01" }
+                }
+            }));
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 10, Name = "A-101", OldValue = "2026-05-01", NewValue = "2026-05-01" }
+                }
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("restored 1", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"param\":\"Sheet Issue Date\"", handler.RequestBodies[1]);
+            Assert.Contains("\"value\":\"2026-05-01\"", handler.RequestBodies[2]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_SheetRenumberPlanReceiptApply_UsesPerParameterRollbackActions()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                operation: "sheet-renumber",
+                actions: new List<PlanReceiptRollbackAction>
+                {
+                    new()
+                    {
+                        ElementId = 10,
+                        Param = "Sheet Number",
+                        OldValue = "TMP-001",
+                        NewValue = "A-101",
+                        Source = "sheet-renumber"
+                    }
+                });
+
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 10, Name = "A-101", OldValue = "A-101", NewValue = "TMP-001" }
+                }
+            }));
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 10, Name = "TMP-001", OldValue = "TMP-001", NewValue = "TMP-001" }
+                }
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("restored 1", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"param\":\"Sheet Number\"", handler.RequestBodies[1]);
+            Assert.Contains("\"value\":\"TMP-001\"", handler.RequestBodies[2]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_LinkRepairPlanReceiptApply_UsesLinkRepairRollbackActions()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WriteLinkRepairReceipt(tempDir);
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/links/repair", ApiResponse<LinkRepairResult>.Ok(new LinkRepairResult
+            {
+                Affected = 1,
+                Preview =
+                {
+                    new LinkRepairOperation
+                    {
+                        LinkId = 4101,
+                        LinkTypeId = 4201,
+                        LinkName = "Structural Model",
+                        TypeName = "Structural Model.rvt",
+                        OldPath = @"D:\coordination\new-struct.rvt",
+                        NewPath = @"D:\coordination\old-struct.rvt",
+                        OldLoaded = true,
+                        NewLoaded = false
+                    }
+                }
+            }));
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Restored 1 link repair", writer.ToString());
+            Assert.Contains("\"oldPath\":\"D:\\\\coordination\\\\new-struct.rvt\"", handler.RequestBodies[1]);
+            Assert.Contains("\"newPath\":\"D:\\\\coordination\\\\old-struct.rvt\"", handler.RequestBodies[1]);
+            Assert.Contains("\"dryRun\":false", handler.RequestBodies[1]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_LinkRepairPlanReceiptApply_ShowsManualRecovery_WhenOriginalSourceMissing()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WriteLinkRepairReceipt(tempDir, oldPathExists: false);
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/links/repair", ApiResponse<LinkRepairResult>.Ok(new LinkRepairResult
+            {
+                Failures =
+                {
+                    new CoordinationRepairFailure
+                    {
+                        Id = 4201,
+                        Name = "Structural Model",
+                        Code = "link-validation-failed",
+                        Message = @"New link path does not exist: 'D:\coordination\old-struct.rvt'."
+                    }
+                }
+            }));
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("Manual recovery required", writer.ToString());
+            Assert.Contains(@"D:\coordination\old-struct.rvt", writer.ToString());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_ModelMapPlanReceiptDryRun_UsesModelMapRollbackActions()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WriteModelMapReceipt(tempDir);
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/model/map/fix", ApiResponse<ModelMapFixResult>.Ok(new ModelMapFixResult
+            {
+                Affected = 1,
+                Preview =
+                {
+                    new ModelMapFixOperation
+                    {
+                        ElementId = 5101,
+                        ElementName = "Room 101",
+                        Category = "Rooms",
+                        Field = "workset",
+                        OldValue = "Architecture",
+                        NewValue = "Interior"
+                    }
+                }
+            }));
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: true, yes: false, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Dry run: 1 model map rollback", writer.ToString());
+            Assert.Contains("\"oldValue\":\"Architecture\"", handler.RequestBodies[1]);
+            Assert.Contains("\"newValue\":\"Interior\"", handler.RequestBodies[1]);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_ModelMapPlanReceiptDryRun_AllowsClearedPhaseDemolishedRollback()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WriteModelMapReceipt(
+                tempDir,
+                field: "phaseDemolished",
+                oldValue: null,
+                newValue: "Existing");
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/model/map/fix", ApiResponse<ModelMapFixResult>.Ok(new ModelMapFixResult
+            {
+                Affected = 1,
+                Preview =
+                {
+                    new ModelMapFixOperation
+                    {
+                        ElementId = 5101,
+                        ElementName = "Room 101",
+                        Category = "Rooms",
+                        Field = "phaseDemolished",
+                        OldValue = "Existing",
+                        NewValue = ""
+                    }
+                }
+            }));
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: true, yes: false, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("\"field\":\"phaseDemolished\"", handler.RequestBodies[1]);
+            Assert.Contains("\"oldValue\":\"Existing\"", handler.RequestBodies[1]);
+            Assert.Contains("\"newValue\":\"\"", handler.RequestBodies[1]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Execute_PlanReceiptApplyWithoutYes_ReturnsOne_AndDoesNotCallApi()
     {
         var tempDir = CreateTempDirectory();
@@ -1342,6 +1628,72 @@ public class RollbackCommandTests
                 }
             },
             Preview = preview ?? new List<SetPreviewItem>()
+        };
+
+        File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt, JsonOptions));
+        return receiptPath;
+    }
+
+    private static string WriteLinkRepairReceipt(string tempDir, bool oldPathExists = true)
+    {
+        var receiptPath = Path.Combine(tempDir, "link-repair.receipt.json");
+        var receipt = new PlanReceipt
+        {
+            Operation = "link-repair",
+            PlanPath = Path.Combine(tempDir, "link-repair.plan.json"),
+            ModelPath = "test.rvt",
+            DocumentName = "test",
+            DocumentVersion = "2026",
+            Affected = 1,
+            LinkRepairActions =
+            {
+                new PlanReceiptLinkRepairAction
+                {
+                    LinkId = 4101,
+                    LinkTypeId = 4201,
+                    LinkName = "Structural Model",
+                    TypeName = "Structural Model.rvt",
+                    OldPath = @"D:\coordination\old-struct.rvt",
+                    NewPath = @"D:\coordination\new-struct.rvt",
+                    OldLoaded = false,
+                    NewLoaded = true,
+                    OldPathExists = oldPathExists,
+                    NewPathExists = true
+                }
+            }
+        };
+
+        File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt, JsonOptions));
+        return receiptPath;
+    }
+
+    private static string WriteModelMapReceipt(
+        string tempDir,
+        string field = "workset",
+        string? oldValue = "Interior",
+        string newValue = "Architecture")
+    {
+        var receiptPath = Path.Combine(tempDir, "model-map-fix.receipt.json");
+        var receipt = new PlanReceipt
+        {
+            Operation = "model-map-fix",
+            PlanPath = Path.Combine(tempDir, "model-map-fix.plan.json"),
+            ModelPath = "test.rvt",
+            DocumentName = "test",
+            DocumentVersion = "2026",
+            Affected = 1,
+            ModelMapActions =
+            {
+                new PlanReceiptModelMapAction
+                {
+                    ElementId = 5101,
+                    ElementName = "Room 101",
+                    Category = "Rooms",
+                    Field = field,
+                    OldValue = oldValue,
+                    NewValue = newValue
+                }
+            }
         };
 
         File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt, JsonOptions));

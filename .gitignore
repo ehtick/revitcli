@@ -8,3 +8,10 @@ nupkg/
 .DS_Store
 .artifacts/
 .revitcli/
+
+# Codex auto-iteration loop — ephemeral state only.
+# .codex/agents/, .codex/prompts/, .codex/features/, .codex/config.toml are tracked.
+.codex/state/*
+!.codex/state/.gitkeep
+!.codex/state/README.md
+.codex/HALT

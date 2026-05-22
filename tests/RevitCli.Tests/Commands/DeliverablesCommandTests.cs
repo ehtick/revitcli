@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Commands;
+using RevitCli.Shared;
 using Xunit;
 
 namespace RevitCli.Tests.Commands;
@@ -295,6 +296,148 @@ public class DeliverablesCommandTests
     }
 
     [Fact]
+    public async Task Plan_Json_ExpandsProfilePipelinesAndExports()
+    {
+        var dir = TempDir();
+        try
+        {
+            var profilePath = WriteProfile(dir, """
+version: 1
+defaults:
+  outputDir: ./deliverables
+checks:
+  quick:
+    failOn: error
+    auditRules:
+      - rule: sheets-missing-info
+exports:
+  pdf:
+    format: pdf
+    sheets: [A101, A102]
+    outputDir: ./deliverables/pdf
+  dwg:
+    format: dwg
+    sheets: [all]
+    outputDir: ./deliverables/dwg
+publish:
+  default:
+    precheck: quick
+    presets:
+      - pdf
+      - dwg
+""");
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecutePlanAsync(profilePath, null, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.Equal("delivery-plan.v1", root.GetProperty("schemaVersion").GetString());
+            Assert.True(root.GetProperty("success").GetBoolean());
+            Assert.Equal(1, root.GetProperty("pipelineCount").GetInt32());
+            Assert.Equal(2, root.GetProperty("exportCount").GetInt32());
+            Assert.Contains(root.GetProperty("commandPaths").EnumerateArray(), command =>
+                command.GetString()!.Contains("revitcli publish default --profile"));
+
+            var pipeline = root.GetProperty("pipelines").EnumerateArray().Single();
+            Assert.Equal("quick", pipeline.GetProperty("precheck").GetString());
+            Assert.Contains(pipeline.GetProperty("exports").EnumerateArray(), export =>
+                export.GetProperty("preset").GetString() == "pdf" &&
+                export.GetProperty("selector").GetString() == "sheets: A101,A102");
+            Assert.Contains(root.GetProperty("risks").EnumerateArray(), risk =>
+                risk.GetProperty("code").GetString() == "preset-all-sheets");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Plan_Markdown_WithSinceBaseline_PrintsBaselineAndSheetEstimates()
+    {
+        var dir = TempDir();
+        try
+        {
+            var profilePath = WriteProfile(dir, """
+version: 1
+exports:
+  pdf:
+    format: pdf
+    sheets: [all]
+    outputDir: ./deliverables/pdf
+publish:
+  issue:
+    presets:
+      - pdf
+""");
+            var baselinePath = WriteBaseline(dir, "baseline.json", "A101", "A102");
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecutePlanAsync(profilePath, baselinePath, "markdown", writer);
+
+            var output = writer.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("# Delivery Plan", output);
+            Assert.Contains("- Schema: `delivery-plan.v1`", output);
+            Assert.Contains("## Baseline", output);
+            Assert.Contains("- Sheets: `2`", output);
+            Assert.Contains("| issue | pdf | pdf | sheets: all | 2 |", output);
+            Assert.Contains("revitcli publish issue --profile", output);
+            Assert.Contains("--since", output);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Plan_MissingPreset_ReturnsFailure()
+    {
+        var dir = TempDir();
+        try
+        {
+            var profilePath = WriteProfile(dir, """
+version: 1
+publish:
+  default:
+    presets:
+      - missing
+""");
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecutePlanAsync(profilePath, null, "json", writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.False(root.GetProperty("valid").GetBoolean());
+            Assert.Contains(root.GetProperty("risks").EnumerateArray(), risk =>
+                risk.GetProperty("code").GetString() == "preset-missing");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Plan_RequiresProfile()
+    {
+        var writer = new StringWriter();
+
+        var exitCode = await DeliverablesCommand.ExecutePlanAsync(null, null, "json", writer);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        Assert.Equal("delivery-plan.v1", json.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.Contains(json.RootElement.GetProperty("risks").EnumerateArray(), risk =>
+            risk.GetProperty("code").GetString() == "delivery-plan-failed");
+    }
+
+    [Fact]
     public async Task Bundle_DryRunMarkdown_PrintsFileTable()
     {
         var dir = TempDir();
@@ -535,6 +678,38 @@ public class DeliverablesCommandTests
     {
         var path = Path.Combine(Path.GetTempPath(), $"revitcli_deliverables_{System.Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static string WriteProfile(string dir, string body)
+    {
+        var path = Path.Combine(dir, ".revitcli.yml");
+        File.WriteAllText(path, body);
+        return path;
+    }
+
+    private static string WriteBaseline(string dir, string fileName, params string[] sheetNumbers)
+    {
+        var path = Path.Combine(dir, fileName);
+        var snapshot = new ModelSnapshot
+        {
+            TakenAt = "2026-05-20T00:00:00Z",
+            Revit =
+            {
+                Document = "sample.rvt",
+                DocumentPath = Path.Combine(dir, "sample.rvt")
+            },
+            Sheets = sheetNumbers.Select(number => new SnapshotSheet
+            {
+                Number = number,
+                Name = $"Sheet {number}"
+            }).ToList(),
+            Summary =
+            {
+                SheetCount = sheetNumbers.Length
+            }
+        };
+        File.WriteAllText(path, JsonSerializer.Serialize(snapshot));
         return path;
     }
 

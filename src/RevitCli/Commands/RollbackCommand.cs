@@ -190,6 +190,28 @@ public static class RollbackCommand
             return await ExecuteAsync(client, receipt.BaselinePath, dryRun, yes, maxChanges, output);
         }
 
+        if (string.Equals(receipt.Operation, "link-repair", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ExecuteLinkRepairReceiptRollbackAsync(
+                client,
+                receipt,
+                dryRun,
+                yes,
+                maxChanges,
+                output);
+        }
+
+        if (string.Equals(receipt.Operation, "model-map-fix", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ExecuteModelMapReceiptRollbackAsync(
+                client,
+                receipt,
+                dryRun,
+                yes,
+                maxChanges,
+                output);
+        }
+
         var rollbackWrites = BuildReceiptRollbackWrites(receipt).ToList();
         if (rollbackWrites.Count == 0)
         {
@@ -212,6 +234,196 @@ public static class RollbackCommand
                 requireIdentity: false,
                 output: output));
     }
+
+    private static async Task<int> ExecuteLinkRepairReceiptRollbackAsync(
+        RevitClient client,
+        PlanReceipt receipt,
+        bool dryRun,
+        bool yes,
+        int maxChanges,
+        TextWriter output)
+    {
+        if (receipt.LinkRepairActions.Count == 0)
+        {
+            await output.WriteLineAsync("Error: link repair receipt does not include rollback actions.");
+            return 1;
+        }
+
+        if (receipt.LinkRepairActions.Count > maxChanges)
+        {
+            await output.WriteLineAsync($"Error: link repair receipt has {receipt.LinkRepairActions.Count} action(s), exceeds --max-changes {maxChanges}.");
+            return 1;
+        }
+
+        if (!dryRun && !yes)
+        {
+            await output.WriteLineAsync("Error: use --yes to apply rollback changes.");
+            return 1;
+        }
+
+        if (!await TryValidateCurrentDocumentAsync(
+                client,
+                receipt.ModelPath,
+                receipt.DocumentName,
+                requireIdentity: false,
+                output: output))
+        {
+            return 1;
+        }
+
+        var request = new LinkRepairRequest
+        {
+            DryRun = dryRun,
+            Actions = receipt.LinkRepairActions.Select(ReverseLinkRepairAction).ToList()
+        };
+        foreach (var action in request.Actions)
+            await output.WriteLineAsync($"[{action.LinkTypeId ?? action.LinkId}] {action.LinkName}: path \"{action.OldPath}\" -> \"{action.NewPath}\", loaded {action.OldLoaded} -> {action.NewLoaded}");
+
+        var response = await client.ApplyLinkRepairAsync(request);
+        if (!response.Success || response.Data == null)
+        {
+            await output.WriteLineAsync($"Error: {response.Error ?? "link repair rollback failed"}");
+            await WriteLinkRepairManualRecoveryGuidanceAsync(
+                output,
+                request.Actions,
+                response.Error == null ? Array.Empty<string>() : new[] { response.Error });
+            return 1;
+        }
+
+        if (response.Data.Failures.Count > 0)
+        {
+            foreach (var failure in response.Data.Failures)
+                await output.WriteLineAsync($"Error: [{failure.Id}] {failure.Name}: {failure.Message}");
+            await WriteLinkRepairManualRecoveryGuidanceAsync(
+                output,
+                request.Actions,
+                response.Data.Failures.Select(failure => failure.Message));
+            return 1;
+        }
+
+        await output.WriteLineAsync(dryRun
+            ? $"Dry run: {response.Data.Affected} link repair rollback action(s)."
+            : $"Restored {response.Data.Affected} link repair action(s).");
+        return 0;
+    }
+
+    private static async Task WriteLinkRepairManualRecoveryGuidanceAsync(
+        TextWriter output,
+        IReadOnlyList<LinkRepairOperation> rollbackActions,
+        IEnumerable<string> messages)
+    {
+        var messageList = messages.ToArray();
+        var missingPaths = rollbackActions
+            .Where(action => !action.NewPathExists)
+            .Select(action => action.NewPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var looksLikeMissingPath = missingPaths.Length > 0 ||
+            messageList.Any(message => message.Contains("path does not exist", StringComparison.OrdinalIgnoreCase) ||
+                                       message.Contains("file does not exist", StringComparison.OrdinalIgnoreCase));
+        if (!looksLikeMissingPath)
+            return;
+
+        await output.WriteLineAsync(
+            "Manual recovery required: restore the original linked source file before retrying rollback, or relink/unload it manually in Revit and record that recovery in the handoff.");
+        foreach (var path in missingPaths.Take(5))
+            await output.WriteLineAsync($"  Missing original source: {path}");
+    }
+
+    private static async Task<int> ExecuteModelMapReceiptRollbackAsync(
+        RevitClient client,
+        PlanReceipt receipt,
+        bool dryRun,
+        bool yes,
+        int maxChanges,
+        TextWriter output)
+    {
+        if (receipt.ModelMapActions.Count == 0)
+        {
+            await output.WriteLineAsync("Error: model map receipt does not include rollback actions.");
+            return 1;
+        }
+
+        if (receipt.ModelMapActions.Count > maxChanges)
+        {
+            await output.WriteLineAsync($"Error: model map receipt has {receipt.ModelMapActions.Count} action(s), exceeds --max-changes {maxChanges}.");
+            return 1;
+        }
+
+        if (!dryRun && !yes)
+        {
+            await output.WriteLineAsync("Error: use --yes to apply rollback changes.");
+            return 1;
+        }
+
+        if (!await TryValidateCurrentDocumentAsync(
+                client,
+                receipt.ModelPath,
+                receipt.DocumentName,
+                requireIdentity: false,
+                output: output))
+        {
+            return 1;
+        }
+
+        var request = new ModelMapFixRequest
+        {
+            DryRun = dryRun,
+            Actions = receipt.ModelMapActions.Select(ReverseModelMapAction).ToList()
+        };
+        foreach (var action in request.Actions)
+            await output.WriteLineAsync($"[{action.ElementId}] {action.ElementName} {action.Field}: \"{action.OldValue}\" -> \"{action.NewValue}\"");
+
+        var response = await client.ApplyModelMapFixAsync(request);
+        if (!response.Success || response.Data == null)
+        {
+            await output.WriteLineAsync($"Error: {response.Error ?? "model map rollback failed"}");
+            return 1;
+        }
+
+        if (response.Data.Failures.Count > 0)
+        {
+            foreach (var failure in response.Data.Failures)
+                await output.WriteLineAsync($"Error: [{failure.Id}] {failure.Name}: {failure.Message}");
+            return 1;
+        }
+
+        await output.WriteLineAsync(dryRun
+            ? $"Dry run: {response.Data.Affected} model map rollback action(s)."
+            : $"Restored {response.Data.Affected} model map value(s).");
+        return 0;
+    }
+
+    private static LinkRepairOperation ReverseLinkRepairAction(PlanReceiptLinkRepairAction action) =>
+        new()
+        {
+            LinkId = action.LinkId,
+            LinkTypeId = action.LinkTypeId,
+            LinkName = action.LinkName,
+            TypeName = action.TypeName,
+            OldPath = action.NewPath,
+            NewPath = action.OldPath,
+            OldLoaded = action.NewLoaded,
+            NewLoaded = action.OldLoaded,
+            OldPathExists = action.NewPathExists,
+            NewPathExists = action.OldPathExists,
+            OldPathLastWriteTimeUtc = action.NewPathLastWriteTimeUtc,
+            NewPathLastWriteTimeUtc = action.OldPathLastWriteTimeUtc,
+            OldPathSizeBytes = action.NewPathSizeBytes,
+            NewPathSizeBytes = action.OldPathSizeBytes
+        };
+
+    private static ModelMapFixOperation ReverseModelMapAction(PlanReceiptModelMapAction action) =>
+        new()
+        {
+            ElementId = action.ElementId,
+            ElementName = action.ElementName,
+            Category = action.Category,
+            Field = action.Field,
+            OldValue = action.NewValue,
+            NewValue = action.OldValue ?? ""
+        };
 
     private static string? TryReadStringSchemaVersion(string json)
     {
