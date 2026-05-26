@@ -194,6 +194,10 @@ schedules:
         WriteIssueSpec();
         var outputDir = Path.Combine(_root, "exports");
         var manifestPath = Path.Combine(_root, "exports", "manifest.json");
+        var documentPath = Path.GetFullPath(Path.Combine(
+            Path.GetPathRoot(outputDir) ?? Path.DirectorySeparatorChar.ToString(),
+            "models",
+            "Demo.rvt"));
         var client = MakeClient(
             schedules: new[]
             {
@@ -212,7 +216,7 @@ schedules:
             {
                 RevitVersion = "2026",
                 DocumentName = "Demo.rvt",
-                DocumentPath = "/models/Demo.rvt"
+                DocumentPath = documentPath
             });
         var output = new StringWriter();
 
@@ -234,7 +238,7 @@ schedules:
         Assert.Equal("issue", json.RootElement.GetProperty("profile").GetString());
         Assert.Equal(Path.GetFullPath(manifestPath), json.RootElement.GetProperty("manifestPath").GetString());
         Assert.Equal("csv", json.RootElement.GetProperty("format").GetString());
-        Assert.Equal("/models/Demo.rvt", json.RootElement.GetProperty("modelPath").GetString());
+        Assert.Equal(documentPath, json.RootElement.GetProperty("modelPath").GetString());
         Assert.Equal("Demo.rvt", json.RootElement.GetProperty("documentName").GetString());
         Assert.Equal("2026", json.RootElement.GetProperty("documentVersion").GetString());
         Assert.Contains("schedules batch-export", json.RootElement.GetProperty("command").GetString(), StringComparison.OrdinalIgnoreCase);
@@ -258,7 +262,7 @@ schedules:
         Assert.Equal("csv", operation.GetProperty("category").GetString());
         Assert.Equal("succeeded", operation.GetProperty("status").GetString());
         Assert.Equal("Demo.rvt", operation.GetProperty("modelIdentity").GetString());
-        Assert.Equal("/models/Demo.rvt", operation.GetProperty("modelPath").GetString());
+        Assert.Equal(documentPath, operation.GetProperty("modelPath").GetString());
         Assert.Equal("2026", operation.GetProperty("revitVersion").GetString());
         Assert.Equal(Path.GetFullPath(manifestPath), operation.GetProperty("artifactPath").GetString());
         Assert.Contains(operation.GetProperty("args").EnumerateArray(), arg => arg.GetString() == "batch-export");

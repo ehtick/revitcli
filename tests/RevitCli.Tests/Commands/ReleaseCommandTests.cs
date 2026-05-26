@@ -1921,8 +1921,12 @@ Run `release verify --strict`.
   }
 }
 """;
-        var line = $"    \"{fieldName}\": true,{Environment.NewLine}";
-        using var document = JsonDocument.Parse(json.Replace(line, "", StringComparison.Ordinal));
+        var fieldLine = $"\"{fieldName}\": true,";
+        var withoutField = string.Join(
+            '\n',
+            json.Split('\n')
+                .Where(line => !string.Equals(line.Trim().TrimEnd('\r'), fieldLine, StringComparison.Ordinal)));
+        using var document = JsonDocument.Parse(withoutField);
 
         Assert.False(ReleaseVerifier.EvaluateV60WorkbenchGateCheck(
             document.RootElement,
@@ -2519,6 +2523,7 @@ This local controlled pilot packet references .artifacts/live-smoke/revit2026-v6
   }
 }
 """);
+        WriteLocalControlledPilotSourceBundle(root);
         WriteFile(root, "docs/smoke/v6.0/ledger-query.md", """
 # RevitCli v6.0 Ledger Query Portable Smoke
 
@@ -2652,6 +2657,25 @@ $staged = 'staged'
 function Test-PathListContains { }
 """);
         WriteFile(root, "scripts/smoke-revit.ps1", "2024 2025 2026 V4Workbench workbench\", \"verify schedule\", \"export");
+    }
+
+    private static void WriteLocalControlledPilotSourceBundle(string root)
+    {
+        const string bundle = ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525";
+        WriteFile(root, $"{bundle}/outputs/doctor.json", """{"success":true,"targetRevitYear":2026}""");
+        WriteFile(root, $"{bundle}/outputs/status.json", """{"revitYear":2026,"documentName":"revit_cli"}""");
+        WriteFile(root, $"{bundle}/outputs/workbench.json", """{"success":true,"issueCount":0}""");
+        WriteFile(root, $"{bundle}/outputs/release.json", """{"success":true,"errorCount":0,"warningCount":0}""");
+        WriteFile(root, $"{bundle}/outputs/ledger-query.json", """{"schemaVersion":"ledger-query.v1","summary":{"totalOperations":1,"issueCount":0}}""");
+        WriteFile(root, $"{bundle}/outputs/ledger-validate.json", """{"schemaVersion":"ledger-validate.v1","valid":true,"summary":{"operationCount":1,"issueCount":0,"errorCount":0}}""");
+        WriteFile(root, $"{bundle}/outputs/ledger-stats.json", """{"schemaVersion":"ledger-stats.v1","summary":{"operationCount":1,"issueCount":0}}""");
+        WriteFile(root, $"{bundle}/outputs/ledger-timeline.json", """{"schemaVersion":"ledger-timeline.v1","summary":{"operationCount":1,"bucketCount":1,"issueCount":0}}""");
+        WriteFile(root, $"{bundle}/outputs/journal-sign.json", """{"entryCount":1,"rootHash":"b915f6cf6ffea40425cb16bf51bba858339e8e00059f07455b919475968d24fe"}""");
+        WriteFile(root, $"{bundle}/outputs/journal-verify.json", """{"isValid":true,"entryCount":1,"rootHash":"b915f6cf6ffea40425cb16bf51bba858339e8e00059f07455b919475968d24fe","errors":[]}""");
+        WriteFile(root, $"{bundle}/project/.revitcli/ledger/operations.jsonl", "{}\n");
+        WriteFile(root, $"{bundle}/project/.revitcli/analytics/ledger-stats.json", "{}\n");
+        WriteFile(root, $"{bundle}/project/.revitcli/analytics/ledger-timeline.json", "{}\n");
+        WriteFile(root, $"{bundle}/project/.revitcli/journal.jsonl.sig", "signature\n");
     }
 
     private static void WriteOfficeStandardPack(string root)

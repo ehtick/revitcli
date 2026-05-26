@@ -99,6 +99,7 @@ internal static partial class ReleaseVerifier
             Tag = NormalizeTag(options.Tag),
             Strict = options.Strict,
         };
+        var workbenchVerify = new Lazy<WorkbenchVerifyRun>(() => RunWorkbenchVerify(root));
 
         CheckRequiredFiles(root, report);
         CheckVersion(root, report);
@@ -111,9 +112,9 @@ internal static partial class ReleaseVerifier
         CheckSmokeDocs(root, report);
         CheckV5RcGate(root, report);
         CheckV54StandardsRuntimePack(root, report);
-        CheckV55ViewCoordinationHygiene(root, report);
-        CheckV56TeamPilotPack(root, report);
-        CheckV60LocalBimOpsContract(root, report);
+        CheckV55ViewCoordinationHygiene(root, report, workbenchVerify);
+        CheckV56TeamPilotPack(root, report, workbenchVerify);
+        CheckV60LocalBimOpsContract(root, report, workbenchVerify);
 
         report.ErrorCount = report.Checks.Count(check => check.Status == ReleaseVerifyStatus.Error);
         report.WarningCount = report.Checks.Count(check => check.Status == ReleaseVerifyStatus.Warning);
@@ -703,7 +704,10 @@ internal static partial class ReleaseVerifier
         }
     }
 
-    private static void CheckV55ViewCoordinationHygiene(string root, ReleaseVerifyReport report)
+    private static void CheckV55ViewCoordinationHygiene(
+        string root,
+        ReleaseVerifyReport report,
+        Lazy<WorkbenchVerifyRun> workbenchVerify)
     {
         var gapPath = Path.Combine(root, ToNativePath("docs/smoke/v5.5/gap-report.md"));
         if (!File.Exists(gapPath))
@@ -754,21 +758,28 @@ internal static partial class ReleaseVerifier
                 : $"links repair no-coordinate plan JSON evidence failed: {linkJsonEvidence.Evidence}",
             "src/RevitCli/Commands/LinksCommand.cs");
 
-        AddV55WorkbenchGate(root, report);
+        AddV55WorkbenchGate(root, report, workbenchVerify);
     }
 
-    private static void AddV55WorkbenchGate(string root, ReleaseVerifyReport report)
+    private static void AddV55WorkbenchGate(
+        string root,
+        ReleaseVerifyReport report,
+        Lazy<WorkbenchVerifyRun> workbenchVerify)
     {
+        var run = workbenchVerify.Value;
+        if (run.Error is not null)
+        {
+            report.Add(
+                "v5.5:workbench-gate",
+                ReleaseVerifyStatus.Error,
+                $"Could not evaluate workbench v2 v5.5 gate for this release root: {run.Error.Message}",
+                run.Source);
+            return;
+        }
+
         try
         {
-            var source = WorkbenchVerifySource(root);
-            var output = new StringWriter();
-            var exitCode = WorkbenchCommand.ExecuteVerifyAsync(
-                output,
-                "json",
-                root,
-                "workbench-contract.v2").GetAwaiter().GetResult();
-            using var document = JsonDocument.Parse(output.ToString());
+            using var document = JsonDocument.Parse(run.Output);
             string? status = null;
             string? evidence = null;
             foreach (var check in document.RootElement.GetProperty("checks").EnumerateArray())
@@ -786,9 +797,9 @@ internal static partial class ReleaseVerifier
                 "v5.5:workbench-gate",
                 success ? ReleaseVerifyStatus.Ok : ReleaseVerifyStatus.Error,
                 success
-                    ? $"scoped workbench v2 v5.5 gate passes for release root {root}: {evidence} (overall workbench exit {exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)} ignored by design; scoped v5.5 gate status={status})."
-                    : $"scoped workbench v2 v5.5 gate did not pass for release root {root}: status={status ?? "missing"} evidence={evidence ?? "n/a"} exit={exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
-                source);
+                    ? $"scoped workbench v2 v5.5 gate passes for release root {root}: {evidence} (overall workbench exit {run.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)} ignored by design; scoped v5.5 gate status={status})."
+                    : $"scoped workbench v2 v5.5 gate did not pass for release root {root}: status={status ?? "missing"} evidence={evidence ?? "n/a"} exit={run.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
+                run.Source);
         }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException or IOException or UnauthorizedAccessException)
         {
@@ -796,11 +807,14 @@ internal static partial class ReleaseVerifier
                 "v5.5:workbench-gate",
                 ReleaseVerifyStatus.Error,
                 $"Could not evaluate workbench v2 v5.5 gate for this release root: {ex.Message}",
-                WorkbenchVerifySource(root));
+                run.Source);
         }
     }
 
-    private static void CheckV56TeamPilotPack(string root, ReleaseVerifyReport report)
+    private static void CheckV56TeamPilotPack(
+        string root,
+        ReleaseVerifyReport report,
+        Lazy<WorkbenchVerifyRun> workbenchVerify)
     {
         var gapPath = Path.Combine(root, ToNativePath("docs/smoke/v5.6/gap-report.md"));
         if (!File.Exists(gapPath))
@@ -858,21 +872,28 @@ internal static partial class ReleaseVerifier
                 "profiles/team-pilot/.revitcli/team-policy.yml");
         }
 
-        AddV56WorkbenchGate(root, report);
+        AddV56WorkbenchGate(root, report, workbenchVerify);
     }
 
-    private static void AddV56WorkbenchGate(string root, ReleaseVerifyReport report)
+    private static void AddV56WorkbenchGate(
+        string root,
+        ReleaseVerifyReport report,
+        Lazy<WorkbenchVerifyRun> workbenchVerify)
     {
+        var run = workbenchVerify.Value;
+        if (run.Error is not null)
+        {
+            report.Add(
+                "v5.6:workbench-gate",
+                ReleaseVerifyStatus.Error,
+                $"Could not evaluate workbench v2 v5.6 gate for this release root: {run.Error.Message}",
+                run.Source);
+            return;
+        }
+
         try
         {
-            var source = WorkbenchVerifySource(root);
-            var output = new StringWriter();
-            var exitCode = WorkbenchCommand.ExecuteVerifyAsync(
-                output,
-                "json",
-                root,
-                "workbench-contract.v2").GetAwaiter().GetResult();
-            using var document = JsonDocument.Parse(output.ToString());
+            using var document = JsonDocument.Parse(run.Output);
             string? status = null;
             string? evidence = null;
             foreach (var check in document.RootElement.GetProperty("checks").EnumerateArray())
@@ -890,9 +911,9 @@ internal static partial class ReleaseVerifier
                 "v5.6:workbench-gate",
                 success ? ReleaseVerifyStatus.Ok : ReleaseVerifyStatus.Error,
                 success
-                    ? $"scoped workbench v2 v5.6 gate passes for release root {root}: {evidence} (overall workbench exit {exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)} ignored by design; scoped v5.6 gate status={status})."
-                    : $"scoped workbench v2 v5.6 gate did not pass for release root {root}: status={status ?? "missing"} evidence={evidence ?? "n/a"} exit={exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
-                source);
+                    ? $"scoped workbench v2 v5.6 gate passes for release root {root}: {evidence} (overall workbench exit {run.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)} ignored by design; scoped v5.6 gate status={status})."
+                    : $"scoped workbench v2 v5.6 gate did not pass for release root {root}: status={status ?? "missing"} evidence={evidence ?? "n/a"} exit={run.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
+                run.Source);
         }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException or IOException or UnauthorizedAccessException)
         {
@@ -900,11 +921,14 @@ internal static partial class ReleaseVerifier
                 "v5.6:workbench-gate",
                 ReleaseVerifyStatus.Error,
                 $"Could not evaluate workbench v2 v5.6 gate for this release root: {ex.Message}",
-                WorkbenchVerifySource(root));
+                run.Source);
         }
     }
 
-    private static void CheckV60LocalBimOpsContract(string root, ReleaseVerifyReport report)
+    private static void CheckV60LocalBimOpsContract(
+        string root,
+        ReleaseVerifyReport report,
+        Lazy<WorkbenchVerifyRun> workbenchVerify)
     {
         var contractPath = Path.Combine(root, ToNativePath("docs/v6-local-bimops-contract.md"));
         if (!File.Exists(contractPath))
@@ -1049,14 +1073,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:pilot-evidence-template", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/pilot-evidence-template.md; v6.0 office rollout pilot evidence intake is not documented.",
                 "docs/smoke/v6.0/pilot-evidence-template.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var pilotEvidence = ReadText(pilotEvidencePath, report, "v6.0:pilot-evidence-template-readable");
         if (pilotEvidence is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1114,14 +1138,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:local-controlled-pilot-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/local-controlled-pilot-20260525.md; v6.0 local controlled pilot evidence is not recorded.",
                 "docs/smoke/v6.0/local-controlled-pilot-20260525.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var localPilot = ReadText(localPilotPath, report, "v6.0:local-controlled-pilot-doc-readable");
         if (localPilot is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1143,14 +1167,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:standards-spine-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/standards-runtime.md; v6.0 standards runtime behavior is not documented.",
                 "docs/smoke/v6.0/standards-runtime.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var standardsRuntime = ReadText(standardsRuntimePath, report, "v6.0:standards-spine-smoke-doc-readable");
         if (standardsRuntime is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1186,14 +1210,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:issue-spine-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/issue-spine.md; v6.0 issue command spine behavior is not documented.",
                 "docs/smoke/v6.0/issue-spine.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var issueSpine = ReadText(issueSpinePath, report, "v6.0:issue-spine-smoke-doc-readable");
         if (issueSpine is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1231,14 +1255,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:deliverables-spine-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/deliverables-verify.md; v6.0 deliverables verification behavior is not documented.",
                 "docs/smoke/v6.0/deliverables-verify.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var deliverablesVerify = ReadText(deliverablesVerifyPath, report, "v6.0:deliverables-spine-smoke-doc-readable");
         if (deliverablesVerify is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1276,14 +1300,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:ledger-query-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/ledger-query.md; v6.0 ledger query behavior is not documented.",
                 "docs/smoke/v6.0/ledger-query.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var ledgerQuery = ReadText(ledgerQueryPath, report, "v6.0:ledger-query-smoke-doc-readable");
         if (ledgerQuery is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1320,14 +1344,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:ledger-append-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/ledger-append.md; v6.0 ledger append behavior is not documented.",
                 "docs/smoke/v6.0/ledger-append.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var ledgerAppend = ReadText(ledgerAppendPath, report, "v6.0:ledger-append-smoke-doc-readable");
         if (ledgerAppend is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1364,14 +1388,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:ledger-replay-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/ledger-replay.md; v6.0 ledger replay preview behavior is not documented.",
                 "docs/smoke/v6.0/ledger-replay.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var ledgerReplay = ReadText(ledgerReplayPath, report, "v6.0:ledger-replay-smoke-doc-readable");
         if (ledgerReplay is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1404,14 +1428,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:ledger-validate-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/ledger-validate.md; v6.0 ledger validation behavior is not documented.",
                 "docs/smoke/v6.0/ledger-validate.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var ledgerValidate = ReadText(ledgerValidatePath, report, "v6.0:ledger-validate-smoke-doc-readable");
         if (ledgerValidate is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1452,14 +1476,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:ledger-stats-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/ledger-stats.md; v6.0 ledger stats behavior is not documented.",
                 "docs/smoke/v6.0/ledger-stats.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var ledgerStats = ReadText(ledgerStatsPath, report, "v6.0:ledger-stats-smoke-doc-readable");
         if (ledgerStats is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1500,14 +1524,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:ledger-timeline-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/ledger-timeline.md; v6.0 ledger timeline behavior is not documented.",
                 "docs/smoke/v6.0/ledger-timeline.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var ledgerTimeline = ReadText(ledgerTimelinePath, report, "v6.0:ledger-timeline-smoke-doc-readable");
         if (ledgerTimeline is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1558,14 +1582,14 @@ internal static partial class ReleaseVerifier
             report.Add("v6.0:workflow-registry-smoke-doc", ReleaseVerifyStatus.Error,
                 "Missing docs/smoke/v6.0/workflow-registry.md; v6.0 workflow registry behavior is not documented.",
                 "docs/smoke/v6.0/workflow-registry.md");
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
         var workflowRegistry = ReadText(workflowRegistryPath, report, "v6.0:workflow-registry-smoke-doc-readable");
         if (workflowRegistry is null)
         {
-            AddV60WorkbenchGate(root, report);
+            AddV60WorkbenchGate(root, report, workbenchVerify);
             return;
         }
 
@@ -1618,7 +1642,7 @@ internal static partial class ReleaseVerifier
         AddGuardedContains(report, "v6.0:workflow-registry-no-db-smoke-doc", workflowRegistry, "database",
             "v6.0 workflow registry smoke doc avoids a centralized workflow database claim.", "docs/smoke/v6.0/workflow-registry.md", V60DatabaseContradictions);
 
-        AddV60WorkbenchGate(root, report);
+        AddV60WorkbenchGate(root, report, workbenchVerify);
     }
 
     private static void AddV60OfficeRolloutStatus(string root, ReleaseVerifyReport report)
@@ -1995,18 +2019,25 @@ internal static partial class ReleaseVerifier
             verifyPath);
     }
 
-    private static void AddV60WorkbenchGate(string root, ReleaseVerifyReport report)
+    private static void AddV60WorkbenchGate(
+        string root,
+        ReleaseVerifyReport report,
+        Lazy<WorkbenchVerifyRun> workbenchVerify)
     {
+        var run = workbenchVerify.Value;
+        if (run.Error is not null)
+        {
+            report.Add(
+                "v6.0:workbench-gate",
+                ReleaseVerifyStatus.Error,
+                $"Could not evaluate workbench v2 v6.0 gate for this release root: {run.Error.Message}",
+                run.Source);
+            return;
+        }
+
         try
         {
-            var source = WorkbenchVerifySource(root);
-            var output = new StringWriter();
-            var exitCode = WorkbenchCommand.ExecuteVerifyAsync(
-                output,
-                "json",
-                root,
-                "workbench-contract.v2").GetAwaiter().GetResult();
-            using var document = JsonDocument.Parse(output.ToString());
+            using var document = JsonDocument.Parse(run.Output);
             string? status = null;
             string? evidence = null;
             var runtimeEvidenceStatus = "missing";
@@ -2025,9 +2056,9 @@ internal static partial class ReleaseVerifier
                 "v6.0:workbench-gate",
                 success ? ReleaseVerifyStatus.Ok : ReleaseVerifyStatus.Error,
                 success
-                    ? $"scoped workbench v2 v6.0 gate passes for release root {root}: {evidence} (runtimeEvidence=pass; {runtimeEvidenceStatus}; overall workbench exit {exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)} ignored by design; scoped v6 gate status={status})."
-                    : $"scoped workbench v2 v6.0 gate did not pass for release root {root}: status={status ?? "missing"} runtimeEvidence={runtimeEvidenceStatus} evidence={evidence ?? "n/a"} exit={exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
-                source,
+                    ? $"scoped workbench v2 v6.0 gate passes for release root {root}: {evidence} (runtimeEvidence=pass; {runtimeEvidenceStatus}; overall workbench exit {run.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)} ignored by design; scoped v6 gate status={status})."
+                    : $"scoped workbench v2 v6.0 gate did not pass for release root {root}: status={status ?? "missing"} runtimeEvidence={runtimeEvidenceStatus} evidence={evidence ?? "n/a"} exit={run.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
+                run.Source,
                 runtimeEvidence);
         }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException or IOException or UnauthorizedAccessException)
@@ -2036,9 +2067,30 @@ internal static partial class ReleaseVerifier
                 "v6.0:workbench-gate",
                 ReleaseVerifyStatus.Error,
                 $"Could not evaluate workbench v2 v6.0 gate for this release root: {ex.Message}",
-                WorkbenchVerifySource(root));
+                run.Source);
         }
     }
+
+    private static WorkbenchVerifyRun RunWorkbenchVerify(string root)
+    {
+        var source = WorkbenchVerifySource(root);
+        try
+        {
+            var output = new StringWriter();
+            var exitCode = WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                root,
+                "workbench-contract.v2").GetAwaiter().GetResult();
+            return new WorkbenchVerifyRun(source, exitCode, output.ToString(), null);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException or IOException or UnauthorizedAccessException)
+        {
+            return new WorkbenchVerifyRun(source, -1, "", ex);
+        }
+    }
+
+    private sealed record WorkbenchVerifyRun(string Source, int ExitCode, string Output, Exception? Error);
 
     internal static string WorkbenchVerifySource(string root) =>
         $"workbench verify --contract workbench-contract.v2 --dir {QuoteDisplayArgument(root)} --output json";

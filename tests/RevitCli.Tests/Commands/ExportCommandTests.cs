@@ -285,11 +285,15 @@ public class ExportCommandTests
             Message = "Exported 1 sheet"
         };
         var response = ApiResponse<ExportProgress>.Ok(progress);
+        var documentPath = Path.GetFullPath(Path.Combine(
+            Path.GetPathRoot(outputDir) ?? Path.DirectorySeparatorChar.ToString(),
+            "models",
+            "tower.rvt"));
         var status = ApiResponse<StatusInfo>.Ok(new StatusInfo
         {
             RevitVersion = "2026",
             DocumentName = "tower.rvt",
-            DocumentPath = "/models/tower.rvt"
+            DocumentPath = documentPath
         });
         var handler = new QueuedHttpHandler(JsonSerializer.Serialize(response), JsonSerializer.Serialize(status));
         var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
@@ -336,7 +340,7 @@ public class ExportCommandTests
             Assert.Equal("pdf", operation.GetProperty("category").GetString());
             Assert.Equal("succeeded", operation.GetProperty("status").GetString());
             Assert.Equal("tower.rvt", operation.GetProperty("modelIdentity").GetString());
-            Assert.Equal("/models/tower.rvt", operation.GetProperty("modelPath").GetString());
+            Assert.Equal(documentPath, operation.GetProperty("modelPath").GetString());
             Assert.Equal("2026", operation.GetProperty("revitVersion").GetString());
             Assert.Equal(Path.GetFullPath(receiptPath), operation.GetProperty("receiptPath").GetString());
             Assert.Equal(manifestRoot.GetProperty("receiptHash").GetString(), operation.GetProperty("receiptHash").GetString());

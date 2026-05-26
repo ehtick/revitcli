@@ -210,7 +210,8 @@ checks:
         var root = json.RootElement;
         Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("code").GetString() == "hidden-model-mutation" &&
-            issue.GetProperty("path").GetString()!.EndsWith(".revitcli/plans/rogue.json", StringComparison.Ordinal));
+            NormalizePath(issue.GetProperty("path").GetString()!)
+                .EndsWith(".revitcli/plans/rogue.json", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -741,6 +742,9 @@ package:
 
     private static RevitClient MakeClient() =>
         new(new HttpClient(new NotCalledHandler()) { BaseAddress = new Uri("http://localhost:17839") });
+
+    private static string NormalizePath(string value) =>
+        value.Replace('\\', '/');
 
     private sealed class NotCalledHandler : HttpMessageHandler
     {

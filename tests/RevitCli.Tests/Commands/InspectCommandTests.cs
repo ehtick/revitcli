@@ -112,7 +112,7 @@ public class InspectCommandTests
             using var json = JsonDocument.Parse(writer.ToString());
             var report = json.RootElement;
             Assert.Equal("inspect-plans.v1", report.GetProperty("schemaVersion").GetString());
-            Assert.Equal(Path.GetFullPath(root), report.GetProperty("projectDirectory").GetString());
+            Assert.Equal(NormalizePath(Path.GetFullPath(root)), report.GetProperty("projectDirectory").GetString());
             Assert.Equal(1, report.GetProperty("planCount").GetInt32());
             Assert.Equal(2, report.GetProperty("totalActionCount").GetInt32());
             var plan = report.GetProperty("plans").EnumerateArray().Single();
@@ -1319,4 +1319,7 @@ public class InspectCommandTests
             mode: mutating
             requiresApproval: true
         """;
+
+    private static string NormalizePath(string value) =>
+        value.Replace('\\', '/');
 }
