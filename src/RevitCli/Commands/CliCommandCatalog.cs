@@ -113,6 +113,7 @@ internal static class CliCommandCatalog
         ("standards install <path-or-git-url>", "Install approved standards files into the local project"),
         ("standards validate", "Validate required profiles, workflows, outputs, schedules, and family rules"),
         ("release verify", "Check release files, version, tag, and CI guardrails before tagging"),
+        ("release pilot scaffold", "Create a public-safe v6 office pilot evidence packet scaffold"),
         ("sheets verify", "Verify sheet numbering, required sheets, and placed-view counts"),
         ("sheets issue-meta", "Plan sheet issue metadata updates with frozen sheet ids"),
         ("sheets renumber", "Plan sheet number updates from numbering rules with frozen sheet ids"),

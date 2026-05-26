@@ -4013,6 +4013,7 @@ public static class WorkbenchCommand
         {
             "v6.0 Office Rollout Pilot Evidence Packet",
             "controlled project-copy pilots",
+            "release pilot scaffold",
             "doctor --check-version 2026 --output json",
             "status --output json",
             "workbench verify --contract workbench-contract.v2",

@@ -228,6 +228,128 @@ jobs:
     }
 
     [Fact]
+    public async Task PilotScaffold_Json_WritesPublicSafePacket()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotScaffoldAsync(
+            _root,
+            "v6-pilot-2026-office-copy-01",
+            evidencePacketPath: null,
+            force: false,
+            outputFormat: "json",
+            output);
+
+        Assert.True(exitCode == 0, output.ToString());
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.Equal("release-pilot-scaffold.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.True(root.GetProperty("wrote").GetBoolean());
+        Assert.False(root.GetProperty("force").GetBoolean());
+        Assert.Equal("v6-pilot-2026-office-copy-01", root.GetProperty("pilotId").GetString());
+        Assert.Equal("docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md", root.GetProperty("evidencePacketPath").GetString());
+        Assert.Contains("office-rollout-status.json", root.GetProperty("rolloutStatusHint").GetString()!, StringComparison.Ordinal);
+
+        var packetPath = Path.Combine(_root, "docs", "smoke", "v6.0", "v6-pilot-2026-office-copy-01.md");
+        Assert.True(File.Exists(packetPath));
+        var packet = File.ReadAllText(packetPath);
+        Assert.Contains("## Required Commands", packet);
+        Assert.Contains("doctor --check-version 2026 --output json", packet);
+        Assert.Contains("status --output json", packet);
+        Assert.Contains("workbench verify --contract workbench-contract.v2", packet);
+        Assert.Contains("release verify --strict --output json", packet);
+        Assert.Contains("ledger query --source ledger --output json", packet);
+        Assert.Contains("ledger validate --source ledger --output json", packet);
+        Assert.Contains("ledger stats --source ledger --analytics-snapshot", packet);
+        Assert.Contains("ledger timeline --source ledger --analytics-snapshot", packet);
+        Assert.Contains("journal verify --output json", packet);
+        Assert.Contains("## Live Operation Evidence", packet);
+        Assert.Contains("Rollback result", packet);
+        Assert.Contains("## User Review", packet);
+        Assert.Contains("BIM manager signoff", packet);
+        Assert.Contains("Project-copy owner signoff", packet);
+        Assert.Contains("Support ticket review", packet);
+        Assert.Contains("Multi-user rollout postmortem", packet);
+        Assert.Contains("Boundary summary", packet);
+    }
+
+    [Theory]
+    [InlineData("pilot with spaces", null)]
+    [InlineData("pilot-01", "../pilot-01.md")]
+    [InlineData("pilot-01", "C:/temp/pilot-01.md")]
+    [InlineData("pilot-01", "docs/smoke/v6.0/../pilot-01.md")]
+    [InlineData("pilot-01", "docs/smoke/v6.0/pilot-01.txt")]
+    public async Task PilotScaffold_RejectsUnsafeInputs(string pilotId, string? evidencePacketPath)
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotScaffoldAsync(
+            _root,
+            pilotId,
+            evidencePacketPath,
+            force: false,
+            outputFormat: "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.False(json.RootElement.GetProperty("wrote").GetBoolean());
+        Assert.False(File.Exists(Path.Combine(_root, "pilot-01.md")));
+    }
+
+    [Fact]
+    public async Task PilotScaffold_RefusesExistingWithoutForce()
+    {
+        var relativePath = "docs/smoke/v6.0/pilot-01.md";
+        var fullPath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-01.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        await File.WriteAllTextAsync(fullPath, "existing packet");
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotScaffoldAsync(
+            _root,
+            "pilot-01",
+            relativePath,
+            force: false,
+            outputFormat: "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.False(json.RootElement.GetProperty("wrote").GetBoolean());
+        Assert.Contains("already exists", json.RootElement.GetProperty("message").GetString()!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("existing packet", File.ReadAllText(fullPath));
+    }
+
+    [Fact]
+    public async Task PilotScaffold_ForceOverwritesExistingPacket()
+    {
+        var relativePath = "docs/smoke/v6.0/pilot-01.md";
+        var fullPath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-01.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        await File.WriteAllTextAsync(fullPath, "existing packet");
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotScaffoldAsync(
+            _root,
+            "pilot-01",
+            relativePath,
+            force: true,
+            outputFormat: "json",
+            output);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.True(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.True(json.RootElement.GetProperty("wrote").GetBoolean());
+        Assert.True(json.RootElement.GetProperty("force").GetBoolean());
+        Assert.Contains("Pilot identifier: pilot-01", File.ReadAllText(fullPath));
+    }
+
+    [Fact]
     public async Task Verify_Strict_WithDisclosedV5NoGo_ReturnsFailure()
     {
         WriteHealthyTree(_root);
@@ -644,6 +766,26 @@ Run `release verify --strict`.
         Assert.False(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:pilot-evidence-status" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60PilotEvidenceScaffoldCommand_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath).Replace("release pilot scaffold", "release pilot packet", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-scaffold-command" &&
             check.GetProperty("status").GetString() == "error");
     }
 
@@ -2450,6 +2592,8 @@ No SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, and no d
 # RevitCli v6.0 Office Rollout Pilot Evidence Packet
 
 Use this packet only for controlled project-copy pilots. It is not a production support claim.
+
+Create packets with release pilot scaffold --pilot-id v6-pilot-2026-office-copy-01 --output json before collecting private office evidence.
 
 Required commands include doctor --check-version 2026 --output json, status --output json, workbench verify --contract workbench-contract.v2 --dir . --output json, release verify --strict --output json, ledger query --source ledger --output json, ledger validate --source ledger --output json, ledger stats --source ledger --analytics-snapshot .revitcli/analytics/ledger-stats.json --output json, ledger timeline --source ledger --analytics-snapshot .revitcli/analytics/ledger-timeline.json --output json, and journal verify --output json.
 Live evidence records Rollback result, final verification command, safe retry status, user-review notes, and go-forward decision.

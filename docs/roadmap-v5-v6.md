@@ -230,7 +230,8 @@ Done means:
   evidence packet needed for controlled project-copy pilots, without claiming
   production support before 2-3 completed office pilots have command evidence,
   BIM manager signoff, project-copy owner signoff, support review, and
-  multi-user rollout postmortems.
+  multi-user rollout postmortems. `release pilot scaffold` creates the
+  public-safe per-pilot Markdown scaffold without changing rollout status.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable status as 0 completed office pilots and no office rollout
   completion claim. Future completion requires per-pilot evidence flags, not

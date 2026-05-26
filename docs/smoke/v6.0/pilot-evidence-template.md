@@ -6,6 +6,10 @@ for private office notes.
 
 ## Scope
 
+Create a new public-safe packet with
+`release pilot scaffold --pilot-id v6-pilot-2026-office-copy-01 --output json`
+before collecting private office evidence.
+
 - Pilot identifier:
 - Date/time:
 - Commit:
