@@ -392,7 +392,8 @@ The contract baseline is acceptable when:
   a production support claim.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable rollout status, minimum pilot count, completed pilot count,
-  per-pilot evidence flags, and no-completion/no-production-support boundary.
+  per-pilot evidence flags, public-safe repo-relative Markdown evidence packet
+  paths, and no-completion/no-production-support boundary.
 - `workflow registry --output json` emits `workflow-registry.v1` without
   running workflow steps, writing files, or requiring Revit to be running.
 - Missing contract or gap-report files fail the gates.

@@ -742,6 +742,31 @@ Run `release verify --strict`.
     }
 
     [Fact]
+    public async Task Verify_V60OfficeRolloutStatusLocalEvidencePacketPath_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var statusPath = Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+        File.WriteAllText(
+            statusPath,
+            File.ReadAllText(statusPath)
+                .Replace("\"completedOfficePilotCount\": 0", "\"completedOfficePilotCount\": 2", StringComparison.Ordinal)
+                .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
+                .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02", @"C:\Users\Lenovo\pilot-02.md") + "]", StringComparison.Ordinal)
+                .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
+                .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:office-rollout-status-completed-pilots-json" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
     public async Task Verify_MissingV60LocalControlledPilotEvidenceJson_ReturnsFailure()
     {
         WriteHealthyTree(_root);
@@ -2766,11 +2791,13 @@ Run `release verify --strict`.
     private void WriteFile(string relativePath, string content) =>
         WriteFile(_root, relativePath, content);
 
-    private static string CompletedPilotEvidenceJson(string pilotId) =>
-        $$"""
+    private static string CompletedPilotEvidenceJson(string pilotId, string? evidencePacketPath = null)
+    {
+        var serializedEvidencePacketPath = JsonSerializer.Serialize(evidencePacketPath ?? $"docs/smoke/v6.0/{pilotId}.md");
+        return $$"""
         {
           "pilotId": "{{pilotId}}",
-          "evidencePacketPath": "docs/smoke/v6.0/{{pilotId}}.md",
+          "evidencePacketPath": {{serializedEvidencePacketPath}},
           "doctor": true,
           "status": true,
           "workbench": true,
@@ -2788,6 +2815,7 @@ Run `release verify --strict`.
           "multiUserRolloutPostmortem": true
         }
         """;
+    }
 
     private static void WriteFile(string root, string relativePath, string content)
     {

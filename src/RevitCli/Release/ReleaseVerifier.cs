@@ -1707,7 +1707,7 @@ internal static partial class ReleaseVerifier
             TryReadNonEmptyJsonString(pilot, "pilotId", out var pilotId) &&
             completedPilotIds.Contains(pilotId) &&
             evidencePilotIds.Add(pilotId) &&
-            JsonStringNonEmpty(pilot, "evidencePacketPath") &&
+            JsonPublicOfficePilotEvidencePacketPath(pilot, "evidencePacketPath") &&
             JsonBoolEquals(pilot, "doctor", true) &&
             JsonBoolEquals(pilot, "status", true) &&
             JsonBoolEquals(pilot, "workbench", true) &&
@@ -1723,6 +1723,21 @@ internal static partial class ReleaseVerifier
             JsonBoolEquals(pilot, "projectCopyOwnerSignoff", true) &&
             JsonBoolEquals(pilot, "supportTicketReview", true) &&
             JsonBoolEquals(pilot, "multiUserRolloutPostmortem", true));
+    }
+
+    private static bool JsonPublicOfficePilotEvidencePacketPath(JsonElement element, string path)
+    {
+        if (!TryReadNonEmptyJsonString(element, path, out var value))
+            return false;
+
+        var trimmed = value.Trim();
+        return !trimmed.Contains('\\', StringComparison.Ordinal) &&
+            !trimmed.Contains(':', StringComparison.Ordinal) &&
+            !trimmed.StartsWith("/", StringComparison.Ordinal) &&
+            !trimmed.Contains("../", StringComparison.Ordinal) &&
+            !trimmed.Contains("/..", StringComparison.Ordinal) &&
+            trimmed.StartsWith("docs/smoke/v6.0/", StringComparison.Ordinal) &&
+            trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryReadUniqueStringArray(

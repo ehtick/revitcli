@@ -73,6 +73,10 @@ For each approved live operation, record:
 - Each completed pilot listed in the rollout status must include per-pilot
   evidence flags for the required commands, rollback, user review, signoffs,
   support review, and postmortem.
+- Each completed pilot's `evidencePacketPath` must be a public-safe
+  repo-relative Markdown path under `docs/smoke/v6.0/`; local absolute paths,
+  backslashes, drive letters, and parent traversal are not valid release
+  evidence.
 - Each completed office pilot must attach the required command evidence, live
   operation evidence, user review, BIM manager signoff, project-copy owner
   signoff, support ticket review, and multi-user rollout postmortem.

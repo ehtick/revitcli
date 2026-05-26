@@ -1165,6 +1165,50 @@ Post-rollback evidence
     }
 
     [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60OfficeRolloutUsesLocalEvidencePacketPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-office-rollout-local-path-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var statusPath = Path.Combine(root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+            File.WriteAllText(
+                statusPath,
+                File.ReadAllText(statusPath)
+                    .Replace("\"completedOfficePilotCount\": 0", "\"completedOfficePilotCount\": 2", StringComparison.Ordinal)
+                    .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
+                    .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02", @"C:\Users\Lenovo\pilot-02.md") + "]", StringComparison.Ordinal)
+                    .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
+                    .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("completedPilots", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Verify_Json_WithContractV2_FailsWhenV60AuditSpineParityDetailsAreMissing()
     {
         var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-audit-spine-parity-{Guid.NewGuid():N}");
@@ -3063,11 +3107,13 @@ journal verify
         }
     }
 
-    private static string CompletedPilotEvidenceJson(string pilotId) =>
-        $$"""
+    private static string CompletedPilotEvidenceJson(string pilotId, string? evidencePacketPath = null)
+    {
+        var serializedEvidencePacketPath = JsonSerializer.Serialize(evidencePacketPath ?? $"docs/smoke/v6.0/{pilotId}.md");
+        return $$"""
         {
           "pilotId": "{{pilotId}}",
-          "evidencePacketPath": "docs/smoke/v6.0/{{pilotId}}.md",
+          "evidencePacketPath": {{serializedEvidencePacketPath}},
           "doctor": true,
           "status": true,
           "workbench": true,
@@ -3085,4 +3131,5 @@ journal verify
           "multiUserRolloutPostmortem": true
         }
         """;
+    }
 }
