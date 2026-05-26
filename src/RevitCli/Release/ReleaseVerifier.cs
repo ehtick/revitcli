@@ -1794,12 +1794,12 @@ internal static partial class ReleaseVerifier
     private static void AddV60LocalControlledPilotEvidenceSummary(string root, ReleaseVerifyReport report)
     {
         const string path = "docs/smoke/v6.0/local-controlled-pilot-20260525.evidence.json";
-        const string sourceBundle = ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525";
+        const string sourceBundle = "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525";
         var fullPath = Path.Combine(root, ToNativePath(path));
         if (!File.Exists(fullPath))
         {
             report.Add("v6.0:local-controlled-pilot-evidence-json", ReleaseVerifyStatus.Error,
-                "Missing docs/smoke/v6.0/local-controlled-pilot-20260525.evidence.json; release gate cannot validate the local controlled pilot JSON evidence summary without developer-local .artifacts.",
+                "Missing docs/smoke/v6.0/local-controlled-pilot-20260525.evidence.json; release gate cannot validate the local controlled pilot JSON evidence summary.",
                 path);
             return;
         }
@@ -1910,8 +1910,8 @@ internal static partial class ReleaseVerifier
         var bundlePath = Path.Combine(root, ToNativePath(sourceBundle));
         if (!Directory.Exists(bundlePath))
         {
-            report.Add("v6.0:local-controlled-pilot-source-bundle", ReleaseVerifyStatus.Warning,
-                $"Local controlled pilot source bundle is not present at {sourceBundle}; non-strict verification relies on the checked-in evidence summary, but strict release verification should run from the evidence machine.",
+            report.Add("v6.0:local-controlled-pilot-source-bundle", ReleaseVerifyStatus.Error,
+                $"Local controlled pilot source bundle is not present at {sourceBundle}; strict release verification requires the checked-in public-safe evidence source files.",
                 sourceBundle);
             return;
         }

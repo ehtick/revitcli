@@ -1,0 +1,4 @@
+{"schemaVersion":"ledger-operation.v1","operationId":"local-pilot-set","command":"set","action":"set","status":"succeeded","modelIdentity":"revit_cli","revitVersion":"2026"}
+{"schemaVersion":"ledger-operation.v1","operationId":"local-pilot-replay","command":"ledger","action":"ledger.replay.apply","status":"succeeded","modelIdentity":"revit_cli","revitVersion":"2026"}
+{"schemaVersion":"ledger-operation.v1","operationId":"local-pilot-export","command":"export","action":"export","status":"succeeded","modelIdentity":"revit_cli","revitVersion":"2026"}
+{"schemaVersion":"ledger-operation.v1","operationId":"local-pilot-schedule-export","command":"schedules","action":"schedules.batch-export","status":"succeeded","modelIdentity":"revit_cli","revitVersion":"2026"}

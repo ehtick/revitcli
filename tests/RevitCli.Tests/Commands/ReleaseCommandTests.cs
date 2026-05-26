@@ -806,10 +806,10 @@ Run `release verify --strict`.
     }
 
     [Theory]
-    [InlineData("\"sourceBundle\": \".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525\"", "\"sourceBundle\": \".artifacts/live-smoke/other\"", "v6.0:local-controlled-pilot-evidence-json")]
+    [InlineData("\"sourceBundle\": \"docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525\"", "\"sourceBundle\": \".artifacts/live-smoke/other\"", "v6.0:local-controlled-pilot-evidence-json")]
     [InlineData("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", "v6.0:local-controlled-pilot-evidence-boundary-json")]
     [InlineData("\"rootHash\": \"b915f6cf6ffea40425cb16bf51bba858339e8e00059f07455b919475968d24fe\"", "\"rootHash\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", "v6.0:local-controlled-pilot-journal-json")]
-    [InlineData("    \".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-validate.json\",\n", "", "v6.0:local-controlled-pilot-required-files-json")]
+    [InlineData("    \"docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-validate.json\",\n", "", "v6.0:local-controlled-pilot-required-files-json")]
     public async Task Verify_InvalidV60LocalControlledPilotEvidenceSummary_ReturnsFailure(
         string oldText,
         string newText,
@@ -830,6 +830,26 @@ Run `release verify --strict`.
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == expectedCheckId &&
             check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60LocalControlledPilotSourceBundle_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        Directory.Delete(
+            Path.Combine(_root, "docs", "smoke", "v6.0", "revit2026-v6-local-controlled-pilot-20260525"),
+            recursive: true);
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:local-controlled-pilot-source-bundle" &&
+            check.GetProperty("status").GetString() == "error" &&
+            check.GetProperty("message").GetString()!.Contains("checked-in public-safe evidence source files", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -2443,33 +2463,33 @@ Boundary summary: no SaaS, no MCP, no dashboard-central workflow, no built-in LL
         WriteFile(root, "docs/smoke/v6.0/local-controlled-pilot-20260525.md", """
 # RevitCli v6.0 Local Controlled Pilot Evidence
 
-This local controlled pilot packet references .artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525. It records ledger-validate.v1 and journal verify with isValid=true. It is not office rollout completion and not a production support claim.
+This local controlled pilot packet references docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525. It records ledger-validate.v1 and journal verify with isValid=true. It is not office rollout completion and not a production support claim.
 """);
         WriteFile(root, "docs/smoke/v6.0/local-controlled-pilot-20260525.evidence.json", """
 {
   "schemaVersion": "v6-local-controlled-pilot-evidence.v1",
   "pilotId": "v6-local-controlled-pilot-20260525",
-  "sourceBundle": ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525",
+  "sourceBundle": "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525",
   "scope": {
     "localControlledPilot": true,
     "officeRolloutCompletion": false,
     "productionSupportClaim": false
   },
   "requiredFiles": [
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/doctor.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/status.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/workbench.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/release.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-query.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-validate.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-stats.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-timeline.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-sign.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-verify.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/ledger/operations.jsonl",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-stats.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-timeline.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/journal.jsonl.sig"
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/doctor.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/status.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/workbench.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/release.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-query.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-validate.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-stats.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-timeline.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-sign.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-verify.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/ledger/operations.jsonl",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-stats.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-timeline.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/journal.jsonl.sig"
   ],
   "doctor": {
     "success": true,
@@ -2661,7 +2681,7 @@ function Test-PathListContains { }
 
     private static void WriteLocalControlledPilotSourceBundle(string root)
     {
-        const string bundle = ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525";
+        const string bundle = "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525";
         WriteFile(root, $"{bundle}/outputs/doctor.json", """{"success":true,"targetRevitYear":2026}""");
         WriteFile(root, $"{bundle}/outputs/status.json", """{"revitYear":2026,"documentName":"revit_cli"}""");
         WriteFile(root, $"{bundle}/outputs/workbench.json", """{"success":true,"issueCount":0}""");

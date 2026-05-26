@@ -1,27 +1,27 @@
 {
   "schemaVersion": "v6-local-controlled-pilot-evidence.v1",
   "pilotId": "v6-local-controlled-pilot-20260525",
-  "sourceBundle": ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525",
+  "sourceBundle": "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525",
   "scope": {
     "localControlledPilot": true,
     "officeRolloutCompletion": false,
     "productionSupportClaim": false
   },
   "requiredFiles": [
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/doctor.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/status.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/workbench.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/release.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-query.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-validate.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-stats.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-timeline.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-sign.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-verify.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/ledger/operations.jsonl",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-stats.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-timeline.json",
-    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/journal.jsonl.sig"
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/doctor.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/status.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/workbench.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/release.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-query.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-validate.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-stats.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-timeline.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-sign.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-verify.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/ledger/operations.jsonl",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-stats.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-timeline.json",
+    "docs/smoke/v6.0/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/journal.jsonl.sig"
   ],
   "doctor": {
     "success": true,
