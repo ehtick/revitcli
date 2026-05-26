@@ -74,8 +74,8 @@ public static class CompletionsCommand
         { "--manifest", "--dir", "--output", "--ref", "--subpath", "--force", "--dry-run" };
     private static readonly string[] StandardsOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] ReleaseSubcommands = { "verify", "pilot" };
-    private static readonly string[] ReleasePilotSubcommands = { "scaffold", "validate" };
-    private static readonly string[] ReleaseOptions = { "--root", "--output", "--tag", "--strict", "--pilot-id", "--path", "--force" };
+    private static readonly string[] ReleasePilotSubcommands = { "scaffold", "validate", "register" };
+    private static readonly string[] ReleaseOptions = { "--root", "--output", "--tag", "--strict", "--pilot-id", "--path", "--force", "--yes" };
     private static readonly string[] ReleaseOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] SheetsSubcommands = { "verify", "issue-meta", "renumber", "index", "init", "show" };
     private static readonly string[] SheetsOptions =

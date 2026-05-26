@@ -11,7 +11,10 @@ Create a new public-safe packet with
 before collecting private office evidence. Before adding the packet to
 `docs/smoke/v6.0/office-rollout-status.json`, run
 `release pilot validate --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json`
-and keep the result free of errors.
+and keep the result free of errors. Use
+`release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json`
+for a dry-run status update, then repeat with `--yes` only after private
+evidence review is complete.
 
 - Pilot identifier:
 - Date/time:

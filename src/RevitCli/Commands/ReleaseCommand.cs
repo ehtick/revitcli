@@ -14,6 +14,9 @@ public static class ReleaseCommand
 {
     private const string PilotScaffoldSchemaVersion = "release-pilot-scaffold.v1";
     private const string PilotValidateSchemaVersion = "release-pilot-validate.v1";
+    private const string PilotRegisterSchemaVersion = "release-pilot-register.v1";
+    private const string OfficeRolloutStatusSchemaVersion = "v6-office-rollout-status.v1";
+    private const string OfficeRolloutStatusPath = "docs/smoke/v6.0/office-rollout-status.json";
     private const string PilotScaffoldRolloutStatusHint =
         "Do not add this pilot to office-rollout-status.json until every required command, live-operation, review, signoff, support-review, and postmortem item is complete.";
     private static readonly string[] RequiredPilotEvidencePacketPhrases =
@@ -58,6 +61,7 @@ public static class ReleaseCommand
         var command = new Command("pilot", "Office rollout pilot evidence helpers");
         command.AddCommand(CreatePilotScaffoldCommand());
         command.AddCommand(CreatePilotValidateCommand());
+        command.AddCommand(CreatePilotRegisterCommand());
         return command;
     }
 
@@ -121,6 +125,44 @@ public static class ReleaseCommand
         {
             Environment.ExitCode = await ExecutePilotValidateAsync(root, path, output, Console.Out);
         }, rootOpt, pathOpt, outputOpt);
+
+        return command;
+    }
+
+    private static Command CreatePilotRegisterCommand()
+    {
+        var rootOpt = new Option<string>(
+            "--root",
+            () => Directory.GetCurrentDirectory(),
+            "Repository root");
+        var pilotIdOpt = new Option<string>(
+            "--pilot-id",
+            "Public-safe pilot identifier, for example v6-pilot-2026-office-copy-01")
+        {
+            IsRequired = true,
+        };
+        var pathOpt = new Option<string>(
+            "--path",
+            "Repo-relative evidence packet path under docs/smoke/v6.0/")
+        {
+            IsRequired = true,
+        };
+        var yesOpt = new Option<bool>(
+            "--yes",
+            "Write the completed pilot entry to office-rollout-status.json");
+        var outputOpt = new Option<string>(
+            "--output",
+            () => "table",
+            "Output format: table, json, markdown");
+
+        var command = new Command("register", "Register a validated v6.0 office pilot evidence packet in rollout status")
+        {
+            rootOpt, pilotIdOpt, pathOpt, yesOpt, outputOpt
+        };
+        command.SetHandler(async (root, pilotId, path, yes, output) =>
+        {
+            Environment.ExitCode = await ExecutePilotRegisterAsync(root, pilotId, path, yes, output, Console.Out);
+        }, rootOpt, pilotIdOpt, pathOpt, yesOpt, outputOpt);
 
         return command;
     }
@@ -259,6 +301,98 @@ public static class ReleaseCommand
             return 1;
         }
 
+        var result = await ValidatePilotEvidencePacketAsync(root, evidencePacketPath);
+        await WritePilotValidateResultAsync(output, normalizedOutput, result);
+        return result.Success ? 0 : 1;
+    }
+
+    public static async Task<int> ExecutePilotRegisterAsync(
+        string root,
+        string pilotId,
+        string evidencePacketPath,
+        bool yes,
+        string outputFormat,
+        TextWriter output)
+    {
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
+        {
+            await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, markdown.");
+            return 1;
+        }
+
+        var normalizedRoot = Path.GetFullPath(root);
+        var path = evidencePacketPath.Trim();
+        var issues = new List<ReleasePilotValidateIssue>();
+        if (!IsPublicSafePilotId(pilotId))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "pilot-id-safety",
+                "error",
+                "Pilot id must be non-empty and contain only letters, digits, '.', '_', or '-'.",
+                null,
+                pilotId));
+        }
+
+        var validation = await ValidatePilotEvidencePacketAsync(normalizedRoot, path);
+        issues.AddRange(validation.Issues);
+
+        var statusPath = Path.Combine(normalizedRoot, OfficeRolloutStatusPath.Replace('/', Path.DirectorySeparatorChar));
+        var status = issues.Count == 0 ? ReadOfficeRolloutStatus(statusPath, issues) : null;
+        if (status is not null)
+        {
+            AddPilotRegisterStatusIssues(status, pilotId, path, issues);
+        }
+
+        ReleasePilotRegisterResult result;
+        if (issues.Any(issue => issue.Severity == "error") || status is null)
+        {
+            result = ReleasePilotRegisterResult.From(
+                false,
+                pilotId,
+                path,
+                OfficeRolloutStatusPath,
+                dryRun: !yes,
+                wrote: false,
+                minimumOfficePilotCount: status?.MinimumOfficePilotCount ?? 0,
+                completedOfficePilotCount: status?.CompletedOfficePilotCount ?? 0,
+                officeRolloutCompletion: status?.OfficeRolloutCompletion ?? false,
+                productionSupportClaim: status?.ProductionSupportClaim ?? false,
+                "Pilot evidence was not registered; fix validation/status issues first.",
+                issues);
+            await WritePilotRegisterResultAsync(output, normalizedOutput, result);
+            return 1;
+        }
+
+        var updated = AddCompletedPilot(status, pilotId, path);
+        if (yes)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(statusPath)!);
+            await File.WriteAllTextAsync(statusPath, JsonSerializer.Serialize(updated, JsonOptions) + Environment.NewLine);
+        }
+
+        result = ReleasePilotRegisterResult.From(
+            true,
+            pilotId,
+            path,
+            OfficeRolloutStatusPath,
+            dryRun: !yes,
+            wrote: yes,
+            updated.MinimumOfficePilotCount,
+            updated.CompletedOfficePilotCount,
+            updated.OfficeRolloutCompletion,
+            updated.ProductionSupportClaim,
+            yes
+                ? "Registered validated pilot evidence in office-rollout-status.json; production support claim was not auto-enabled."
+                : "Dry run only; pass --yes to register this validated pilot evidence.",
+            issues);
+        await WritePilotRegisterResultAsync(output, normalizedOutput, result);
+        return result.Success ? 0 : 1;
+    }
+
+    private static async Task<ReleasePilotValidateResult> ValidatePilotEvidencePacketAsync(
+        string root,
+        string evidencePacketPath)
+    {
         var normalizedRoot = Path.GetFullPath(root);
         var path = evidencePacketPath.Trim();
         var issues = new List<ReleasePilotValidateIssue>();
@@ -270,54 +404,45 @@ public static class ReleaseCommand
                 "Evidence packet path must be repo-relative under docs/smoke/v6.0/ and end with .md.",
                 null,
                 path));
+            return ReleasePilotValidateResult.FromIssues(path, issues);
         }
 
-        string? packet = null;
-        if (issues.Count == 0)
+        var fullPath = Path.Combine(normalizedRoot, path.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(fullPath))
         {
-            var fullPath = Path.Combine(normalizedRoot, path.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(fullPath))
-            {
-                issues.Add(new ReleasePilotValidateIssue(
-                    "packet-missing",
-                    "error",
-                    "Evidence packet file does not exist.",
-                    null,
-                    path));
-            }
-            else
-            {
-                try
-                {
-                    packet = await File.ReadAllTextAsync(fullPath);
-                }
-                catch (IOException ex)
-                {
-                    issues.Add(new ReleasePilotValidateIssue(
-                        "packet-unreadable",
-                        "error",
-                        $"Evidence packet file could not be read: {ex.Message}",
-                        null,
-                        path));
-                }
-                catch (UnauthorizedAccessException ex)
-                {
-                    issues.Add(new ReleasePilotValidateIssue(
-                        "packet-unreadable",
-                        "error",
-                        $"Evidence packet file could not be read: {ex.Message}",
-                        null,
-                        path));
-                }
-            }
+            issues.Add(new ReleasePilotValidateIssue(
+                "packet-missing",
+                "error",
+                "Evidence packet file does not exist.",
+                null,
+                path));
+            return ReleasePilotValidateResult.FromIssues(path, issues);
         }
 
-        if (packet is not null)
-            AddPilotPacketContentIssues(packet, issues);
+        try
+        {
+            AddPilotPacketContentIssues(await File.ReadAllTextAsync(fullPath), issues);
+        }
+        catch (IOException ex)
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "packet-unreadable",
+                "error",
+                $"Evidence packet file could not be read: {ex.Message}",
+                null,
+                path));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "packet-unreadable",
+                "error",
+                $"Evidence packet file could not be read: {ex.Message}",
+                null,
+                path));
+        }
 
-        var result = ReleasePilotValidateResult.FromIssues(path, issues);
-        await WritePilotValidateResultAsync(output, normalizedOutput, result);
-        return result.Success ? 0 : 1;
+        return ReleasePilotValidateResult.FromIssues(path, issues);
     }
 
     private static async Task WritePilotScaffoldResultAsync(
@@ -358,6 +483,25 @@ public static class ReleaseCommand
         }
     }
 
+    private static async Task WritePilotRegisterResultAsync(
+        TextWriter output,
+        string normalizedOutput,
+        ReleasePilotRegisterResult result)
+    {
+        if (normalizedOutput == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(result, JsonOptions));
+        }
+        else if (normalizedOutput == "markdown")
+        {
+            await output.WriteLineAsync(RenderPilotRegisterMarkdown(result));
+        }
+        else
+        {
+            await output.WriteLineAsync(RenderPilotRegisterTable(result));
+        }
+    }
+
     private static void AddPilotPacketContentIssues(
         string packet,
         List<ReleasePilotValidateIssue> issues)
@@ -395,6 +539,162 @@ public static class ReleaseCommand
                 line.Trim()));
         }
     }
+
+    private static OfficeRolloutStatusDocument? ReadOfficeRolloutStatus(
+        string statusPath,
+        List<ReleasePilotValidateIssue> issues)
+    {
+        if (!File.Exists(statusPath))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "rollout-status-missing",
+                "error",
+                "docs/smoke/v6.0/office-rollout-status.json is missing.",
+                null,
+                OfficeRolloutStatusPath));
+            return null;
+        }
+
+        try
+        {
+            var status = JsonSerializer.Deserialize<OfficeRolloutStatusDocument>(
+                File.ReadAllText(statusPath),
+                JsonOptions);
+            if (status is null)
+            {
+                issues.Add(new ReleasePilotValidateIssue(
+                    "rollout-status-unreadable",
+                    "error",
+                    "office-rollout-status.json did not deserialize to a status object.",
+                    null,
+                    OfficeRolloutStatusPath));
+                return null;
+            }
+
+            NormalizeOfficeRolloutStatus(status);
+            return status;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "rollout-status-unreadable",
+                "error",
+                $"office-rollout-status.json could not be read: {ex.Message}",
+                null,
+                OfficeRolloutStatusPath));
+            return null;
+        }
+    }
+
+    private static void AddPilotRegisterStatusIssues(
+        OfficeRolloutStatusDocument status,
+        string pilotId,
+        string evidencePacketPath,
+        List<ReleasePilotValidateIssue> issues)
+    {
+        if (!string.Equals(status.SchemaVersion, OfficeRolloutStatusSchemaVersion, StringComparison.Ordinal))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "rollout-status-schema",
+                "error",
+                $"office-rollout-status.json must use schema {OfficeRolloutStatusSchemaVersion}.",
+                null,
+                status.SchemaVersion));
+        }
+
+        if (status.MinimumOfficePilotCount < 2 ||
+            status.CompletedOfficePilotCount != status.CompletedPilots.Length ||
+            status.CompletedPilotIds.Length != status.CompletedPilots.Length)
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "rollout-status-counts",
+                "error",
+                "office-rollout-status.json must have minimumOfficePilotCount>=2 and matching completed pilot counts.",
+                null,
+                OfficeRolloutStatusPath));
+        }
+
+        if (!RequiredEvidenceComplete(status.RequiredEvidence))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "rollout-status-required-evidence",
+                "error",
+                "office-rollout-status.json requiredEvidence must require every command, review, signoff, support-review, and postmortem field.",
+                null,
+                OfficeRolloutStatusPath));
+        }
+
+        if (status.CompletedPilotIds.Contains(pilotId, StringComparer.Ordinal) ||
+            status.CompletedPilots.Any(pilot => string.Equals(pilot.PilotId, pilotId, StringComparison.Ordinal)))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "pilot-duplicate",
+                "error",
+                "Pilot id is already registered in office-rollout-status.json.",
+                null,
+                pilotId));
+        }
+
+        if (status.CompletedPilots.Any(pilot => string.Equals(pilot.EvidencePacketPath, evidencePacketPath, StringComparison.Ordinal)))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "pilot-path-duplicate",
+                "error",
+                "Evidence packet path is already registered in office-rollout-status.json.",
+                null,
+                evidencePacketPath));
+        }
+    }
+
+    private static OfficeRolloutStatusDocument AddCompletedPilot(
+        OfficeRolloutStatusDocument status,
+        string pilotId,
+        string evidencePacketPath)
+    {
+        var completedPilots = status.CompletedPilots
+            .Append(CompletedOfficePilotStatus.For(pilotId, evidencePacketPath))
+            .ToArray();
+        status.CompletedPilots = completedPilots;
+        status.CompletedPilotIds = status.CompletedPilotIds.Append(pilotId).ToArray();
+        status.CompletedOfficePilotCount = completedPilots.Length;
+        if (status.CompletedOfficePilotCount < status.MinimumOfficePilotCount)
+        {
+            status.OfficeRolloutCompletion = false;
+            status.ProductionSupportClaim = false;
+        }
+
+        return status;
+    }
+
+    private static void NormalizeOfficeRolloutStatus(OfficeRolloutStatusDocument status)
+    {
+        status.SchemaVersion ??= "";
+        status.CompletedPilotIds ??= Array.Empty<string>();
+        status.CompletedPilots ??= Array.Empty<CompletedOfficePilotStatus>();
+        status.RequiredEvidence ??= new OfficeRolloutRequiredEvidence();
+        foreach (var pilot in status.CompletedPilots)
+        {
+            pilot.PilotId ??= "";
+            pilot.EvidencePacketPath ??= "";
+        }
+    }
+
+    private static bool RequiredEvidenceComplete(OfficeRolloutRequiredEvidence evidence) =>
+        evidence.Doctor &&
+        evidence.Status &&
+        evidence.Workbench &&
+        evidence.Release &&
+        evidence.LedgerQuery &&
+        evidence.LedgerValidate &&
+        evidence.LedgerStatsAnalyticsSnapshot &&
+        evidence.LedgerTimelineAnalyticsSnapshot &&
+        evidence.JournalVerify &&
+        evidence.RollbackResult &&
+        evidence.UserReview &&
+        evidence.BimManagerSignoff &&
+        evidence.ProjectCopyOwnerSignoff &&
+        evidence.SupportTicketReview &&
+        evidence.MultiUserRolloutPostmortem;
 
     private static bool IsPublicSafePilotId(string pilotId) =>
         !string.IsNullOrWhiteSpace(pilotId) &&
@@ -621,6 +921,62 @@ public static class ReleaseCommand
         return writer.ToString().TrimEnd();
     }
 
+    private static string RenderPilotRegisterTable(ReleasePilotRegisterResult result)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("Release pilot register");
+        writer.WriteLine($"Result:    {(result.Success ? "PASS" : "FAIL")}");
+        writer.WriteLine($"Pilot:     {result.PilotId}");
+        writer.WriteLine($"Path:      {result.EvidencePacketPath}");
+        writer.WriteLine($"Status:    {result.StatusPath}");
+        writer.WriteLine($"Dry run:   {result.DryRun.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Wrote:     {result.Wrote.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Completed: {result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}");
+        writer.WriteLine($"Message:   {result.Message}");
+        if (result.Issues.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine($"{"Severity",-8} {"Issue",-26} Message");
+            writer.WriteLine(new string('-', 90));
+            foreach (var issue in result.Issues)
+                writer.WriteLine($"{issue.Severity,-8} {Truncate(issue.Id, 26),-26} {issue.Message}");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderPilotRegisterMarkdown(ReleasePilotRegisterResult result)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Release Pilot Register");
+        writer.WriteLine();
+        writer.WriteLine($"- Status: `{(result.Success ? "PASS" : "FAIL")}`");
+        writer.WriteLine($"- Pilot: `{EscapeInlineCode(result.PilotId)}`");
+        writer.WriteLine($"- Evidence packet: `{EscapeInlineCode(result.EvidencePacketPath)}`");
+        writer.WriteLine($"- Rollout status: `{EscapeInlineCode(result.StatusPath)}`");
+        writer.WriteLine($"- Dry run: `{result.DryRun.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Wrote: `{result.Wrote.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Completed pilots: `{result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}`");
+        writer.WriteLine($"- Office rollout completion claim: `{result.OfficeRolloutCompletion.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaim.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Message: {result.Message}");
+        writer.WriteLine();
+        writer.WriteLine("## Issues");
+        if (result.Issues.Length == 0)
+        {
+            writer.WriteLine("- None.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("| Severity | Issue | Message |");
+        writer.WriteLine("|---|---|---|");
+        foreach (var issue in result.Issues)
+            writer.WriteLine($"| {EscapeTableCell(issue.Severity)} | {EscapeTableCell(issue.Id)} | {EscapeTableCell(issue.Message)} |");
+
+        return writer.ToString().TrimEnd();
+    }
+
     private sealed record ReleasePilotScaffoldResult(
         string SchemaVersion,
         bool Success,
@@ -673,6 +1029,132 @@ public static class ReleaseCommand
         string Message,
         int? LineNumber,
         string? Excerpt);
+
+    private sealed record ReleasePilotRegisterResult(
+        string SchemaVersion,
+        bool Success,
+        string PilotId,
+        string EvidencePacketPath,
+        string StatusPath,
+        bool DryRun,
+        bool Wrote,
+        int MinimumOfficePilotCount,
+        int CompletedOfficePilotCount,
+        bool OfficeRolloutCompletion,
+        bool ProductionSupportClaim,
+        int ErrorCount,
+        int WarningCount,
+        string Message,
+        ReleasePilotValidateIssue[] Issues)
+    {
+        public static ReleasePilotRegisterResult From(
+            bool success,
+            string pilotId,
+            string evidencePacketPath,
+            string statusPath,
+            bool dryRun,
+            bool wrote,
+            int minimumOfficePilotCount,
+            int completedOfficePilotCount,
+            bool officeRolloutCompletion,
+            bool productionSupportClaim,
+            string message,
+            List<ReleasePilotValidateIssue> issues)
+        {
+            var errorCount = issues.Count(issue => issue.Severity == "error");
+            var warningCount = issues.Count(issue => issue.Severity == "warning");
+            return new ReleasePilotRegisterResult(
+                PilotRegisterSchemaVersion,
+                success && errorCount == 0,
+                pilotId,
+                evidencePacketPath,
+                statusPath,
+                dryRun,
+                wrote,
+                minimumOfficePilotCount,
+                completedOfficePilotCount,
+                officeRolloutCompletion,
+                productionSupportClaim,
+                errorCount,
+                warningCount,
+                message,
+                issues.ToArray());
+        }
+    }
+
+    private sealed class OfficeRolloutStatusDocument
+    {
+        public string SchemaVersion { get; set; } = OfficeRolloutStatusSchemaVersion;
+        public int MinimumOfficePilotCount { get; set; }
+        public int CompletedOfficePilotCount { get; set; }
+        public string[] CompletedPilotIds { get; set; } = Array.Empty<string>();
+        public CompletedOfficePilotStatus[] CompletedPilots { get; set; } = Array.Empty<CompletedOfficePilotStatus>();
+        public bool OfficeRolloutCompletion { get; set; }
+        public bool ProductionSupportClaim { get; set; }
+        public OfficeRolloutRequiredEvidence RequiredEvidence { get; set; } = new();
+    }
+
+    private sealed class CompletedOfficePilotStatus
+    {
+        public string PilotId { get; set; } = "";
+        public string EvidencePacketPath { get; set; } = "";
+        public bool Doctor { get; set; }
+        public bool Status { get; set; }
+        public bool Workbench { get; set; }
+        public bool Release { get; set; }
+        public bool LedgerQuery { get; set; }
+        public bool LedgerValidate { get; set; }
+        public bool LedgerStatsAnalyticsSnapshot { get; set; }
+        public bool LedgerTimelineAnalyticsSnapshot { get; set; }
+        public bool JournalVerify { get; set; }
+        public bool RollbackResult { get; set; }
+        public bool UserReview { get; set; }
+        public bool BimManagerSignoff { get; set; }
+        public bool ProjectCopyOwnerSignoff { get; set; }
+        public bool SupportTicketReview { get; set; }
+        public bool MultiUserRolloutPostmortem { get; set; }
+
+        public static CompletedOfficePilotStatus For(string pilotId, string evidencePacketPath) =>
+            new()
+            {
+                PilotId = pilotId,
+                EvidencePacketPath = evidencePacketPath,
+                Doctor = true,
+                Status = true,
+                Workbench = true,
+                Release = true,
+                LedgerQuery = true,
+                LedgerValidate = true,
+                LedgerStatsAnalyticsSnapshot = true,
+                LedgerTimelineAnalyticsSnapshot = true,
+                JournalVerify = true,
+                RollbackResult = true,
+                UserReview = true,
+                BimManagerSignoff = true,
+                ProjectCopyOwnerSignoff = true,
+                SupportTicketReview = true,
+                MultiUserRolloutPostmortem = true,
+            };
+    }
+
+    private sealed class OfficeRolloutRequiredEvidence
+    {
+        public bool Doctor { get; set; }
+        public bool Status { get; set; }
+        public bool Workbench { get; set; }
+        public bool Release { get; set; }
+        public bool LedgerQuery { get; set; }
+        public bool LedgerValidate { get; set; }
+        public bool LedgerStatsAnalyticsSnapshot { get; set; }
+        public bool LedgerTimelineAnalyticsSnapshot { get; set; }
+        public bool JournalVerify { get; set; }
+        public bool RollbackResult { get; set; }
+        public bool UserReview { get; set; }
+        public bool BimManagerSignoff { get; set; }
+        public bool ProjectCopyOwnerSignoff { get; set; }
+        public bool SupportTicketReview { get; set; }
+        public bool MultiUserRolloutPostmortem { get; set; }
+    }
 
     private static string RenderTable(ReleaseVerifyReport report)
     {
