@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
@@ -205,12 +206,12 @@ public class PlanCommandTests : IDisposable
     {
         var planPath = WriteSamplePlan();
         var handler = new RecordingQueueHttpHandler();
+        EnqueueStatus(handler);
         handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
         {
             Affected = 2,
             Preview = SamplePreview()
         }));
-        EnqueueStatus(handler);
         var client = MakeClient(handler);
         var writer = new StringWriter();
 
@@ -228,8 +229,8 @@ public class PlanCommandTests : IDisposable
         Assert.Equal(0, exitCode);
         Assert.Contains("Applied plan", writer.ToString());
         Assert.Contains("Receipt saved", writer.ToString());
-        Assert.Contains("\"elementIds\":[100,200]", handler.RequestBodies[0]);
-        Assert.Contains("\"dryRun\":false", handler.RequestBodies[0]);
+        Assert.Contains("\"elementIds\":[100,200]", handler.RequestBodies[1]);
+        Assert.Contains("\"dryRun\":false", handler.RequestBodies[1]);
         Assert.True(File.Exists(receiptPath));
         using var receipt = JsonDocument.Parse(File.ReadAllText(receiptPath));
         var root = receipt.RootElement;
@@ -237,6 +238,7 @@ public class PlanCommandTests : IDisposable
         Assert.Equal("plan.apply", root.GetProperty("action").GetString());
         Assert.False(root.GetProperty("dryRun").GetBoolean());
         Assert.Equal("set", root.GetProperty("operation").GetString());
+        Assert.Equal(ComputeSha256Hex(planPath), root.GetProperty("planHash").GetString());
         Assert.Equal(Environment.UserName, root.GetProperty("operator").GetString());
         Assert.Equal(Environment.MachineName, root.GetProperty("machine").GetString());
         Assert.Equal(@"C:\models\Demo.rvt", root.GetProperty("modelPath").GetString());
@@ -254,6 +256,65 @@ public class PlanCommandTests : IDisposable
         Assert.Equal("Fire Rating", rollbackActions[0].GetProperty("param").GetString());
         Assert.Equal("30min", rollbackActions[0].GetProperty("oldValue").GetString());
         Assert.Equal("60min", rollbackActions[0].GetProperty("newValue").GetString());
+    }
+
+    [Fact]
+    public async Task Apply_RequiresReceiptIdentityBeforeWriting()
+    {
+        var planPath = WriteSamplePlan();
+        var handler = new RecordingQueueHttpHandler();
+        handler.Enqueue("/api/status", ApiResponse<StatusInfo>.Ok(new StatusInfo
+        {
+            RevitVersion = "2026",
+            RevitYear = 2026,
+            DocumentName = "",
+            DocumentPath = ""
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("receipt model identity", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new[] { "/api/status" }, handler.Requests);
+        Assert.False(File.Exists(planPath + ".receipt.json"));
+    }
+
+    [Fact]
+    public async Task Apply_WritesShellSafeReceiptCommandForDangerousPlanPath()
+    {
+        var planPath = WriteSamplePlan("danger $(touch hacked)' plan.json");
+        var handler = new RecordingQueueHttpHandler();
+        EnqueueStatus(handler);
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 2,
+            Preview = SamplePreview()
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client,
+            planPath,
+            yes: true,
+            dryRun: false,
+            maxChanges: 50,
+            writer);
+
+        Assert.Equal(0, exitCode);
+        using var receipt = JsonDocument.Parse(File.ReadAllText(planPath + ".receipt.json"));
+        var command = receipt.RootElement.GetProperty("command").GetString() ?? "";
+        Assert.Contains("'\"'\"'", command);
+        Assert.Contains("$(touch hacked)", command);
+        Assert.Contains($"'{Path.GetFullPath(planPath).Replace("'", "'\"'\"'", StringComparison.Ordinal)}'", command);
     }
 
     [Fact]
@@ -335,12 +396,12 @@ public class PlanCommandTests : IDisposable
     {
         var planPath = WriteSampleImportPlan();
         var handler = new RecordingQueueHttpHandler();
+        EnqueueStatus(handler);
         handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
         {
             Affected = 2,
             Preview = SampleImportPreview()
         }));
-        EnqueueStatus(handler);
         var client = MakeClient(handler);
         var writer = new StringWriter();
 
@@ -355,7 +416,7 @@ public class PlanCommandTests : IDisposable
         var receiptPath = planPath + ".receipt.json";
         Assert.Equal(0, exitCode);
         Assert.Contains("Applied import plan", writer.ToString());
-        Assert.Contains("\"dryRun\":false", handler.RequestBodies[0]);
+        Assert.Contains("\"dryRun\":false", handler.RequestBodies[1]);
         Assert.True(File.Exists(receiptPath));
         using var receipt = JsonDocument.Parse(File.ReadAllText(receiptPath));
         var root = receipt.RootElement;
@@ -421,6 +482,7 @@ public class PlanCommandTests : IDisposable
         var planPath = WriteSampleSheetIssuePlan();
         var handler = new RecordingQueueHttpHandler();
         EnqueueSheetIssueSnapshot(handler);
+        EnqueueStatus(handler);
         handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
         {
             Affected = 1,
@@ -437,7 +499,6 @@ public class PlanCommandTests : IDisposable
                 new() { Id = 10, Name = "A-101", OldValue = "2026-05-01", NewValue = "2026-05-20" }
             }
         }));
-        EnqueueStatus(handler);
         var client = MakeClient(handler);
         var writer = new StringWriter();
 
@@ -463,6 +524,11 @@ public class PlanCommandTests : IDisposable
         Assert.Equal("Demo.rvt", root.GetProperty("documentName").GetString());
         Assert.Equal("2026", root.GetProperty("documentVersion").GetString());
         Assert.Equal(2, root.GetProperty("elementWrites").GetInt32());
+        Assert.Equal(2, root.GetProperty("planActionCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("skippedCount").GetInt32());
+        Assert.True(root.GetProperty("requiresRollback").GetBoolean());
+        Assert.Equal(ComputeSha256Hex(planPath), root.GetProperty("planHash").GetString());
+        Assert.Contains("plan apply", root.GetProperty("command").GetString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(new long[] { 10 }, ReadLongArray(root.GetProperty("affectedElementIds")));
         var rollbackActions = root.GetProperty("rollbackActions").EnumerateArray().ToArray();
         Assert.Equal(2, rollbackActions.Length);
@@ -605,6 +671,7 @@ public class PlanCommandTests : IDisposable
         var planPath = WriteSampleSheetRenumberPlan();
         var handler = new RecordingQueueHttpHandler();
         EnqueueSheetRenumberSnapshot(handler);
+        EnqueueStatus(handler);
         handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
         {
             Affected = 1,
@@ -621,7 +688,6 @@ public class PlanCommandTests : IDisposable
                 new() { Id = 11, Name = "Level 2", OldValue = "TMP-002", NewValue = "A-102" }
             }
         }));
-        EnqueueStatus(handler);
         var client = MakeClient(handler);
         var writer = new StringWriter();
 
@@ -773,11 +839,28 @@ public class PlanCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_RoomNumberingPlan_RespectsMaxChangesBeforeApiCalls()
+    {
+        var planPath = WriteSampleRoomNumberingPlan();
+        var handler = new RecordingQueueHttpHandler();
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: true, dryRun: false, maxChanges: 1, writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("exceeds --max-changes 1", writer.ToString());
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task Apply_RoomNumberingPlan_WritesReceiptWithRollbackActions()
     {
         var planPath = WriteSampleRoomNumberingPlan();
         var handler = new RecordingQueueHttpHandler();
         EnqueueRooms(handler, "101", "102");
+        EnqueueStatus(handler);
         handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
         {
             Affected = 1,
@@ -788,7 +871,6 @@ public class PlanCommandTests : IDisposable
             Affected = 1,
             Preview = { new SetPreviewItem { Id = 11, Name = "Lobby", OldValue = "102", NewValue = "L1-002" } }
         }));
-        EnqueueStatus(handler);
         var client = MakeClient(handler);
         var writer = new StringWriter();
 
@@ -801,12 +883,71 @@ public class PlanCommandTests : IDisposable
         using var json = JsonDocument.Parse(File.ReadAllText(receiptPath));
         var root = json.RootElement;
         Assert.Equal("room-numbering", root.GetProperty("operation").GetString());
+        Assert.Equal(@"C:\models\rooms.yml", root.GetProperty("rulePath").GetString());
+        Assert.Equal(2, root.GetProperty("planActionCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("skippedCount").GetInt32());
+        Assert.True(root.GetProperty("requiresRollback").GetBoolean());
         Assert.Equal("Number", root.GetProperty("param").GetString());
         Assert.Equal(2, root.GetProperty("rollbackActions").GetArrayLength());
         Assert.Contains(root.GetProperty("rollbackActions").EnumerateArray(), action =>
             action.GetProperty("elementId").GetInt64() == 10 &&
             action.GetProperty("oldValue").GetString() == "101" &&
             action.GetProperty("newValue").GetString() == "L1-001");
+    }
+
+    [Fact]
+    public async Task Apply_MarkAssignmentPlan_WritesReceiptWithRollbackRequirement()
+    {
+        var planPath = WriteSampleMarkAssignmentPlan();
+        var handler = new RecordingQueueHttpHandler();
+        EnqueueMarkElements(handler, "D-001");
+        EnqueueStatus(handler);
+        handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+        {
+            Affected = 1,
+            Preview = { new SetPreviewItem { Id = 31, Name = "Door 31", OldValue = "D-001", NewValue = "A-001" } }
+        }));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: true, dryRun: false, maxChanges: 50, writer);
+
+        Assert.Equal(0, exitCode);
+        var receiptPath = planPath + ".receipt.json";
+        Assert.True(File.Exists(receiptPath));
+        using var json = JsonDocument.Parse(File.ReadAllText(receiptPath));
+        var root = json.RootElement;
+        Assert.Equal("mark-assignment", root.GetProperty("operation").GetString());
+        Assert.True(root.GetProperty("requiresRollback").GetBoolean());
+        Assert.Equal(@"C:\models\marks.yml", root.GetProperty("rulePath").GetString());
+        Assert.Equal(new[] { "level", "zone" }, root.GetProperty("sort").EnumerateArray().Select(item => item.GetString()).ToArray());
+        Assert.Equal(1, root.GetProperty("planActionCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("skippedCount").GetInt32());
+        var rollback = Assert.Single(root.GetProperty("rollbackActions").EnumerateArray());
+        Assert.Equal(31, rollback.GetProperty("elementId").GetInt64());
+        Assert.Equal("Mark", rollback.GetProperty("param").GetString());
+        Assert.Equal("D-001", rollback.GetProperty("oldValue").GetString());
+        Assert.Equal("A-001", rollback.GetProperty("newValue").GetString());
+        Assert.Equal("mark-assignment", rollback.GetProperty("source").GetString());
+    }
+
+    [Fact]
+    public async Task Apply_MarkAssignmentPlan_RequiresReceiptModelIdentityBeforeWrites()
+    {
+        var planPath = WriteSampleMarkAssignmentPlan();
+        var handler = new RecordingQueueHttpHandler();
+        EnqueueMarkElements(handler, "D-001");
+        handler.Enqueue("/api/status", ApiResponse<StatusInfo>.Fail("status unavailable"));
+        var client = MakeClient(handler);
+        var writer = new StringWriter();
+
+        var exitCode = await PlanCommand.ExecuteApplyAsync(
+            client, planPath, yes: true, dryRun: false, maxChanges: 50, writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("failed to capture receipt model identity", writer.ToString());
+        Assert.Equal(new[] { "/api/elements", "/api/status" }, handler.Requests);
     }
 
     [Fact]
@@ -854,12 +995,12 @@ public class PlanCommandTests : IDisposable
     {
         var planPath = WriteSampleLinkRepairPlan();
         var handler = new RecordingQueueHttpHandler();
+        EnqueueStatus(handler);
         handler.Enqueue("/api/links/repair", ApiResponse<LinkRepairResult>.Ok(new LinkRepairResult
         {
             Affected = 1,
             Preview = { SampleLinkRepairOperation() }
         }));
-        EnqueueStatus(handler);
         var client = MakeClient(handler);
         var writer = new StringWriter();
 
@@ -885,6 +1026,7 @@ public class PlanCommandTests : IDisposable
     {
         var planPath = WriteSampleModelMapFixPlan();
         var handler = new RecordingQueueHttpHandler();
+        EnqueueStatus(handler);
         handler.Enqueue("/api/model/map/fix", ApiResponse<ModelMapFixResult>.Ok(new ModelMapFixResult
         {
             Affected = 1,
@@ -901,7 +1043,6 @@ public class PlanCommandTests : IDisposable
                 }
             }
         }));
-        EnqueueStatus(handler);
         var client = MakeClient(handler);
         var writer = new StringWriter();
 
@@ -1100,9 +1241,9 @@ defaults:
             Directory.Delete(_tempDir, recursive: true);
     }
 
-    private string WriteSamplePlan()
+    private string WriteSamplePlan(string fileName = "set.plan.json")
     {
-        var planPath = Path.Combine(_tempDir, "set.plan.json");
+        var planPath = Path.Combine(_tempDir, fileName);
         var plan = SetPlanFile.Create(
             new SetRequest
             {
@@ -1295,6 +1436,36 @@ defaults:
                 Apply = $"revitcli plan apply \"{planPath}\" --yes"
             });
         RoomNumberingPlanStore.Save(planPath, plan);
+        return planPath;
+    }
+
+    private string WriteSampleMarkAssignmentPlan()
+    {
+        var planPath = Path.Combine(_tempDir, "mark-assignment.plan.json");
+        var plan = new MarkAssignmentPlan(
+            "mark-assignment-plan.v1",
+            "mark-assignment",
+            "marks assign",
+            "2026-05-20T10:00:00Z",
+            "tester",
+            true,
+            "doors",
+            @"C:\models\marks.yml",
+            "Mark",
+            new[] { "level", "zone" },
+            new MarkAssignmentPlanSummary(1, 1, 1, 0),
+            new[]
+            {
+                new MarkAssignmentPlanAction(31, "Door 31", "doors", "Mark", "D-001", "A-001", "L1|East")
+            },
+            Array.Empty<MarkAssignmentPlanSkipped>(),
+            new SetPlanCommands
+            {
+                Show = $"revitcli plan show \"{planPath}\" --output markdown",
+                DryRunApply = $"revitcli plan apply \"{planPath}\" --dry-run",
+                Apply = $"revitcli plan apply \"{planPath}\" --yes"
+            });
+        MarkAssignmentPlanStore.Save(planPath, plan);
         return planPath;
     }
 
@@ -1507,10 +1678,33 @@ defaults:
         }));
     }
 
+    private static void EnqueueMarkElements(RecordingQueueHttpHandler handler, string mark)
+    {
+        handler.Enqueue("/api/elements", ApiResponse<ElementInfo[]>.Ok(new[]
+        {
+            new ElementInfo
+            {
+                Id = 31,
+                Name = "Door 31",
+                Category = "doors",
+                TypeName = "Single Door",
+                Parameters =
+                {
+                    ["Mark"] = mark,
+                    ["Level"] = "L1",
+                    ["Zone"] = "East"
+                }
+            }
+        }));
+    }
+
     private static long[] ReadLongArray(JsonElement array)
     {
         return array.EnumerateArray()
             .Select(item => item.GetInt64())
             .ToArray();
     }
+
+    private static string ComputeSha256Hex(string path) =>
+        Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
 }

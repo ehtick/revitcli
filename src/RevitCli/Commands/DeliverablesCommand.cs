@@ -243,6 +243,7 @@ public static class DeliverablesCommand
             report = DeliveryBundlePlanner.Plan(dir, bundlePath);
             report.DryRun = dryRun;
             report.RequiresWrite = !dryRun;
+            report.Command = BuildBundleCommand(report.ProjectDirectory, report.BundlePath, dryRun, force);
             if (File.Exists(report.BundlePath) && !force)
             {
                 report.Issues.Add(new DeliveryManifestIssue(
@@ -267,6 +268,30 @@ public static class DeliverablesCommand
             "markdown" => await WriteLines(output, exitCode, RenderBundleMarkdown(report)),
             _ => await WriteLines(output, exitCode, RenderBundle(report))
         };
+    }
+
+    private static string BuildBundleCommand(string projectDirectory, string bundlePath, bool dryRun, bool force)
+    {
+        var parts = new List<string>
+        {
+            "revitcli",
+            "deliverables",
+            "bundle",
+            "--dir",
+            QuoteArgument(projectDirectory),
+            "--bundle-path",
+            QuoteArgument(bundlePath),
+        };
+        if (dryRun)
+            parts.Add("--dry-run");
+        if (force)
+            parts.Add("--force");
+        return string.Join(" ", parts);
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
 
     private static DeliveryManifestReport? ReadReport(string? dir, out string? error)
@@ -475,6 +500,7 @@ public static class DeliverablesCommand
         {
             lines.Add($"{status}: Delivery bundle saved: {report.BundlePath}");
             lines.Add($"OK: Bundle receipt saved: {report.ReceiptPath}");
+            lines.Add($"OK: Bundle hash: {Format(report.BundleHash)}");
         }
         else
         {
@@ -490,7 +516,7 @@ public static class DeliverablesCommand
         {
             lines.Add("Files:");
             foreach (var file in report.Files.OrderBy(file => file.ArchivePath, StringComparer.OrdinalIgnoreCase))
-                lines.Add($"  {file.Kind,-11} {file.Bytes,8} {file.ArchivePath}");
+                lines.Add($"  {file.Kind,-11} {file.Bytes,8} {ShortHash(file.Sha256),-12} {file.ArchivePath}");
         }
 
         AppendIssues(lines, report.Issues);
@@ -507,6 +533,7 @@ public static class DeliverablesCommand
             $"- Status: `{StatusText(report.Success)}`",
             $"- Mode: `{mode}`",
             $"- Bundle: `{EscapeInlineCode(report.BundlePath)}`",
+            $"- Bundle hash: `{EscapeInlineCode(report.BundleHash ?? "-")}`",
             $"- Receipt: `{EscapeInlineCode(report.ReceiptPath)}`",
             $"- Manifest: `{EscapeInlineCode(report.ManifestPath)}`",
             $"- Entries: `{report.EntryCount}`",
@@ -523,12 +550,12 @@ public static class DeliverablesCommand
         {
             lines.Add("## Files");
             lines.Add("");
-            lines.Add("| Kind | Bytes | Archive path | Source path | Manifest line |");
-            lines.Add("|---|---:|---|---|---:|");
+            lines.Add("| Kind | Bytes | SHA256 | Archive path | Source path | Manifest line |");
+            lines.Add("|---|---:|---|---|---|---:|");
             foreach (var file in report.Files.OrderBy(file => file.ArchivePath, StringComparer.OrdinalIgnoreCase))
             {
                 lines.Add(
-                    $"| {EscapeTableCell(file.Kind)} | {file.Bytes} | {EscapeTableCell(file.ArchivePath)} | {EscapeTableCell(file.SourcePath)} | {EscapeTableCell(file.LineNumber?.ToString() ?? "-")} |");
+                    $"| {EscapeTableCell(file.Kind)} | {file.Bytes} | {EscapeTableCell(ShortHash(file.Sha256))} | {EscapeTableCell(file.ArchivePath)} | {EscapeTableCell(file.SourcePath)} | {EscapeTableCell(file.LineNumber?.ToString() ?? "-")} |");
             }
 
             lines.Add("");
@@ -597,11 +624,14 @@ public static class DeliverablesCommand
     {
         if (report.Valid)
         {
-            return new[]
+            var validLines = new List<string>
             {
                 $"OK: Delivery manifest valid: {report.ManifestPath}",
                 $"OK: Entries verified: {report.EntryCount}"
             };
+            AppendCounts(validLines, "Kinds", report.Stats.Kinds);
+            AppendCounts(validLines, "Outcomes", report.Stats.Outcomes);
+            return validLines;
         }
 
         var lines = new List<string>
@@ -624,6 +654,8 @@ public static class DeliverablesCommand
             ""
         };
 
+        AppendCountsMarkdown(lines, "Kinds", report.Stats.Kinds);
+        AppendCountsMarkdown(lines, "Outcomes", report.Stats.Outcomes);
         AppendIssuesMarkdown(lines, report.Issues);
         return lines;
     }
@@ -761,6 +793,9 @@ public static class DeliverablesCommand
     private static int ExitCode(DeliveryManifestReport report) => report.Valid ? 0 : 1;
 
     private static string Format(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+    private static string ShortHash(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "-" : value.Length <= 12 ? value : value[..12];
 
     private static string StatusText(bool success) => success ? "OK" : "FAIL";
 

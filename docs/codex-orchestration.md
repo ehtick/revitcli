@@ -58,10 +58,12 @@ for the tick loop.
 2. Find active feature (in-progress > planning > new-via-architect)
 3. orchestrator (gpt-5.5/high) writes next-action.json
 4. invoke worker (spark / cli / addin / test-author) for ONE checkbox
-5. scope enforcement — revert out-of-scope edits via git checkout --
+5. scope enforcement — preserve pre-existing dirty paths and revert only
+   out-of-scope worker-created edits from this tick
 6. dotnet build + dotnet test; if red, rescue-diagnostician (cap 2/feature)
 7. code-reviewer reads HEAD diff, writes last-review.md
-8. mark checkbox [x] in feature md (or [!] if review says needs-revision)
+8. mark checkbox [x] only when the feature is not `blocked` and this tick
+   produced worker-created changes; mark [!] if review says needs-revision
 9. git commit (with `Verify:` line)
 10. if all checkboxes done → status: done; next tick spawns next feature
 ```

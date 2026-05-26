@@ -144,11 +144,12 @@ public static class WorkflowCommand
 
     public static Command Create()
     {
-        var command = new Command("workflow", "Create, validate, run, and review terminal workflow YAML files");
+        var command = new Command("workflow", "Create, validate, run, review, and index terminal workflow YAML files");
         command.AddCommand(CreateInitCommand());
         command.AddCommand(CreateValidateCommand());
         command.AddCommand(CreateSimulateCommand());
         command.AddCommand(CreateReviewCommand());
+        command.AddCommand(CreateRegistryCommand());
         command.AddCommand(CreateRunCommand());
         command.AddCommand(CreateSuggestCommand());
         command.AddCommand(CreateExamplesCommand());
@@ -308,6 +309,30 @@ public static class WorkflowCommand
         {
             Environment.ExitCode = await ExecuteReviewAsync(file, dir, outputFormat, Console.Out);
         }, fileArg, dirOpt, outputOpt);
+
+        return command;
+    }
+
+    private static Command CreateRegistryCommand()
+    {
+        var pathArg = new Argument<string?>(
+            "path",
+            () => null,
+            "Workflow YAML file or directory; defaults to .revitcli/workflows/*.yml");
+        var dirOpt = new Option<string?>("--dir", "Base directory for default workflow discovery");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table | json | markdown");
+
+        var command = new Command("registry", "Index local workflow YAML contract fields without running commands")
+        {
+            pathArg,
+            dirOpt,
+            outputOpt,
+        };
+
+        command.SetHandler(async (string? path, string? dir, string outputFormat) =>
+        {
+            Environment.ExitCode = await ExecuteRegistryAsync(path, dir, outputFormat, Console.Out);
+        }, pathArg, dirOpt, outputOpt);
 
         return command;
     }
@@ -613,6 +638,36 @@ public static class WorkflowCommand
         return report.Success ? 0 : 1;
     }
 
+    public static async Task<int> ExecuteRegistryAsync(
+        string? fileOrDirectory,
+        string? baseDirectory,
+        string outputFormat,
+        TextWriter output,
+        DateTimeOffset? nowUtc = null)
+    {
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var format, "table", "json", "markdown"))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
+        var report = BuildWorkflowRegistry(fileOrDirectory, baseDirectory, nowUtc ?? DateTimeOffset.UtcNow);
+        switch (format)
+        {
+            case "json":
+                await output.WriteLineAsync(JsonSerializer.Serialize(report, JsonOpts));
+                break;
+            case "markdown":
+                await output.WriteLineAsync(RenderRegistryMarkdown(report));
+                break;
+            default:
+                await output.WriteLineAsync(RenderRegistryTable(report));
+                break;
+        }
+
+        return report.Success ? 0 : 1;
+    }
+
     public static async Task<int> ExecuteInitAsync(
         string? template,
         string? baseDirectory,
@@ -770,6 +825,324 @@ public static class WorkflowCommand
         return review.CanRun ? 0 : 1;
     }
 
+    private static WorkflowRegistryReport BuildWorkflowRegistry(
+        string? fileOrDirectory,
+        string? baseDirectory,
+        DateTimeOffset generatedAtUtc)
+    {
+        var projectRoot = string.IsNullOrWhiteSpace(baseDirectory)
+            ? Directory.GetCurrentDirectory()
+            : Path.GetFullPath(baseDirectory!);
+        var discovery = DiscoverWorkflowRegistryFiles(fileOrDirectory, projectRoot);
+        var report = new WorkflowRegistryReport
+        {
+            GeneratedAtUtc = generatedAtUtc.ToString("o"),
+            ProjectDirectory = projectRoot,
+            WorkflowRoot = discovery.Root,
+            Exists = discovery.Exists,
+            Issues = discovery.Issues.ToList(),
+        };
+
+        foreach (var file in discovery.Files)
+        {
+            report.Workflows.Add(BuildWorkflowRegistryEntry(file));
+        }
+
+        report.WorkflowCount = report.Workflows.Count;
+        report.ValidWorkflowCount = report.Workflows.Count(workflow => workflow.CanRun);
+        report.InvalidWorkflowCount = report.WorkflowCount - report.ValidWorkflowCount;
+        report.ReadOnlyWorkflowCount = report.Workflows.Count(workflow =>
+            string.Equals(workflow.RiskLevel, "read-only", StringComparison.OrdinalIgnoreCase));
+        report.DryRunWorkflowCount = report.Workflows.Count(workflow =>
+            string.Equals(workflow.RiskLevel, "dry-run", StringComparison.OrdinalIgnoreCase));
+        report.MutatingWorkflowCount = report.Workflows.Count(workflow =>
+            string.Equals(workflow.RiskLevel, "mutating", StringComparison.OrdinalIgnoreCase));
+        report.ApprovalRequiredStepCount = report.Workflows.Sum(workflow => workflow.ApprovalRequiredCount);
+        report.DryRunCommandCount = report.Workflows.Sum(workflow => workflow.DryRunCommands.Count);
+        report.RollbackSupportedWorkflowCount = report.Workflows.Count(workflow => workflow.RollbackSupport);
+
+        foreach (var workflowIssue in report.Workflows.SelectMany(workflow => workflow.Issues))
+        {
+            report.Issues.Add(workflowIssue);
+        }
+
+        report.Success = report.Issues.All(issue => issue.Severity != WorkflowValidationSeverity.Error);
+        return report;
+    }
+
+    private static WorkflowRegistryDiscovery DiscoverWorkflowRegistryFiles(
+        string? fileOrDirectory,
+        string projectRoot)
+    {
+        var issues = new List<WorkflowValidationIssue>();
+        var explicitPath = !string.IsNullOrWhiteSpace(fileOrDirectory);
+        var root = explicitPath
+            ? ResolvePath(projectRoot, fileOrDirectory!)
+            : Path.Combine(projectRoot, WorkflowLoader.DefaultDirectory);
+
+        if (File.Exists(root))
+        {
+            return new WorkflowRegistryDiscovery(
+                Path.GetDirectoryName(root) ?? projectRoot,
+                Exists: true,
+                new[] { root },
+                issues);
+        }
+
+        if (Directory.Exists(root))
+        {
+            var files = Directory.EnumerateFiles(root, "*.yml")
+                .Concat(Directory.EnumerateFiles(root, "*.yaml"))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (files.Length == 0)
+            {
+                issues.Add(new WorkflowValidationIssue(
+                    WorkflowValidationSeverity.Warning,
+                    "workflowRoot",
+                    $"no workflow YAML files found in {root}."));
+            }
+
+            return new WorkflowRegistryDiscovery(root, Exists: true, files, issues);
+        }
+
+        issues.Add(new WorkflowValidationIssue(
+            explicitPath ? WorkflowValidationSeverity.Error : WorkflowValidationSeverity.Warning,
+            explicitPath ? "source.missing" : "workflowRoot",
+            explicitPath
+                ? $"workflow path not found: {root}"
+                : $"workflow directory not found: {root}; run 'revitcli workflow init <template>' or pass a workflow path."));
+
+        return new WorkflowRegistryDiscovery(root, Exists: false, Array.Empty<string>(), issues);
+    }
+
+    private static WorkflowRegistryEntry BuildWorkflowRegistryEntry(string path)
+    {
+        try
+        {
+            var loaded = WorkflowLoader.Load(path);
+            var simulation = WorkflowValidator.Simulate(loaded);
+            var entry = BuildWorkflowRegistryEntry(loaded, simulation);
+            return entry;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or YamlDotNet.Core.YamlException)
+        {
+            return new WorkflowRegistryEntry
+            {
+                Path = Path.GetFullPath(path),
+                Name = Path.GetFileNameWithoutExtension(path),
+                Version = 0,
+                CanRun = false,
+                RiskLevel = "invalid",
+                Issues =
+                {
+                    new WorkflowValidationIssue(
+                        WorkflowValidationSeverity.Error,
+                        "file",
+                        ex.Message)
+                }
+            };
+        }
+    }
+
+    private static WorkflowRegistryEntry BuildWorkflowRegistryEntry(
+        LoadedWorkflow loaded,
+        WorkflowSimulationReport simulation)
+    {
+        var steps = simulation.Steps;
+        var readOnlyStepCount = steps.Count(step => string.Equals(step.Mode, "read-only", StringComparison.OrdinalIgnoreCase));
+        var dryRunStepCount = steps.Count(step => string.Equals(step.Mode, "dry-run", StringComparison.OrdinalIgnoreCase));
+        var mutatingStepCount = steps.Count(step => string.Equals(step.Mode, "mutating", StringComparison.OrdinalIgnoreCase));
+        var approvalRequiredCount = steps.Count(step => step.RequiresApproval);
+        var readOnlyWriteCapableStepCount = steps.Count(step =>
+            string.Equals(step.Mode, "read-only", StringComparison.OrdinalIgnoreCase) &&
+            WorkflowValidator.CommandLooksWriteCapable(step.Run));
+        var dryRunCommands = steps
+            .Where(step => string.Equals(step.Mode, "dry-run", StringComparison.OrdinalIgnoreCase) ||
+                step.Run.Contains("--dry-run", StringComparison.OrdinalIgnoreCase))
+            .Select(step => step.Run)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var approvalCommands = steps
+            .Where(step => step.RequiresApproval)
+            .Select(step => step.Run)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var rollbackCommands = steps
+            .Where(step => StartsWithCommand(NormalizeWorkflowCommand(step.Run), "rollback") ||
+                NormalizeWorkflowCommand(step.Run).Contains(" rollback", StringComparison.OrdinalIgnoreCase))
+            .Select(step => step.Run)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new WorkflowRegistryEntry
+        {
+            Path = loaded.Path,
+            Name = simulation.Name,
+            Description = simulation.Description,
+            Version = loaded.Workflow.Version,
+            CanRun = simulation.CanRun,
+            StepCount = simulation.StepCount,
+            ReadOnlyStepCount = readOnlyStepCount,
+            DryRunStepCount = dryRunStepCount,
+            MutatingStepCount = mutatingStepCount,
+            ApprovalRequiredCount = approvalRequiredCount,
+            RiskLevel = DetermineWorkflowRiskLevel(readOnlyStepCount, dryRunStepCount, mutatingStepCount, readOnlyWriteCapableStepCount, simulation.CanRun),
+            ReadWriteScope = BuildReadWriteScope(readOnlyStepCount, dryRunStepCount, mutatingStepCount, readOnlyWriteCapableStepCount),
+            Inputs = InferWorkflowInputs(steps),
+            Outputs = InferWorkflowOutputs(steps),
+            DryRunCommands = dryRunCommands,
+            ApprovalCommands = approvalCommands,
+            RollbackCommands = rollbackCommands,
+            RollbackSupport = rollbackCommands.Length > 0,
+            ReceiptSchemas = InferReceiptSchemas(steps),
+            AcceptanceEvidence = BuildAcceptanceEvidence(steps, simulation.Name),
+            Issues = simulation.Issues.ToList()
+        };
+    }
+
+    private static string DetermineWorkflowRiskLevel(
+        int readOnlyStepCount,
+        int dryRunStepCount,
+        int mutatingStepCount,
+        int readOnlyWriteCapableStepCount,
+        bool canRun)
+    {
+        if (!canRun)
+            return "invalid";
+        if (mutatingStepCount > 0 || readOnlyWriteCapableStepCount > 0)
+            return "mutating";
+        if (dryRunStepCount > 0)
+            return "dry-run";
+        return readOnlyStepCount > 0 ? "read-only" : "empty";
+    }
+
+    private static IReadOnlyList<string> BuildReadWriteScope(
+        int readOnlyStepCount,
+        int dryRunStepCount,
+        int mutatingStepCount,
+        int readOnlyWriteCapableStepCount)
+    {
+        var scope = new List<string>();
+        if (readOnlyStepCount > 0)
+            scope.Add("read-only");
+        if (dryRunStepCount > 0)
+            scope.Add("dry-run");
+        if (mutatingStepCount > 0 || readOnlyWriteCapableStepCount > 0)
+            scope.Add("mutating");
+        return scope;
+    }
+
+    private static IReadOnlyList<string> InferWorkflowInputs(IReadOnlyList<WorkflowStepSimulation> steps)
+    {
+        var inputs = new SortedSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "workflow YAML"
+        };
+
+        foreach (var step in steps)
+        {
+            foreach (var artifact in RequiredArtifactsForCommand(step.Run))
+                inputs.Add(artifact);
+            foreach (var artifact in ReferencedArtifactsForCommand(step.Run))
+                inputs.Add(artifact);
+        }
+
+        return inputs.ToArray();
+    }
+
+    private static IReadOnlyList<string> InferWorkflowOutputs(IReadOnlyList<WorkflowStepSimulation> steps)
+    {
+        var outputs = new SortedSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "workflow-registry.v1",
+            "workflow-review.v1",
+            "workflow-run-receipt.v1"
+        };
+
+        foreach (var step in steps)
+        {
+            var command = NormalizeWorkflowCommand(step.Run);
+            if (StartsWithCommand(command, "history capture"))
+                outputs.Add("history snapshot");
+            if (StartsWithCommand(command, "deliverables bundle"))
+                outputs.Add("delivery bundle");
+            if (StartsWithCommand(command, "issue package"))
+                outputs.Add("issue package");
+            if (StartsWithCommand(command, "publish"))
+                outputs.Add("publish output");
+            if (StartsWithCommand(command, "schedule export") ||
+                StartsWithCommand(command, "schedules batch-export"))
+            {
+                outputs.Add("schedule export");
+                outputs.Add("schedule-export-manifest.v1");
+            }
+        }
+
+        return outputs.ToArray();
+    }
+
+    private static IReadOnlyList<string> InferReceiptSchemas(IReadOnlyList<WorkflowStepSimulation> steps)
+    {
+        var schemas = new SortedSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "workflow-run-receipt.v1"
+        };
+
+        foreach (var step in steps)
+        {
+            var command = NormalizeWorkflowCommand(step.Run);
+            if (StartsWithCommand(command, "plan apply"))
+                schemas.Add("plan-receipt.v1");
+            if (StartsWithCommand(command, "deliverables bundle"))
+                schemas.Add("delivery-bundle-receipt.v1");
+            if (StartsWithCommand(command, "issue package"))
+                schemas.Add("issue-package-receipt.v1");
+            if (StartsWithCommand(command, "publish"))
+                schemas.Add("publish-receipt.v1");
+        }
+
+        return schemas.ToArray();
+    }
+
+    private static IReadOnlyList<string> BuildAcceptanceEvidence(
+        IReadOnlyList<WorkflowStepSimulation> steps,
+        string workflowName)
+    {
+        var evidence = new SortedSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "workflow validate",
+            "workflow simulate",
+            "workflow review",
+            "workflow receipts",
+            "workbench verify"
+        };
+
+        var acceptance = AcceptanceExamples.FirstOrDefault(example =>
+            string.Equals(example.Workflow, workflowName, StringComparison.OrdinalIgnoreCase));
+        if (acceptance != null)
+        {
+            foreach (var item in acceptance.Evidence)
+                evidence.Add(item);
+        }
+
+        if (steps.Any(step => StartsWithCommand(NormalizeWorkflowCommand(step.Run), "journal verify")))
+            evidence.Add("journal verify");
+        foreach (var schema in InferReceiptSchemas(steps))
+            evidence.Add(schema);
+        foreach (var step in steps)
+        {
+            var command = NormalizeWorkflowCommand(step.Run);
+            if (StartsWithCommand(command, "schedule export") ||
+                StartsWithCommand(command, "schedules batch-export"))
+            {
+                evidence.Add("schedule-export-manifest.v1");
+            }
+        }
+
+        return evidence.ToArray();
+    }
+
     private static WorkflowReviewReport BuildWorkflowReview(
         LoadedWorkflow loaded,
         WorkflowSimulationReport simulation,
@@ -872,6 +1245,142 @@ public static class WorkflowCommand
             .Select(item => CreateArtifactReadiness(projectRoot, item.Key, item.Value.ToArray()))
             .ToList();
     }
+
+    private static IReadOnlyList<string> ReferencedArtifactsForCommand(string run)
+    {
+        IReadOnlyList<string> tokens;
+        try
+        {
+            tokens = WorkflowCommandLine.Tokenize(run);
+        }
+        catch (FormatException)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (tokens.Count == 0)
+            return Array.Empty<string>();
+
+        var commandStart = string.Equals(tokens[0], "revitcli", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        if (tokens.Count <= commandStart)
+            return Array.Empty<string>();
+
+        var references = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddOptionReference(tokens, "--profile", "profile", references);
+        AddOptionReference(tokens, "--manifest", "manifest", references);
+        AddOptionReference(tokens, "--spec", "spec", references);
+        AddOptionReference(tokens, "--rule", "rule", references);
+        AddOptionReference(tokens, "--against", "against", references);
+        AddOptionReference(tokens, "--from", "from", references);
+        AddOptionReference(tokens, "--to", "to", references);
+        AddOptionReference(tokens, "--receipt-dir", "receipt-dir", references);
+
+        var command = NormalizeWorkflowCommand(run);
+        if (StartsWithCommand(command, "plan apply") &&
+            TryGetPositionalAfter(tokens, commandStart + 2, out var planPath))
+        {
+            references.Add($"plan:{planPath}");
+        }
+
+        if (StartsWithCommand(command, "rollback") &&
+            TryGetPositionalAfter(tokens, commandStart + 1, out var receiptPath))
+        {
+            references.Add($"receipt:{receiptPath}");
+        }
+
+        if ((StartsWithCommand(command, "workflow validate") ||
+             StartsWithCommand(command, "workflow simulate") ||
+             StartsWithCommand(command, "workflow review") ||
+             StartsWithCommand(command, "workflow run")) &&
+            TryGetPositionalAfter(tokens, commandStart + 2, out var workflowPath))
+        {
+            references.Add($"workflow:{workflowPath}");
+        }
+
+        return references.ToArray();
+    }
+
+    private static void AddOptionReference(
+        IReadOnlyList<string> tokens,
+        string option,
+        string label,
+        ISet<string> references)
+    {
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.Equals(option, StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < tokens.Count && !tokens[i + 1].StartsWith("-", StringComparison.Ordinal))
+                    references.Add($"{label}:{tokens[i + 1]}");
+                continue;
+            }
+
+            var prefix = option + "=";
+            if (token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+                token.Length > prefix.Length)
+            {
+                references.Add($"{label}:{token[prefix.Length..]}");
+            }
+        }
+    }
+
+    private static bool TryGetPositionalAfter(
+        IReadOnlyList<string> tokens,
+        int start,
+        out string value)
+    {
+        for (var i = Math.Max(0, start); i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.StartsWith("-", StringComparison.Ordinal))
+            {
+                if (!token.Contains('=', StringComparison.Ordinal) &&
+                    OptionUsuallyTakesValue(token) &&
+                    i + 1 < tokens.Count &&
+                    !tokens[i + 1].StartsWith("-", StringComparison.Ordinal))
+                {
+                    i++;
+                }
+
+                continue;
+            }
+
+            value = token;
+            return true;
+        }
+
+        value = "";
+        return false;
+    }
+
+    private static bool OptionUsuallyTakesValue(string option) =>
+        option is
+            "--against" or
+            "--bundle-path" or
+            "--category" or
+            "--dir" or
+            "--fields" or
+            "--filter" or
+            "--format" or
+            "--from" or
+            "--manifest" or
+            "--max-changes" or
+            "--name" or
+            "--output" or
+            "--output-dir" or
+            "--plan-output" or
+            "--profile" or
+            "--receipt-dir" or
+            "--rule" or
+            "--set" or
+            "--sort" or
+            "--spec" or
+            "--template" or
+            "--timeout-ms" or
+            "--to" or
+            "--value" or
+            "--window";
 
     private static IReadOnlyList<string> RequiredArtifactsForCommand(string run)
     {
@@ -1597,6 +2106,101 @@ public static class WorkflowCommand
         writer.WriteLine("## Handoff Notes");
         foreach (var note in report.HandoffNotes)
             writer.WriteLine($"- {EscapeMarkdownText(note)}");
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderRegistryTable(WorkflowRegistryReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("Workflow registry");
+        writer.WriteLine($"Project: {report.ProjectDirectory}");
+        writer.WriteLine($"Workflow root: {report.WorkflowRoot}");
+        writer.WriteLine($"Schema: {report.SchemaVersion}");
+        writer.WriteLine($"Workflows: {report.WorkflowCount}; valid: {report.ValidWorkflowCount}; invalid: {report.InvalidWorkflowCount}; mutating: {report.MutatingWorkflowCount}; dryRunCommands={report.DryRunCommandCount}; approvalRequired={report.ApprovalRequiredStepCount}; rollbackSupported={report.RollbackSupportedWorkflowCount}");
+
+        if (report.Workflows.Count == 0)
+        {
+            writer.WriteLine(report.Exists
+                ? "No local workflow YAML files found."
+                : "No local workflow directory found.");
+        }
+        else
+        {
+            writer.WriteLine("Entries:");
+            foreach (var workflow in report.Workflows)
+            {
+                writer.WriteLine(
+                    $"  {(workflow.CanRun ? "OK" : "FAIL"),-4} {workflow.Name} risk={workflow.RiskLevel} steps={workflow.StepCount} scope={string.Join(",", workflow.ReadWriteScope)} rollback={(workflow.RollbackSupport ? "yes" : "no")} dryRuns={workflow.DryRunCommands.Count} approvals={workflow.ApprovalCommands.Count} receipts={string.Join(",", workflow.ReceiptSchemas)}");
+                writer.WriteLine($"       inputs={string.Join(",", workflow.Inputs)} outputs={string.Join(",", workflow.Outputs)}");
+                foreach (var dryRunCommand in workflow.DryRunCommands)
+                    writer.WriteLine($"       dry-run command: {dryRunCommand}");
+                foreach (var approvalCommand in workflow.ApprovalCommands)
+                    writer.WriteLine($"       approval command: {approvalCommand}");
+                writer.WriteLine($"       acceptance evidence={string.Join(",", workflow.AcceptanceEvidence)}");
+            }
+        }
+
+        if (report.Issues.Count > 0)
+        {
+            writer.WriteLine("Issues:");
+            foreach (var issue in report.Issues)
+                writer.WriteLine($"  {issue.Severity.ToString().ToUpperInvariant()} {issue.Path}: {issue.Message}");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderRegistryMarkdown(WorkflowRegistryReport report)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Workflow Registry");
+        writer.WriteLine();
+        writer.WriteLine($"- Schema: `{EscapeInlineCode(report.SchemaVersion)}`");
+        writer.WriteLine($"- Project directory: `{EscapeInlineCode(report.ProjectDirectory)}`");
+        writer.WriteLine($"- Workflow root: `{EscapeInlineCode(report.WorkflowRoot)}`");
+        writer.WriteLine($"- Exists: {(report.Exists ? "yes" : "no")}");
+        writer.WriteLine($"- Success: {(report.Success ? "yes" : "no")}");
+        writer.WriteLine($"- Workflows: {report.WorkflowCount}");
+        writer.WriteLine($"- Valid workflows: {report.ValidWorkflowCount}");
+        writer.WriteLine($"- Invalid workflows: {report.InvalidWorkflowCount}");
+        writer.WriteLine($"- Dry-run commands: {report.DryRunCommandCount}");
+        writer.WriteLine($"- Approval-required steps: {report.ApprovalRequiredStepCount}");
+        writer.WriteLine($"- Rollback-supported workflows: {report.RollbackSupportedWorkflowCount}");
+        writer.WriteLine();
+
+        writer.WriteLine("## Workflows");
+        if (report.Workflows.Count == 0)
+        {
+            writer.WriteLine(report.Exists
+                ? "- No local workflow YAML files found."
+                : "- No local workflow directory found.");
+        }
+        else
+        {
+            writer.WriteLine("| Workflow | Status | Risk level | Read/write scope | Inputs | Outputs | Dry-run commands | Approval commands | Rollback support | Receipt schema | Acceptance evidence |");
+            writer.WriteLine("|---|---|---|---|---|---|---|---|---|---|---|");
+            foreach (var workflow in report.Workflows)
+            {
+                writer.WriteLine(
+                    $"| {EscapeTableCell(workflow.Name)} | {(workflow.CanRun ? "OK" : "FAIL")} | `{EscapeInlineCode(workflow.RiskLevel)}` | `{EscapeInlineCode(string.Join(", ", workflow.ReadWriteScope))}` | {EscapeTableCell(string.Join(", ", workflow.Inputs))} | {EscapeTableCell(string.Join(", ", workflow.Outputs))} | {EscapeTableCell(string.Join("<br>", workflow.DryRunCommands))} | {EscapeTableCell(string.Join("<br>", workflow.ApprovalCommands))} | {(workflow.RollbackSupport ? "yes" : "no")} | `{EscapeInlineCode(string.Join(", ", workflow.ReceiptSchemas))}` | {EscapeTableCell(string.Join(", ", workflow.AcceptanceEvidence))} |");
+            }
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("## Issues");
+        if (report.Issues.Count == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var issue in report.Issues)
+            {
+                writer.WriteLine(
+                    $"- `{issue.Severity.ToString().ToUpperInvariant()}` `{EscapeInlineCode(issue.Path)}`: {EscapeMarkdownText(issue.Message)}");
+            }
+        }
 
         return writer.ToString().TrimEnd();
     }
@@ -2332,6 +2936,132 @@ public static class WorkflowCommand
         IReadOnlyList<string> Patterns,
         string ReviewCommand,
         string Notes);
+
+    private sealed record WorkflowRegistryDiscovery(
+        string Root,
+        bool Exists,
+        IReadOnlyList<string> Files,
+        IReadOnlyList<WorkflowValidationIssue> Issues);
+
+    private sealed class WorkflowRegistryReport
+    {
+        [JsonPropertyName("schemaVersion")]
+        public string SchemaVersion { get; set; } = "workflow-registry.v1";
+
+        [JsonPropertyName("generatedAtUtc")]
+        public string GeneratedAtUtc { get; set; } = "";
+
+        [JsonPropertyName("projectDirectory")]
+        public string ProjectDirectory { get; set; } = "";
+
+        [JsonPropertyName("workflowRoot")]
+        public string WorkflowRoot { get; set; } = "";
+
+        [JsonPropertyName("exists")]
+        public bool Exists { get; set; }
+
+        [JsonPropertyName("success")]
+        public bool Success { get; set; }
+
+        [JsonPropertyName("workflowCount")]
+        public int WorkflowCount { get; set; }
+
+        [JsonPropertyName("validWorkflowCount")]
+        public int ValidWorkflowCount { get; set; }
+
+        [JsonPropertyName("invalidWorkflowCount")]
+        public int InvalidWorkflowCount { get; set; }
+
+        [JsonPropertyName("readOnlyWorkflowCount")]
+        public int ReadOnlyWorkflowCount { get; set; }
+
+        [JsonPropertyName("dryRunWorkflowCount")]
+        public int DryRunWorkflowCount { get; set; }
+
+        [JsonPropertyName("mutatingWorkflowCount")]
+        public int MutatingWorkflowCount { get; set; }
+
+        [JsonPropertyName("approvalRequiredStepCount")]
+        public int ApprovalRequiredStepCount { get; set; }
+
+        [JsonPropertyName("dryRunCommandCount")]
+        public int DryRunCommandCount { get; set; }
+
+        [JsonPropertyName("rollbackSupportedWorkflowCount")]
+        public int RollbackSupportedWorkflowCount { get; set; }
+
+        [JsonPropertyName("workflows")]
+        public List<WorkflowRegistryEntry> Workflows { get; set; } = new();
+
+        [JsonPropertyName("issues")]
+        public List<WorkflowValidationIssue> Issues { get; set; } = new();
+    }
+
+    private sealed class WorkflowRegistryEntry
+    {
+        [JsonPropertyName("path")]
+        public string Path { get; set; } = "";
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "";
+
+        [JsonPropertyName("description")]
+        public string? Description { get; set; }
+
+        [JsonPropertyName("version")]
+        public int Version { get; set; }
+
+        [JsonPropertyName("canRun")]
+        public bool CanRun { get; set; }
+
+        [JsonPropertyName("stepCount")]
+        public int StepCount { get; set; }
+
+        [JsonPropertyName("readOnlyStepCount")]
+        public int ReadOnlyStepCount { get; set; }
+
+        [JsonPropertyName("dryRunStepCount")]
+        public int DryRunStepCount { get; set; }
+
+        [JsonPropertyName("mutatingStepCount")]
+        public int MutatingStepCount { get; set; }
+
+        [JsonPropertyName("approvalRequiredCount")]
+        public int ApprovalRequiredCount { get; set; }
+
+        [JsonPropertyName("riskLevel")]
+        public string RiskLevel { get; set; } = "";
+
+        [JsonPropertyName("readWriteScope")]
+        public IReadOnlyList<string> ReadWriteScope { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("inputs")]
+        public IReadOnlyList<string> Inputs { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("outputs")]
+        public IReadOnlyList<string> Outputs { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("dryRunCommands")]
+        public IReadOnlyList<string> DryRunCommands { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("approvalCommands")]
+        public IReadOnlyList<string> ApprovalCommands { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("rollbackSupport")]
+        public bool RollbackSupport { get; set; }
+
+        [JsonPropertyName("rollbackCommands")]
+        public IReadOnlyList<string> RollbackCommands { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("receiptSchemas")]
+        public IReadOnlyList<string> ReceiptSchemas { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("acceptanceEvidence")]
+        public IReadOnlyList<string> AcceptanceEvidence { get; set; } = Array.Empty<string>();
+
+        [JsonPropertyName("issues")]
+        public List<WorkflowValidationIssue> Issues { get; set; } = new();
+    }
 
     private sealed record WorkflowAcceptanceExample(
         [property: JsonPropertyName("workflow")] string Workflow,

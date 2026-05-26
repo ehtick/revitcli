@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
@@ -91,6 +92,12 @@ public static class RollbackCommand
                 output);
         }
 
+        if (schemaVersion == null && LooksLikePlanReceiptJson(json))
+        {
+            await output.WriteLineAsync($"Error: unsupported plan receipt: {artifactPath} is missing schemaVersion.");
+            return 1;
+        }
+
         ModelSnapshot? snapshot;
         try
         {
@@ -149,7 +156,8 @@ public static class RollbackCommand
             maxChanges,
             "rollback journal",
             output,
-            () => TryValidateCurrentDocumentAsync(client, snapshot, output));
+            safeApplyCommand: BuildRollbackApplyCommand(artifactPath, maxChanges),
+            validateCurrentDocument: () => TryValidateCurrentDocumentAsync(client, snapshot, output));
     }
 
     private static async Task<int> ExecutePlanReceiptRollbackAsync(
@@ -178,8 +186,20 @@ public static class RollbackCommand
             return 1;
         }
 
+        if (!IsSupportedPlanReceiptOperation(receipt.Operation))
+        {
+            await output.WriteLineAsync($"Error: unsupported plan receipt operation: {receipt.Operation}");
+            return 1;
+        }
+
         if (string.Equals(receipt.Operation, "fix", StringComparison.OrdinalIgnoreCase))
         {
+            if (!TryValidateReceiptPlanHash(receipt, out var planHashError))
+            {
+                await output.WriteLineAsync($"Error: {planHashError}");
+                return 1;
+            }
+
             if (string.IsNullOrWhiteSpace(receipt.BaselinePath))
             {
                 await output.WriteLineAsync("Error: fix plan receipt does not include a rollback baseline path.");
@@ -192,6 +212,12 @@ public static class RollbackCommand
 
         if (string.Equals(receipt.Operation, "link-repair", StringComparison.OrdinalIgnoreCase))
         {
+            if (!TryValidateReceiptPlanHash(receipt, out var planHashError))
+            {
+                await output.WriteLineAsync($"Error: {planHashError}");
+                return 1;
+            }
+
             return await ExecuteLinkRepairReceiptRollbackAsync(
                 client,
                 receipt,
@@ -203,6 +229,12 @@ public static class RollbackCommand
 
         if (string.Equals(receipt.Operation, "model-map-fix", StringComparison.OrdinalIgnoreCase))
         {
+            if (!TryValidateReceiptPlanHash(receipt, out var planHashError))
+            {
+                await output.WriteLineAsync($"Error: {planHashError}");
+                return 1;
+            }
+
             return await ExecuteModelMapReceiptRollbackAsync(
                 client,
                 receipt,
@@ -212,10 +244,21 @@ public static class RollbackCommand
                 output);
         }
 
-        var rollbackWrites = BuildReceiptRollbackWrites(receipt).ToList();
+        if (!TryBuildReceiptRollbackWrites(receipt, out var rollbackWrites, out var rollbackActionError))
+        {
+            await output.WriteLineAsync($"Error: {rollbackActionError}");
+            return 1;
+        }
+
         if (rollbackWrites.Count == 0)
         {
             await output.WriteLineAsync("Error: plan receipt does not include rollback actions.");
+            return 1;
+        }
+
+        if (!TryValidateReceiptPlanHash(receipt, out var rollbackPlanHashError))
+        {
+            await output.WriteLineAsync($"Error: {rollbackPlanHashError}");
             return 1;
         }
 
@@ -227,11 +270,12 @@ public static class RollbackCommand
             maxChanges,
             "plan receipt",
             output,
-            () => TryValidateCurrentDocumentAsync(
+            safeApplyCommand: BuildRollbackApplyCommand(receiptPath, maxChanges),
+            validateCurrentDocument: () => TryValidateCurrentDocumentAsync(
                 client,
                 receipt.ModelPath,
                 receipt.DocumentName,
-                requireIdentity: false,
+                requireIdentity: true,
                 output: output));
     }
 
@@ -265,7 +309,7 @@ public static class RollbackCommand
                 client,
                 receipt.ModelPath,
                 receipt.DocumentName,
-                requireIdentity: false,
+                requireIdentity: true,
                 output: output))
         {
             return 1;
@@ -361,7 +405,7 @@ public static class RollbackCommand
                 client,
                 receipt.ModelPath,
                 receipt.DocumentName,
-                requireIdentity: false,
+                requireIdentity: true,
                 output: output))
         {
             return 1;
@@ -443,35 +487,209 @@ public static class RollbackCommand
         return null;
     }
 
-    private static IEnumerable<RollbackWrite> BuildReceiptRollbackWrites(PlanReceipt receipt)
+    private static bool LooksLikePlanReceiptJson(string json)
     {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+
+            if (document.RootElement.TryGetProperty("action", out var action) &&
+                action.ValueKind == JsonValueKind.String &&
+                string.Equals(action.GetString(), "plan.apply", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return document.RootElement.TryGetProperty("operation", out _) ||
+                   document.RootElement.TryGetProperty("rollbackActions", out _) ||
+                   document.RootElement.TryGetProperty("linkRepairActions", out _) ||
+                   document.RootElement.TryGetProperty("modelMapActions", out _);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSupportedPlanReceiptOperation(string? operation) =>
+        operation is not null &&
+        (string.Equals(operation, "set", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "import", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "sheet-issue", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "sheet-renumber", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "room-numbering", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "mark-assignment", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "fix", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "link-repair", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(operation, "model-map-fix", StringComparison.OrdinalIgnoreCase));
+
+    private static bool TryValidateReceiptPlanHash(PlanReceipt receipt, out string error)
+    {
+        error = "";
+        if (string.IsNullOrWhiteSpace(receipt.PlanPath))
+        {
+            error = "plan receipt does not include planPath.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(receipt.PlanHash))
+        {
+            error = "plan receipt does not include planHash.";
+            return false;
+        }
+
+        try
+        {
+            var planPath = Path.GetFullPath(receipt.PlanPath);
+            if (!File.Exists(planPath))
+            {
+                error = $"plan receipt references missing plan file: {planPath}";
+                return false;
+            }
+
+            var actualHash = ComputeSha256Hex(planPath);
+            if (!string.Equals(actualHash, receipt.PlanHash, StringComparison.OrdinalIgnoreCase))
+            {
+                error = $"plan receipt hash mismatch for {planPath}.";
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            error = $"failed to validate plan receipt hash: {ex.Message}";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string ComputeSha256Hex(string file)
+    {
+        using var stream = File.OpenRead(file);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    private static bool TryBuildReceiptRollbackWrites(
+        PlanReceipt receipt,
+        out List<RollbackWrite> rollbackWrites,
+        out string error)
+    {
+        rollbackWrites = new List<RollbackWrite>();
+        error = "";
+
         if (receipt.RollbackActions is { Count: > 0 })
         {
-            return receipt.RollbackActions.Select(action => action == null
-                ? new RollbackWrite(0, string.Empty, string.Empty, string.Empty, receipt.Operation)
-                : new RollbackWrite(
+            for (var i = 0; i < receipt.RollbackActions.Count; i++)
+            {
+                var action = receipt.RollbackActions[i];
+                if (!TryValidateReceiptRollbackAction(receipt.Operation, action, i, out error))
+                {
+                    return false;
+                }
+
+                rollbackWrites.Add(new RollbackWrite(
                     action.ElementId,
                     action.Param,
                     action.OldValue ?? string.Empty,
                     action.NewValue ?? string.Empty,
-                    string.IsNullOrWhiteSpace(action.Source) ? receipt.Operation : action.Source));
+                    action.Source));
+            }
+
+            return true;
         }
 
         if (!string.Equals(receipt.Operation, "set", StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(receipt.Param))
         {
-            return Array.Empty<RollbackWrite>();
+            return true;
         }
 
-        return (receipt.Preview ?? new List<SetPreviewItem>()).Select(item => item == null
-            ? new RollbackWrite(0, receipt.Param, string.Empty, string.Empty, "set")
-            : new RollbackWrite(
+        var preview = receipt.Preview ?? new List<SetPreviewItem>();
+        for (var i = 0; i < preview.Count; i++)
+        {
+            var item = preview[i];
+            if (item == null)
+            {
+                error = $"invalid plan receipt preview action at index {i}: entry is null.";
+                return false;
+            }
+
+            if (item.Id <= 0 || item.OldValue == null || item.NewValue == null)
+            {
+                var issues = new List<string>();
+                if (item.Id <= 0)
+                    issues.Add("ElementId must be > 0");
+                if (item.OldValue == null)
+                    issues.Add("OldValue is required");
+                if (item.NewValue == null)
+                    issues.Add("NewValue is required");
+
+                error = $"invalid plan receipt preview action at index {i}: {string.Join(", ", issues)}.";
+                return false;
+            }
+
+            rollbackWrites.Add(new RollbackWrite(
                 item.Id,
                 receipt.Param,
-                item.OldValue ?? string.Empty,
-                item.NewValue ?? string.Empty,
+                item.OldValue,
+                item.NewValue,
                 "set"));
+        }
+
+        return true;
     }
+
+    private static bool TryValidateReceiptRollbackAction(
+        string receiptOperation,
+        PlanReceiptRollbackAction? action,
+        int index,
+        out string error)
+    {
+        error = "";
+        if (action == null)
+        {
+            error = $"invalid plan receipt rollback action at index {index}: entry is null.";
+            return false;
+        }
+
+        var issues = new List<string>();
+        if (action.ElementId <= 0)
+            issues.Add("ElementId must be > 0");
+        if (string.IsNullOrWhiteSpace(action.Param))
+            issues.Add("Parameter is required");
+        if (action.OldValue == null)
+            issues.Add("OldValue is required");
+        if (action.NewValue == null)
+            issues.Add("NewValue is required");
+        if (string.IsNullOrWhiteSpace(action.Source))
+        {
+            issues.Add("Source is required");
+        }
+        else if (!IsSupportedParameterRollbackSource(action.Source))
+        {
+            issues.Add($"Source '{action.Source}' is not supported");
+        }
+        else if (!string.Equals(action.Source, receiptOperation, StringComparison.OrdinalIgnoreCase))
+        {
+            issues.Add($"Source '{action.Source}' does not match receipt operation '{receiptOperation}'");
+        }
+
+        if (issues.Count == 0)
+            return true;
+
+        error = $"invalid plan receipt rollback action at index {index}: {string.Join(", ", issues)}.";
+        return false;
+    }
+
+    private static bool IsSupportedParameterRollbackSource(string source) =>
+        string.Equals(source, "set", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(source, "import", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(source, "sheet-issue", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(source, "sheet-renumber", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(source, "room-numbering", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(source, "mark-assignment", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<int> ExecuteRollbackWritesAsync(
         RevitClient client,
@@ -481,6 +699,7 @@ public static class RollbackCommand
         int maxChanges,
         string artifactName,
         TextWriter output,
+        string safeApplyCommand,
         Func<Task<bool>> validateCurrentDocument)
     {
         if (!await TryValidateRollbackWritesAsync(actions, artifactName, output))
@@ -601,6 +820,9 @@ public static class RollbackCommand
         {
             await output.WriteLineAsync(
                 $"Dry run: {actions.Count} rollback action(s); {conflictCount} conflict(s); {errorCount} error(s).");
+            await output.WriteLineAsync(conflictCount == 0 && errorCount == 0
+                ? $"Safe apply command after review: {safeApplyCommand}"
+                : "Safe apply command withheld until rollback conflicts and errors are resolved.");
             return conflictCount == 0 && errorCount == 0 ? 0 : 1;
         }
 
@@ -608,6 +830,12 @@ public static class RollbackCommand
             $"Restored {restoredCount} element parameter(s); {conflictCount} conflict(s); {errorCount} error(s).");
         return conflictCount == 0 && errorCount == 0 ? 0 : 1;
     }
+
+    private static string BuildRollbackApplyCommand(string artifactPath, int maxChanges) =>
+        $"revitcli rollback {QuoteArgument(Path.GetFullPath(artifactPath))} --yes --max-changes {maxChanges}";
+
+    private static string QuoteArgument(string value) =>
+        $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
 
     private static async Task<bool> TryValidateRollbackWritesAsync(
         IReadOnlyList<RollbackWrite> actions,

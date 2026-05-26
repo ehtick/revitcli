@@ -21,15 +21,17 @@ public static class SetCommand
         var filterOpt = new Option<string?>("--filter", "Filter expression (e.g. \"height > 3000\")");
         var idOpt = new Option<long?>("--id", "Target a specific element by ID");
         var paramOpt = new Option<string>("--param", "Parameter name to modify") { IsRequired = true };
-        var valueOpt = new Option<string>("--value", "New parameter value") { IsRequired = true };
+        var valueOpt = new Option<string?>("--value", "New parameter value");
+        var clearValueOpt = new Option<bool>("--clear-value", "Set the parameter value to an empty string");
         var dryRunOpt = new Option<bool>("--dry-run", "Preview changes without applying");
+        var yesOpt = new Option<bool>("--yes", "Approve and apply the parameter change. Required for non-dry-run writes.");
         var planOutputOpt = new Option<string?>("--plan-output", "Write a saved set plan JSON file without applying");
         var stdinOpt = new Option<bool>("--stdin", "Read element IDs from stdin (JSON array or query output)");
         var idsFromOpt = new Option<string?>("--ids-from", "Read element IDs from a JSON file");
 
         var command = new Command("set", "Modify element parameters in the Revit model")
         {
-            categoryArg, filterOpt, idOpt, paramOpt, valueOpt, dryRunOpt, planOutputOpt, stdinOpt, idsFromOpt
+            categoryArg, filterOpt, idOpt, paramOpt, valueOpt, clearValueOpt, dryRunOpt, yesOpt, planOutputOpt, stdinOpt, idsFromOpt
         };
 
         command.SetHandler(async ctx =>
@@ -38,8 +40,10 @@ public static class SetCommand
             var filter = ctx.ParseResult.GetValueForOption(filterOpt);
             var id = ctx.ParseResult.GetValueForOption(idOpt);
             var param = ctx.ParseResult.GetValueForOption(paramOpt)!;
-            var value = ctx.ParseResult.GetValueForOption(valueOpt)!;
+            var value = ctx.ParseResult.GetValueForOption(valueOpt);
+            var clearValue = ctx.ParseResult.GetValueForOption(clearValueOpt);
             var dryRun = ctx.ParseResult.GetValueForOption(dryRunOpt);
+            var yes = ctx.ParseResult.GetValueForOption(yesOpt);
             var planOutput = ctx.ParseResult.GetValueForOption(planOutputOpt);
             var fromStdin = ctx.ParseResult.GetValueForOption(stdinOpt);
             var idsFromFile = ctx.ParseResult.GetValueForOption(idsFromOpt);
@@ -54,16 +58,25 @@ public static class SetCommand
                     param,
                     value,
                     dryRun,
+                    yes,
                     fromStdin,
                     idsFromFile,
                     Console.Out,
-                    planOutput);
+                    planOutput,
+                    clearValue);
                 return;
             }
 
             if (string.IsNullOrEmpty(param))
             {
                 AnsiConsole.MarkupLine("[red]Error:[/] --param is required.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (!TryResolveValue(value, clearValue, out var resolvedValue, out var valueError))
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(valueError)}");
                 Environment.ExitCode = 1;
                 return;
             }
@@ -76,13 +89,20 @@ public static class SetCommand
                 return;
             }
 
+            if (!dryRun && !yes)
+            {
+                AnsiConsole.MarkupLine("[red]Error:[/] use --yes to apply a set operation. Use --dry-run or --plan-output to preview first.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
             var request = new SetRequest
             {
                 Category = category,
                 ElementId = id,
                 Filter = filter,
                 Param = param,
-                Value = value,
+                Value = resolvedValue,
                 DryRun = dryRun
             };
 
@@ -126,7 +146,10 @@ public static class SetCommand
             AnsiConsole.MarkupLine($"Modified [green]{data.Affected}[/] element(s).");
 
             // Journal log (interactive path)
-            LogSetOperation(param, value, category, filter, id, fromStdin, data.Affected);
+            var auditDirectory = ResolveAuditDirectory(null);
+            LogSetOperation(auditDirectory, param, resolvedValue, category, filter, id, fromStdin, data.Affected);
+            var status = await TryGetStatusForLedgerAsync(client);
+            await TryLogSetLedgerOperationAsync(auditDirectory, request, data, clearValue, fromStdin, idsFromFile, status);
         });
 
         return command;
@@ -138,16 +161,25 @@ public static class SetCommand
         string? filter,
         long? id,
         string param,
-        string value,
+        string? value,
         bool dryRun,
+        bool yes,
         bool fromStdin,
         string? idsFromFile,
         TextWriter output,
-        string? planOutputPath = null)
+        string? planOutputPath = null,
+        bool clearValue = false,
+        string? auditDirectory = null)
     {
         if (string.IsNullOrEmpty(param))
         {
             await output.WriteLineAsync("Error: --param is required.");
+            return 1;
+        }
+
+        if (!TryResolveValue(value, clearValue, out var resolvedValue, out var valueError))
+        {
+            await output.WriteLineAsync($"Error: {valueError}");
             return 1;
         }
 
@@ -165,13 +197,19 @@ public static class SetCommand
             return 1;
         }
 
+        if (!dryRun && string.IsNullOrWhiteSpace(planOutputPath) && !yes)
+        {
+            await output.WriteLineAsync("Error: use --yes to apply a set operation. Use --dry-run or --plan-output to preview first.");
+            return 1;
+        }
+
         var request = new SetRequest
         {
             Category = category,
             ElementId = id,
             Filter = filter,
             Param = param,
-            Value = value,
+            Value = resolvedValue,
             DryRun = dryRun || !string.IsNullOrWhiteSpace(planOutputPath)
         };
 
@@ -226,19 +264,46 @@ public static class SetCommand
 
         await output.WriteLineAsync($"Modified {data.Affected} element(s).");
 
-        LogSetOperation(param, value, category, filter, id, fromStdin, data.Affected);
+        var resolvedAuditDirectory = ResolveAuditDirectory(auditDirectory);
+        LogSetOperation(resolvedAuditDirectory, param, resolvedValue, category, filter, id, fromStdin, data.Affected);
+        var status = await TryGetStatusForLedgerAsync(client);
+        await TryLogSetLedgerOperationAsync(resolvedAuditDirectory, request, data, clearValue, fromStdin, idsFromFile, status);
 
         return 0;
     }
 
-    private static void LogSetOperation(string param, string value, string? category,
+    private static bool TryResolveValue(string? value, bool clearValue, out string resolvedValue, out string error)
+    {
+        if (clearValue && value is not null)
+        {
+            resolvedValue = "";
+            error = "--value cannot be combined with --clear-value.";
+            return false;
+        }
+
+        if (clearValue)
+        {
+            resolvedValue = "";
+            error = "";
+            return true;
+        }
+
+        if (value is null)
+        {
+            resolvedValue = "";
+            error = "--value is required unless --clear-value is used.";
+            return false;
+        }
+
+        resolvedValue = value;
+        error = "";
+        return true;
+    }
+
+    private static void LogSetOperation(string? auditDirectory, string param, string value, string? category,
         string? filter, long? id, bool fromStdin, int affected)
     {
-        var profileDir = Profile.ProfileLoader.Discover() is { } p
-            ? Path.GetDirectoryName(Path.GetFullPath(p))
-            : null;
-
-        JournalLogger.Log(profileDir, new
+        JournalLogger.Log(auditDirectory, new
         {
             action = "set",
             param,
@@ -251,6 +316,132 @@ public static class SetCommand
             timestamp = DateTime.UtcNow.ToString("o"),
             user = Environment.UserName
         });
+    }
+
+    private static async Task TryLogSetLedgerOperationAsync(
+        string auditDirectory,
+        SetRequest request,
+        SetResult result,
+        bool clearValue,
+        bool fromStdin,
+        string? idsFromFile,
+        StatusInfo? status)
+    {
+        try
+        {
+            var output = new StringWriter();
+            var exitCode = await LedgerCommand.ExecuteAppendAsync(
+                auditDirectory,
+                action: "set",
+                category: request.Category ?? "elements",
+                operatorName: null,
+                status: "succeeded",
+                summary: $"Set {request.Param} on {result.Affected} element(s)",
+                timestamp: null,
+                model: NormalizeLedgerText(status?.DocumentName),
+                modelPath: NormalizeLedgerText(status?.DocumentPath),
+                planHash: null,
+                artifactPath: null,
+                receiptPath: null,
+                receiptHash: null,
+                rollbackPointer: null,
+                evidenceLinks: Array.Empty<string>(),
+                yes: true,
+                outputFormat: "json",
+                output,
+                commandName: "set",
+                commandArgs: BuildSetLedgerArgs(request, clearValue, fromStdin, idsFromFile),
+                affectedElementCount: result.Affected,
+                affectedElementIds: GetAffectedElementIds(request, result),
+                revitVersion: NormalizeLedgerText(status?.RevitVersion));
+            if (exitCode != 0)
+                Console.Error.WriteLine($"[RevitCli] Ledger write failed (operation ledger incomplete): {output.ToString().Trim()}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or JsonException)
+        {
+            Console.Error.WriteLine($"[RevitCli] Ledger write failed (operation ledger incomplete): {ex.Message}");
+        }
+    }
+
+    private static async Task<StatusInfo?> TryGetStatusForLedgerAsync(RevitClient client)
+    {
+        try
+        {
+            var response = await client.GetStatusAsync();
+            return response.Success ? response.Data : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            Console.Error.WriteLine($"[RevitCli] Status read failed (operation ledger model identity incomplete): {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string? NormalizeLedgerText(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string ResolveAuditDirectory(string? auditDirectory)
+    {
+        if (!string.IsNullOrWhiteSpace(auditDirectory))
+            return Path.GetFullPath(auditDirectory);
+
+        return Profile.ProfileLoader.Discover() is { } profilePath
+            ? Path.GetDirectoryName(Path.GetFullPath(profilePath))!
+            : Directory.GetCurrentDirectory();
+    }
+
+    private static List<string> BuildSetLedgerArgs(SetRequest request, bool clearValue, bool fromStdin, string? idsFromFile)
+    {
+        var args = new List<string> { "set" };
+        if (!string.IsNullOrWhiteSpace(request.Category))
+            args.Add(request.Category!);
+        if (request.ElementId.HasValue)
+        {
+            args.Add("--id");
+            args.Add(request.ElementId.Value.ToString());
+        }
+        if (!string.IsNullOrWhiteSpace(request.Filter))
+        {
+            args.Add("--filter");
+            args.Add(request.Filter!);
+        }
+        if (fromStdin)
+        {
+            args.Add("--stdin");
+        }
+        if (!string.IsNullOrWhiteSpace(idsFromFile))
+        {
+            args.Add("--ids-from");
+            args.Add(idsFromFile!);
+        }
+        args.Add("--param");
+        args.Add(request.Param);
+        if (clearValue)
+        {
+            args.Add("--clear-value");
+        }
+        else
+        {
+            args.Add("--value");
+            args.Add(request.Value);
+        }
+        args.Add("--yes");
+        return args;
+    }
+
+    private static List<long> GetAffectedElementIds(SetRequest request, SetResult result)
+    {
+        var ids = new List<long>();
+        if (request.ElementId.HasValue)
+            ids.Add(request.ElementId.Value);
+        if (request.ElementIds is { Count: > 0 })
+            ids.AddRange(request.ElementIds);
+        if (result.Preview.Count > 0)
+            ids.AddRange(result.Preview.Select(item => item.Id));
+        return ids
+            .Distinct()
+            .OrderBy(elementId => elementId)
+            .ToList();
     }
 
     /// <summary>

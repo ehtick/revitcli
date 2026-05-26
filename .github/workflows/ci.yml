@@ -52,8 +52,8 @@ jobs:
       - name: Verify release guardrails
         run: dotnet run --project src/RevitCli/RevitCli.csproj --no-build -- release verify --output json
 
-      - name: Verify v4 workbench contract
-        run: dotnet run --project src/RevitCli/RevitCli.csproj --no-build -- workbench verify --dir . --output json
+      - name: Verify v5 workbench contract
+        run: dotnet run --project src/RevitCli/RevitCli.csproj --no-build -- workbench verify --contract workbench-contract.v2 --dir . --output json
 
       - name: Test CLI and Shared behavior
         run: dotnet test tests/RevitCli.Tests/RevitCli.Tests.csproj --no-build --verbosity normal

@@ -253,17 +253,27 @@ public class ParserLevelTests : IDisposable
     [Fact]
     public async Task Export_WithFormat_CallsExportEndpoint()
     {
+        var exportDir = Path.Combine(Path.GetTempPath(), "revitcli-parser-export-" + Guid.NewGuid().ToString("N"));
         var progress = new ExportProgress { TaskId = "t1", Status = "completed", Progress = 100 };
         var response = ApiResponse<ExportProgress>.Ok(progress);
         var (client, handler) = CreateClientWithHandler(JsonSerializer.Serialize(response));
-        var command = ExportCommand.Create(client, new CliConfig());
+        var command = ExportCommand.Create(client, new CliConfig { ExportDir = exportDir });
         CaptureConsole();
 
-        await command.InvokeAsync(new[] { "--format", "dwg" });
+        try
+        {
+            await command.InvokeAsync(new[] { "--format", "dwg" });
+        }
+        finally
+        {
+            if (Directory.Exists(exportDir))
+                Directory.Delete(exportDir, recursive: true);
+        }
 
         Assert.Equal(0, Environment.ExitCode);
-        Assert.Equal(1, handler.CallCount);
-        Assert.Contains("/api/export", handler.LastRequestUri!);
+        Assert.Equal(2, handler.CallCount);
+        Assert.Contains(handler.RequestUris, uri => uri.Contains("/api/export", StringComparison.Ordinal));
+        Assert.Contains(handler.RequestUris, uri => uri.Contains("/api/status", StringComparison.Ordinal));
     }
 
     // ==========================================================

@@ -246,7 +246,9 @@ public class FakeHttpHandler : HttpMessageHandler
 {
     private readonly string? _response;
     private readonly bool _throwException;
+    private readonly List<string> _requestUris = new();
     public string? LastRequestUri { get; private set; }
+    public IReadOnlyList<string> RequestUris => _requestUris;
     public int CallCount { get; private set; }
     public string? LastRequestBody { get; private set; }
 
@@ -260,6 +262,8 @@ public class FakeHttpHandler : HttpMessageHandler
     {
         CallCount++;
         LastRequestUri = request.RequestUri?.ToString();
+        if (LastRequestUri != null)
+            _requestUris.Add(LastRequestUri);
         if (request.Content != null)
             LastRequestBody = await request.Content.ReadAsStringAsync();
 

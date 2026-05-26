@@ -1,0 +1,12 @@
+schemaVersion: 1
+parameter: Number
+scheme: "{level}-{seq:03}"
+start: 1
+reservedNumbers:
+  - L1-000
+holdNumbers: []
+groupBy: [level]
+sort: [level, zone, name]
+tokens:
+  level: Level
+  zone: Department

@@ -1,0 +1,50 @@
+# RevitCli v5.0 sample issue closure profile.
+#
+# Usage:
+#   cp profiles/v5-issue.yml .revitcli/issue.yml
+#   revitcli issue preflight --profile .revitcli/issue.yml --output markdown --fail-on warning
+#   revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --dry-run --include-receipts true --output markdown
+#
+# This profile is intentionally dry-run/read-only biased. Add mutating plan
+# references only after generating and reviewing the corresponding plan files.
+
+schemaVersion: issue-profile.v1
+
+artifacts:
+  - name: project profile
+    path: .revitcli.yml
+    severity: error
+  - name: delivery manifest
+    path: .revitcli/deliveries/manifest.jsonl
+    severity: info
+  - name: operation journal
+    path: .revitcli/journal.jsonl
+    severity: info
+
+checks:
+  - name: workbench v2 contract
+    command: revitcli workbench verify --contract workbench-contract.v2 --dir . --output json
+  - name: issue publish dry-run
+    command: revitcli publish issue --dry-run --output json
+  - name: delivery manifest verify
+    command: revitcli deliverables verify --output markdown
+
+package:
+  bundlePath: deliverables/issue-package.zip
+  commands:
+    - revitcli deliverables bundle --bundle-path deliverables/issue-package.zip --dry-run --output markdown
+
+# Optional package-prep after explicit review; this writes local CSV/manifest
+# files, so keep it out of the default dry-run package path:
+#   revitcli schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json
+
+# Example for reviewed sheet metadata writes:
+#
+# mutationPlans:
+#   - name: sheet issue metadata
+#     planPath: .revitcli/plans/sheet-issue-r03.json
+#
+# package:
+#   commands:
+#     - revitcli plan apply .revitcli/plans/sheet-issue-r03.json --yes --max-changes 500
+#     - revitcli deliverables bundle --bundle-path deliverables/issue-package.zip --dry-run --output markdown

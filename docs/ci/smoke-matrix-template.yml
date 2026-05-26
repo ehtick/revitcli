@@ -39,6 +39,26 @@ jobs:
       REVITCLI_SMOKE_FILTER: ${{ vars.REVITCLI_SMOKE_FILTER }}
       REVITCLI_SMOKE_PARAM: ${{ vars.REVITCLI_SMOKE_PARAM || 'Comments' }}
       REVITCLI_SMOKE_VALUE: smoke-${{ matrix.version }}-${{ github.run_number }}
+      REVITCLI_V5_ISSUE_CLOSURE: ${{ vars.REVITCLI_V5_ISSUE_CLOSURE || 'false' }}
+      REVITCLI_V5_ISSUE_PROFILE: ${{ vars.REVITCLI_V5_ISSUE_PROFILE }}
+      REVITCLI_V5_ISSUE_BUNDLE_PATH: ${{ vars.REVITCLI_V5_ISSUE_BUNDLE_PATH }}
+      REVITCLI_V5_SHEET_SELECTOR: ${{ vars.REVITCLI_V5_SHEET_SELECTOR }}
+      REVITCLI_V5_ISSUE_CODE: ${{ vars.REVITCLI_V5_ISSUE_CODE }}
+      REVITCLI_V5_ISSUE_DATE: ${{ vars.REVITCLI_V5_ISSUE_DATE }}
+      REVITCLI_V5_SHEET_PLAN_PATH: ${{ vars.REVITCLI_V5_SHEET_PLAN_PATH }}
+      REVITCLI_V5_SHEET_PARAM_MAP: ${{ vars.REVITCLI_V5_SHEET_PARAM_MAP }}
+      REVITCLI_V5_APPLY_SHEET_ISSUE: ${{ vars.REVITCLI_V5_APPLY_SHEET_ISSUE || 'false' }}
+      REVITCLI_V5_WRITE_ISSUE_PACKAGE: ${{ vars.REVITCLI_V5_WRITE_ISSUE_PACKAGE || 'false' }}
+      REVITCLI_V52_SCHEDULE_PACKAGE: ${{ vars.REVITCLI_V52_SCHEDULE_PACKAGE || 'false' }}
+      REVITCLI_V52_SCHEDULE_SET: ${{ vars.REVITCLI_V52_SCHEDULE_SET }}
+      REVITCLI_V52_SCHEDULE_OUTPUT_DIR: ${{ vars.REVITCLI_V52_SCHEDULE_OUTPUT_DIR }}
+      REVITCLI_V52_SCHEDULE_MANIFEST_PATH: ${{ vars.REVITCLI_V52_SCHEDULE_MANIFEST_PATH }}
+      REVITCLI_V52_SCHEDULE_COMPARE_BASELINE_DIR: ${{ vars.REVITCLI_V52_SCHEDULE_COMPARE_BASELINE_DIR }}
+      REVITCLI_V52_SCHEDULE_COMPARE_KEYS: ${{ vars.REVITCLI_V52_SCHEDULE_COMPARE_KEYS || 'Mark' }}
+      REVITCLI_V52_DELIVERABLES_BUNDLE_PATH: ${{ vars.REVITCLI_V52_DELIVERABLES_BUNDLE_PATH }}
+      REVITCLI_V52_WRITE_DELIVERABLES_BUNDLE: ${{ vars.REVITCLI_V52_WRITE_DELIVERABLES_BUNDLE || 'false' }}
+      REVITCLI_V6_LEDGER_REPLAY_APPLY: ${{ vars.REVITCLI_V6_LEDGER_REPLAY_APPLY || 'false' }}
+      REVITCLI_V6_LEDGER_PROJECT_DIR: ${{ vars.REVITCLI_V6_LEDGER_PROJECT_DIR }}
 
     steps:
       # actions/checkout v4.2.2
@@ -82,6 +102,82 @@ jobs:
           )
           if (-not [string]::IsNullOrWhiteSpace($installDir)) {
             $args += @("-RevitInstallDir", $installDir)
+          }
+          if ($env:REVITCLI_V5_ISSUE_CLOSURE -eq "true") {
+            if ([string]::IsNullOrWhiteSpace($env:REVITCLI_V5_ISSUE_PROFILE)) {
+              throw "Set repository variable REVITCLI_V5_ISSUE_PROFILE when REVITCLI_V5_ISSUE_CLOSURE is true."
+            }
+
+            $args += @(
+              "-V5IssueClosure",
+              "-V5ProjectDir", $PWD,
+              "-V5IssueProfile", $env:REVITCLI_V5_ISSUE_PROFILE
+            )
+            if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V5_ISSUE_BUNDLE_PATH)) {
+              $args += @("-V5IssueBundlePath", $env:REVITCLI_V5_ISSUE_BUNDLE_PATH)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V5_SHEET_SELECTOR)) {
+              $args += @("-V5SheetSelector", $env:REVITCLI_V5_SHEET_SELECTOR)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V5_ISSUE_CODE)) {
+              $args += @("-V5IssueCode", $env:REVITCLI_V5_ISSUE_CODE)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V5_ISSUE_DATE)) {
+              $args += @("-V5IssueDate", $env:REVITCLI_V5_ISSUE_DATE)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V5_SHEET_PLAN_PATH)) {
+              $args += @("-V5SheetPlanPath", $env:REVITCLI_V5_SHEET_PLAN_PATH)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V5_SHEET_PARAM_MAP)) {
+              $args += @("-V5SheetParamMap", $env:REVITCLI_V5_SHEET_PARAM_MAP)
+            }
+            if ($env:REVITCLI_V5_APPLY_SHEET_ISSUE -eq "true") {
+              $args += @("-V5ApplySheetIssue")
+            }
+            if ($env:REVITCLI_V5_WRITE_ISSUE_PACKAGE -eq "true") {
+              if ([string]::IsNullOrWhiteSpace($env:REVITCLI_V5_ISSUE_BUNDLE_PATH)) {
+                throw "Set repository variable REVITCLI_V5_ISSUE_BUNDLE_PATH when REVITCLI_V5_WRITE_ISSUE_PACKAGE is true."
+              }
+
+              $args += @("-V5WriteIssuePackage")
+            }
+            if ($env:REVITCLI_V52_SCHEDULE_PACKAGE -eq "true") {
+              if ([string]::IsNullOrWhiteSpace($env:REVITCLI_V52_SCHEDULE_SET)) {
+                throw "Set repository variable REVITCLI_V52_SCHEDULE_SET when REVITCLI_V52_SCHEDULE_PACKAGE is true."
+              }
+              if ([string]::IsNullOrWhiteSpace($env:REVITCLI_V52_SCHEDULE_COMPARE_BASELINE_DIR)) {
+                throw "Set repository variable REVITCLI_V52_SCHEDULE_COMPARE_BASELINE_DIR when REVITCLI_V52_SCHEDULE_PACKAGE is true."
+              }
+              if ([string]::IsNullOrWhiteSpace($env:REVITCLI_V52_SCHEDULE_COMPARE_KEYS)) {
+                throw "Set repository variable REVITCLI_V52_SCHEDULE_COMPARE_KEYS when REVITCLI_V52_SCHEDULE_PACKAGE is true."
+              }
+
+              $args += @("-V52SchedulePackage", "-V52ScheduleSet", $env:REVITCLI_V52_SCHEDULE_SET)
+              if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V52_SCHEDULE_OUTPUT_DIR)) {
+                $args += @("-V52ScheduleOutputDir", $env:REVITCLI_V52_SCHEDULE_OUTPUT_DIR)
+              }
+              if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V52_SCHEDULE_MANIFEST_PATH)) {
+                $args += @("-V52ScheduleManifestPath", $env:REVITCLI_V52_SCHEDULE_MANIFEST_PATH)
+              }
+              $args += @("-V52ScheduleCompareBaselineDir", $env:REVITCLI_V52_SCHEDULE_COMPARE_BASELINE_DIR)
+              $args += @("-V52ScheduleCompareKeys", $env:REVITCLI_V52_SCHEDULE_COMPARE_KEYS)
+              if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V52_DELIVERABLES_BUNDLE_PATH)) {
+                $args += @("-V52DeliverablesBundlePath", $env:REVITCLI_V52_DELIVERABLES_BUNDLE_PATH)
+              }
+              if ($env:REVITCLI_V52_WRITE_DELIVERABLES_BUNDLE -eq "true") {
+                if ([string]::IsNullOrWhiteSpace($env:REVITCLI_V52_DELIVERABLES_BUNDLE_PATH)) {
+                  throw "Set repository variable REVITCLI_V52_DELIVERABLES_BUNDLE_PATH when REVITCLI_V52_WRITE_DELIVERABLES_BUNDLE is true."
+                }
+
+                $args += @("-V52WriteDeliverablesBundle")
+              }
+            }
+          }
+          if ($env:REVITCLI_V6_LEDGER_REPLAY_APPLY -eq "true") {
+            $args += @("-V6LedgerReplayApply")
+            if (-not [string]::IsNullOrWhiteSpace($env:REVITCLI_V6_LEDGER_PROJECT_DIR)) {
+              $args += @("-V6LedgerProjectDir", $env:REVITCLI_V6_LEDGER_PROJECT_DIR)
+            }
           }
 
           .\scripts\smoke-revit.ps1 @args

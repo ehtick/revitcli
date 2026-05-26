@@ -23,7 +23,7 @@ public static class CompletionsCommand
     private static readonly string[] InspectOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] ExportOptions = { "--format", "--sheets", "--views", "--output-dir", "--dry-run", "--output" };
     private static readonly string[] ExportOutputFormats = { "table", "json" };
-    private static readonly string[] SetOptions = { "--filter", "--id", "--param", "--value", "--dry-run", "--plan-output" };
+    private static readonly string[] SetOptions = { "--filter", "--id", "--param", "--value", "--clear-value", "--dry-run", "--yes", "--plan-output" };
     private static readonly string[] PlanSubcommands = { "show", "apply" };
     private static readonly string[] PlanOptions =
     {
@@ -44,7 +44,7 @@ public static class CompletionsCommand
     private static readonly string[] WorkbenchOptions = { "contract", "verify", "receipts", "paths", "exits", "extensions", "outputs", "safeguards", "project", "handoff", "--dir", "--output", "--contract" };
     private static readonly string[] WorkbenchOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] WorkbenchContractSchemas = { "workbench-contract.v1", "workbench-contract.v2" };
-    private static readonly string[] WorkflowSubcommands = { "init", "validate", "simulate", "review", "run", "suggest", "examples", "receipts" };
+    private static readonly string[] WorkflowSubcommands = { "init", "validate", "simulate", "review", "registry", "run", "suggest", "examples", "receipts" };
     private static readonly string[] WorkflowOptions =
         { "--dir", "--journal", "--output", "--dry-run", "--yes", "--continue-on-error", "--timeout-ms", "--force", "--min-count", "--max-steps", "--limit", "--failed-only", "--name", "--min-duration-ms", "--sort", "--window" };
     private static readonly string[] WorkflowReportOutputFormats = { "table", "json", "markdown" };
@@ -52,6 +52,15 @@ public static class CompletionsCommand
     private static readonly string[] ReportSubcommands = { "weekly", "knowledge" };
     private static readonly string[] ReportOptions = { "--window", "--dir", "--history-dir", "--journal", "--output", "--report" };
     private static readonly string[] ReportOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] LedgerSubcommands = { "append", "replay", "query", "validate", "stats", "timeline" };
+    private static readonly string[] LedgerOptions =
+        { "--dir", "--project", "--source", "--since", "--until", "--window", "--action", "--category", "--operator", "--status", "--summary", "--timestamp", "--model", "--model-path", "--revit-version", "--plan-hash", "--artifact-path", "--receipt", "--receipt-hash", "--rollback-pointer", "--evidence", "--apply", "--yes", "--receipt-status", "--limit", "--fail-on", "--bucket", "--output" };
+    private static readonly string[] LedgerOutputFormats = { "table", "json", "markdown" };
+    private static readonly string[] LedgerSources = { "all", "ledger", "journal", "history", "deliveries", "workflows" };
+    private static readonly string[] LedgerAppendStatuses = { "planned", "succeeded", "failed", "blocked" };
+    private static readonly string[] LedgerReceiptStatuses = { "all", "valid", "missing", "unreadable" };
+    private static readonly string[] LedgerFailOnValues = { "error", "warning" };
+    private static readonly string[] LedgerBucketValues = { "day", "hour" };
     private static readonly string[] DeliverablesSubcommands = { "list", "stats", "verify", "plan", "bundle" };
     private static readonly string[] DeliverablesOptions = { "--dir", "--profile", "--since", "--bundle-path", "--dry-run", "--force", "--output" };
     private static readonly string[] DeliverablesOutputFormats = { "table", "json", "markdown" };
@@ -206,6 +215,22 @@ public static class CompletionsCommand
 
     internal static IReadOnlyList<string> IssueCompletionOutputFormats => IssueOutputFormats;
 
+    internal static IReadOnlyList<string> LedgerCompletionSubcommands => LedgerSubcommands;
+
+    internal static IReadOnlyList<string> LedgerCompletionOptions => LedgerOptions;
+
+    internal static IReadOnlyList<string> LedgerCompletionOutputFormats => LedgerOutputFormats;
+
+    internal static IReadOnlyList<string> LedgerCompletionSources => LedgerSources;
+
+    internal static IReadOnlyList<string> LedgerCompletionAppendStatuses => LedgerAppendStatuses;
+
+    internal static IReadOnlyList<string> LedgerCompletionReceiptStatuses => LedgerReceiptStatuses;
+
+    internal static IReadOnlyList<string> LedgerCompletionFailOnValues => LedgerFailOnValues;
+
+    internal static IReadOnlyList<string> LedgerCompletionBucketValues => LedgerBucketValues;
+
     public static Command Create()
     {
         var shellArg = new Argument<string>("shell", $"Shell type: {string.Join(", ", CliCommandCatalog.Shells)}");
@@ -271,6 +296,14 @@ public static class CompletionsCommand
         var reportWords = JoinWords(ReportSubcommands.Concat(ReportOptions));
         var reportOptions = JoinWords(ReportOptions);
         var reportOutputFormats = JoinWords(ReportOutputFormats);
+        var ledgerWords = JoinWords(LedgerSubcommands.Concat(LedgerOptions));
+        var ledgerOptions = JoinWords(LedgerOptions);
+        var ledgerOutputFormats = JoinWords(LedgerOutputFormats);
+        var ledgerSources = JoinWords(LedgerSources);
+        var ledgerAppendStatuses = JoinWords(LedgerAppendStatuses);
+        var ledgerReceiptStatuses = JoinWords(LedgerReceiptStatuses);
+        var ledgerFailOnValues = JoinWords(LedgerFailOnValues);
+        var ledgerBucketValues = JoinWords(LedgerBucketValues);
         var deliverablesWords = JoinWords(DeliverablesSubcommands.Concat(DeliverablesOptions));
         var deliverablesOptions = JoinWords(DeliverablesOptions);
         var deliverablesOutputFormats = JoinWords(DeliverablesOutputFormats);
@@ -644,6 +677,47 @@ public static class CompletionsCommand
             "            fi",
             $"            COMPREPLY=($(compgen -W \"{reportOptions}\" -- \"$cur\"))",
             "            ;;",
+            "        ledger)",
+            "            case \"$prev\" in",
+            "                --output)",
+            $"                    COMPREPLY=($(compgen -W \"{ledgerOutputFormats}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --source)",
+            $"                    COMPREPLY=($(compgen -W \"{ledgerSources}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --status)",
+            $"                    COMPREPLY=($(compgen -W \"{ledgerAppendStatuses}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --receipt-status)",
+            $"                    COMPREPLY=($(compgen -W \"{ledgerReceiptStatuses}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+                "                --fail-on)",
+            $"                    COMPREPLY=($(compgen -W \"{ledgerFailOnValues}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+            "                --bucket)",
+            $"                    COMPREPLY=($(compgen -W \"{ledgerBucketValues}\" -- \"$cur\"))",
+            "                    return",
+            "                    ;;",
+                "                --dir|--project)",
+                "                    COMPREPLY=($(compgen -d -- \"$cur\"))",
+                "                    return",
+                "                    ;;",
+                "                --model-path|--artifact-path|--receipt|--evidence)",
+                "                    COMPREPLY=($(compgen -f -- \"$cur\"))",
+                "                    return",
+            "                    ;;",
+            "            esac",
+            "            if [ $COMP_CWORD -eq 2 ]; then",
+            $"                COMPREPLY=($(compgen -W \"{ledgerWords}\" -- \"$cur\"))",
+            "                return",
+            "            fi",
+            $"            COMPREPLY=($(compgen -W \"{ledgerOptions}\" -- \"$cur\"))",
+            "            ;;",
             "        deliverables)",
             "            case \"$prev\" in",
             "                --output)",
@@ -978,6 +1052,13 @@ public static class CompletionsCommand
         var workflowSuggestOutputFormats = JoinWords(WorkflowSuggestOutputFormats);
         var reportSubcommands = JoinWords(ReportSubcommands);
         var reportOutputFormats = JoinWords(ReportOutputFormats);
+        var ledgerSubcommands = JoinWords(LedgerSubcommands);
+        var ledgerOutputFormats = JoinWords(LedgerOutputFormats);
+        var ledgerSources = JoinWords(LedgerSources);
+        var ledgerAppendStatuses = JoinWords(LedgerAppendStatuses);
+        var ledgerReceiptStatuses = JoinWords(LedgerReceiptStatuses);
+        var ledgerFailOnValues = JoinWords(LedgerFailOnValues);
+        var ledgerBucketValues = JoinWords(LedgerBucketValues);
         var deliverablesSubcommands = JoinWords(DeliverablesSubcommands);
         var deliverablesOutputFormats = JoinWords(DeliverablesOutputFormats);
         var issueSubcommands = JoinWords(IssueSubcommands);
@@ -1250,6 +1331,40 @@ public static class CompletionsCommand
                 "                            '--journal[Journal JSONL file]:file:_files' \\",
                 $"                            '--output[Output format]:format:({reportOutputFormats})' \\",
                 "                            '--report[Write report file]:file:_files'",
+                "                    fi",
+                "                    ;;",
+                "                ledger)",
+                "                    if (( CURRENT == 3 )); then",
+            $"                        _values 'subcommand' {ledgerSubcommands}",
+                "                    else",
+                "                        _arguments \\",
+                "                            '--dir[Project directory]:dir:_directories' \\",
+                "                            '--project[Additional project directory]:dir:_directories' \\",
+            $"                            '--source[Ledger source]:source:({ledgerSources})' \\",
+                "                            '--since[Only include operations at or after ISO timestamp]:timestamp:' \\",
+                "                            '--until[Only include operations at or before ISO timestamp]:timestamp:' \\",
+                "                            '--window[Recent window ending now]:window:' \\",
+                "                            '--action[Filter operation action]:action:' \\",
+                "                            '--category[Filter operation category]:category:' \\",
+                "                            '--operator[Filter operation operator]:operator:' \\",
+            $"                            '--status[Append status]:status:({ledgerAppendStatuses})' \\",
+                "                            '--summary[Append summary]:summary:' \\",
+                "                            '--timestamp[Append ISO timestamp]:timestamp:' \\",
+                "                            '--model[Model identity]:model:' \\",
+                "                            '--model-path[Model path]:file:_files' \\",
+                "                            '--revit-version[Revit version]:version:' \\",
+                "                            '--plan-hash[Plan hash]:hash:' \\",
+                "                            '--artifact-path[Artifact path]:file:_files' \\",
+                "                            '--receipt[Receipt path]:file:_files' \\",
+                "                            '--receipt-hash[Receipt hash]:hash:' \\",
+                "                            '--rollback-pointer[Rollback pointer]:command:' \\",
+                "                            '--evidence[Evidence file]:file:_files' \\",
+                "                            '--yes[Append the record]' \\",
+            $"                            '--receipt-status[Filter receipt status]:status:({ledgerReceiptStatuses})' \\",
+                "                            '--limit[Maximum operations to return]:n:' \\",
+            $"                            '--fail-on[Failure threshold]:threshold:({ledgerFailOnValues})' \\",
+            $"                            '--bucket[Timeline bucket]:bucket:({ledgerBucketValues})' \\",
+            $"                            '--output[Output format]:format:({ledgerOutputFormats})'",
                 "                    fi",
                 "                    ;;",
                 "                deliverables)",
@@ -1594,6 +1709,13 @@ public static class CompletionsCommand
         var workflowReportOutputFormats = FormatPowerShellArray(WorkflowReportOutputFormats);
         var workflowSuggestOutputFormats = FormatPowerShellArray(WorkflowSuggestOutputFormats);
         var reportOutputFormats = FormatPowerShellArray(ReportOutputFormats);
+        var ledgerOptions = FormatPowerShellArray(LedgerSubcommands.Concat(LedgerOptions));
+        var ledgerOutputFormats = FormatPowerShellArray(LedgerOutputFormats);
+        var ledgerSources = FormatPowerShellArray(LedgerSources);
+        var ledgerAppendStatuses = FormatPowerShellArray(LedgerAppendStatuses);
+        var ledgerReceiptStatuses = FormatPowerShellArray(LedgerReceiptStatuses);
+        var ledgerFailOnValues = FormatPowerShellArray(LedgerFailOnValues);
+        var ledgerBucketValues = FormatPowerShellArray(LedgerBucketValues);
         var deliverablesOutputFormats = FormatPowerShellArray(DeliverablesOutputFormats);
         var issueOutputFormats = FormatPowerShellArray(IssueOutputFormats);
         var issueFailOnValues = FormatPowerShellArray(IssueFailOnValues);
@@ -1654,6 +1776,7 @@ public static class CompletionsCommand
             $"        'workbench' = @({workbenchOptions})",
             $"        'workflow' = @({workflowOptions})",
             $"        'report' = @({reportOptions})",
+            $"        'ledger' = @({ledgerOptions})",
             $"        'deliverables' = @({deliverablesOptions})",
             $"        'issue' = @({issueOptions})",
             $"        'standards' = @({standardsOptions})",
@@ -1697,6 +1820,12 @@ public static class CompletionsCommand
             $"    $workflowReportOutputFormats = @({workflowReportOutputFormats})",
             $"    $workflowSuggestOutputFormats = @({workflowSuggestOutputFormats})",
             $"    $reportOutputFormats = @({reportOutputFormats})",
+            $"    $ledgerOutputFormats = @({ledgerOutputFormats})",
+            $"    $ledgerSources = @({ledgerSources})",
+            $"    $ledgerAppendStatuses = @({ledgerAppendStatuses})",
+            $"    $ledgerReceiptStatuses = @({ledgerReceiptStatuses})",
+            $"    $ledgerFailOnValues = @({ledgerFailOnValues})",
+            $"    $ledgerBucketValues = @({ledgerBucketValues})",
             $"    $deliverablesOutputFormats = @({deliverablesOutputFormats})",
             $"    $issueOutputFormats = @({issueOutputFormats})",
             $"    $issueFailOnValues = @({issueFailOnValues})",
@@ -1828,7 +1957,7 @@ public static class CompletionsCommand
             "                New-RevitCliCompletionResults -Values $scoreOutputFormats -ToolTip 'Output format'",
             "                return",
             "            }",
-            "            if ($previous -eq '--dir') {",
+            "            if ($previous -eq '--dir' -or $previous -eq '--project') {",
             "                New-RevitCliFileCompletionResults -Path $wordToComplete",
             "                return",
             "            }",
@@ -2032,6 +2161,47 @@ public static class CompletionsCommand
             "            }",
             "",
             "            New-RevitCliCompletionResults -Values $commandOptions['report'] -ToolTip 'Report option'",
+            "            return",
+            "        }",
+            "        'ledger' {",
+            "            if ($previous -eq '--output') {",
+            "                New-RevitCliCompletionResults -Values $ledgerOutputFormats -ToolTip 'Output format'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--source') {",
+            "                New-RevitCliCompletionResults -Values $ledgerSources -ToolTip 'Ledger source'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--status') {",
+            "                New-RevitCliCompletionResults -Values $ledgerAppendStatuses -ToolTip 'Append status'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--receipt-status') {",
+            "                New-RevitCliCompletionResults -Values $ledgerReceiptStatuses -ToolTip 'Receipt status'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--fail-on') {",
+            "                New-RevitCliCompletionResults -Values $ledgerFailOnValues -ToolTip 'Failure threshold'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--bucket') {",
+            "                New-RevitCliCompletionResults -Values $ledgerBucketValues -ToolTip 'Timeline bucket'",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--dir') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if ($previous -eq '--model-path' -or $previous -eq '--artifact-path' -or $previous -eq '--receipt' -or $previous -eq '--evidence') {",
+            "                New-RevitCliFileCompletionResults -Path $wordToComplete",
+            "                return",
+            "            }",
+            "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
+            "                New-RevitCliCompletionResults -Values @('append', 'replay', 'query', 'validate', 'stats', 'timeline') -ToolTip 'Ledger subcommand'",
+            "                return",
+            "            }",
+            "",
+            "            New-RevitCliCompletionResults -Values $commandOptions['ledger'] -ToolTip 'Ledger option'",
             "            return",
             "        }",
             "        'deliverables' {",

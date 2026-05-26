@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -910,6 +911,8 @@ public class RollbackCommandTests
             Assert.Contains("NEW-100", output);
             Assert.Contains("OLD-100", output);
             Assert.Contains("Dry run", output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Safe apply command after review", output);
+            Assert.Contains(receiptPath, output);
             Assert.Equal(2, handler.RequestBodies.Count);
             Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
             Assert.DoesNotContain("\"dryRun\":false", string.Join('\n', handler.RequestBodies));
@@ -917,6 +920,44 @@ public class RollbackCommandTests
         finally
         {
             Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptDryRun_EmitsShellSafeApplyCommand()
+    {
+        var rootDir = CreateTempDirectory();
+        var tempDir = Path.Combine(rootDir, "danger $(touch hacked)' dir");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var receiptPath = WritePlanReceipt(tempDir);
+
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 303, Name = "Door 303", OldValue = "APPLIED-VALUE", NewValue = "RESTORE-ME" }
+                }
+            }));
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: true, yes: false, maxChanges: 50, writer);
+
+            Assert.Equal(0, exitCode);
+            var output = writer.ToString();
+            Assert.Contains("Safe apply command after review", output);
+            Assert.Contains("'\"'\"'", output);
+            Assert.Contains("$(touch hacked)", output);
+        }
+        finally
+        {
+            Directory.Delete(rootDir, recursive: true);
         }
     }
 
@@ -1416,6 +1457,233 @@ public class RollbackCommandTests
     }
 
     [Fact]
+    public async Task Execute_PlanLikeReceiptWithoutSchema_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = Path.Combine(tempDir, "missing-schema.receipt.json");
+            File.WriteAllText(
+                receiptPath,
+                """
+                {
+                  "action": "plan.apply",
+                  "operation": "set",
+                  "rollbackActions": [
+                    { "elementId": 1, "param": "Mark", "oldValue": "A", "newValue": "B", "source": "set" }
+                  ]
+                }
+                """);
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("missing schemaVersion", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_UnsupportedPlanReceiptOperation_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = Path.Combine(tempDir, "unsupported-operation.receipt.json");
+            File.WriteAllText(
+                receiptPath,
+                """
+                {
+                  "schemaVersion": "plan-receipt.v1",
+                  "action": "plan.apply",
+                  "operation": "rogue",
+                  "rollbackActions": [
+                    { "elementId": 1, "param": "Mark", "oldValue": "A", "newValue": "B", "source": "rogue" }
+                  ]
+                }
+                """);
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("unsupported plan receipt operation", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptNullRollbackAction_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = Path.Combine(tempDir, "null-action.receipt.json");
+            File.WriteAllText(
+                receiptPath,
+                """
+                {
+                  "schemaVersion": "plan-receipt.v1",
+                  "action": "plan.apply",
+                  "operation": "set",
+                  "modelPath": "test.rvt",
+                  "documentName": "test",
+                  "documentVersion": "2026",
+                  "rollbackActions": [ null ]
+                }
+                """);
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("rollback action at index 0", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("entry is null", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("set")]
+    [InlineData("import")]
+    [InlineData("sheet-issue")]
+    [InlineData("sheet-renumber")]
+    [InlineData("room-numbering")]
+    [InlineData("mark-assignment")]
+    public async Task Execute_PlanReceiptMalformedRollbackAction_ReturnsOne_AndDoesNotCallApi(string operation)
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = Path.Combine(tempDir, $"{operation}-malformed.receipt.json");
+            File.WriteAllText(
+                receiptPath,
+                $$"""
+                {
+                  "schemaVersion": "plan-receipt.v1",
+                  "action": "plan.apply",
+                  "operation": "{{operation}}",
+                  "modelPath": "test.rvt",
+                  "documentName": "test",
+                  "documentVersion": "2026",
+                  "rollbackActions": [
+                    { "elementId": 0, "param": "", "oldValue": "RESTORE-ME", "newValue": "APPLIED-VALUE", "source": "{{operation}}" }
+                  ]
+                }
+                """);
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            var output = writer.ToString();
+            Assert.Contains("rollback action at index 0", output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ElementId", output);
+            Assert.Contains("Parameter", output);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptRollbackActionMissingOldValue_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = Path.Combine(tempDir, "missing-old-value.receipt.json");
+            File.WriteAllText(
+                receiptPath,
+                """
+                {
+                  "schemaVersion": "plan-receipt.v1",
+                  "action": "plan.apply",
+                  "operation": "set",
+                  "modelPath": "test.rvt",
+                  "documentName": "test",
+                  "documentVersion": "2026",
+                  "rollbackActions": [
+                    { "elementId": 1, "param": "Mark", "newValue": "APPLIED-VALUE", "source": "set" }
+                  ]
+                }
+                """);
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("OldValue is required", writer.ToString());
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptPlanHashMismatch_ReturnsOne_AndDoesNotCallApi()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(tempDir);
+            File.AppendAllText(Path.Combine(tempDir, "set.plan.json"), "tampered");
+
+            var handler = new RecordingQueueHttpHandler();
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: true, yes: false, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("hash mismatch", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Execute_ImportPlanReceiptWithoutRollbackActions_ReturnsOne_AndDoesNotCallApi()
     {
         var tempDir = CreateTempDirectory();
@@ -1437,6 +1705,36 @@ public class RollbackCommandTests
             Assert.Equal(1, exitCode);
             Assert.Contains("rollback actions", writer.ToString(), StringComparison.OrdinalIgnoreCase);
             Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Execute_PlanReceiptApply_MissingDocumentIdentityReturnsOne_AndDoesNotWrite()
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                modelPath: null,
+                documentName: null,
+                documentVersion: null);
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("document identity", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { "/api/status" }, handler.Requests);
         }
         finally
         {
@@ -1469,6 +1767,66 @@ public class RollbackCommandTests
             Assert.Equal(1, exitCode);
             Assert.Contains("does not match", writer.ToString(), StringComparison.OrdinalIgnoreCase);
             Assert.Equal(new[] { "/api/status" }, handler.Requests);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("set", "Mark")]
+    [InlineData("import", "Lock")]
+    [InlineData("sheet-issue", "Sheet Issue Date")]
+    [InlineData("sheet-renumber", "Sheet Number")]
+    [InlineData("room-numbering", "Number")]
+    [InlineData("mark-assignment", "Mark")]
+    public async Task Execute_PlanReceiptApply_CurrentValueConflictReturnsOneWithoutApplying(
+        string operation,
+        string param)
+    {
+        var tempDir = CreateTempDirectory();
+        try
+        {
+            var receiptPath = WritePlanReceipt(
+                tempDir,
+                operation: operation,
+                param: param,
+                actions: new List<PlanReceiptRollbackAction>
+                {
+                    new()
+                    {
+                        ElementId = 303,
+                        Param = param,
+                        OldValue = "RESTORE-ME",
+                        NewValue = "APPLIED-VALUE",
+                        Source = operation
+                    }
+                });
+            var handler = new RecordingQueueHttpHandler();
+            EnqueueMatchingStatus(handler);
+            handler.Enqueue("/api/elements/set", ApiResponse<SetResult>.Ok(new SetResult
+            {
+                Affected = 1,
+                Preview = new List<SetPreviewItem>
+                {
+                    new() { Id = 303, Name = "Door 303", OldValue = "SOMEONE-ELSE-EDITED", NewValue = "RESTORE-ME" }
+                }
+            }));
+
+            var client = MakeClient(handler);
+            var writer = new StringWriter();
+
+            var exitCode = await RollbackCommand.ExecuteAsync(
+                client, receiptPath, dryRun: false, yes: true, maxChanges: 50, writer);
+
+            Assert.Equal(1, exitCode);
+            var output = writer.ToString();
+            Assert.Contains("conflict", output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("[303]", output);
+            Assert.Equal(2, handler.RequestBodies.Count);
+            Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
+            Assert.DoesNotContain("\"dryRun\":false", string.Join('\n', handler.RequestBodies));
         }
         finally
         {
@@ -1540,6 +1898,7 @@ public class RollbackCommandTests
             var output = writer.ToString();
             Assert.Contains("conflict", output, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Dry run", output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Safe apply command withheld", output);
             Assert.Equal(2, handler.RequestBodies.Count);
             Assert.Contains("\"dryRun\":true", handler.RequestBodies[1]);
             Assert.DoesNotContain("\"dryRun\":false", handler.RequestBodies[1]);
@@ -1604,16 +1963,22 @@ public class RollbackCommandTests
         string operation = "set",
         string param = "Mark",
         List<PlanReceiptRollbackAction>? actions = null,
-        List<SetPreviewItem>? preview = null)
+        List<SetPreviewItem>? preview = null,
+        string? modelPath = "test.rvt",
+        string? documentName = "test",
+        string? documentVersion = "2026")
     {
         var receiptPath = Path.Combine(tempDir, $"{operation}.receipt.json");
+        var planPath = Path.Combine(tempDir, $"{operation}.plan.json");
+        File.WriteAllText(planPath, $$"""{ "schemaVersion": 1, "type": "{{operation}}" }""");
         var receipt = new PlanReceipt
         {
             Operation = operation,
-            PlanPath = Path.Combine(tempDir, $"{operation}.plan.json"),
-            ModelPath = "test.rvt",
-            DocumentName = "test",
-            DocumentVersion = "2026",
+            PlanPath = planPath,
+            PlanHash = ComputeSha256Hex(planPath),
+            ModelPath = modelPath,
+            DocumentName = documentName,
+            DocumentVersion = documentVersion,
             Affected = actions?.Count ?? preview?.Count ?? 1,
             Param = param,
             RollbackActions = actions ?? new List<PlanReceiptRollbackAction>
@@ -1637,10 +2002,13 @@ public class RollbackCommandTests
     private static string WriteLinkRepairReceipt(string tempDir, bool oldPathExists = true)
     {
         var receiptPath = Path.Combine(tempDir, "link-repair.receipt.json");
+        var planPath = Path.Combine(tempDir, "link-repair.plan.json");
+        File.WriteAllText(planPath, """{ "schemaVersion": "link-repair-plan.v1", "type": "link-repair" }""");
         var receipt = new PlanReceipt
         {
             Operation = "link-repair",
-            PlanPath = Path.Combine(tempDir, "link-repair.plan.json"),
+            PlanPath = planPath,
+            PlanHash = ComputeSha256Hex(planPath),
             ModelPath = "test.rvt",
             DocumentName = "test",
             DocumentVersion = "2026",
@@ -1674,10 +2042,13 @@ public class RollbackCommandTests
         string newValue = "Architecture")
     {
         var receiptPath = Path.Combine(tempDir, "model-map-fix.receipt.json");
+        var planPath = Path.Combine(tempDir, "model-map-fix.plan.json");
+        File.WriteAllText(planPath, """{ "schemaVersion": "model-map-fix-plan.v1", "type": "model-map-fix" }""");
         var receipt = new PlanReceipt
         {
             Operation = "model-map-fix",
-            PlanPath = Path.Combine(tempDir, "model-map-fix.plan.json"),
+            PlanPath = planPath,
+            PlanHash = ComputeSha256Hex(planPath),
             ModelPath = "test.rvt",
             DocumentName = "test",
             DocumentVersion = "2026",
@@ -1710,6 +2081,9 @@ public class RollbackCommandTests
             DocumentPath = "test.rvt"
         }));
     }
+
+    private static string ComputeSha256Hex(string path) =>
+        Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
 }
 
 internal sealed class RecordingQueueHttpHandler : HttpMessageHandler

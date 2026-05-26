@@ -30,6 +30,11 @@ internal static class MarkNumberingPlanner
         var parameter = string.IsNullOrWhiteSpace(rule.Rule.Parameter)
             ? DefaultParameter
             : rule.Rule.Parameter.Trim();
+        var reservedMarks = NormalizeRuleValues(rule.Rule.ReservedMarks);
+        var holdMarks = NormalizeRuleValues(rule.Rule.HoldMarks);
+        var unavailableMarks = new HashSet<string>(
+            reservedMarks.Concat(holdMarks),
+            StringComparer.OrdinalIgnoreCase);
         var selected = elements
             .OrderBy(element => SortKey(element, rule.Rule, normalizedSort), StringComparer.OrdinalIgnoreCase)
             .ThenBy(element => element.Name, StringComparer.OrdinalIgnoreCase)
@@ -55,8 +60,13 @@ internal static class MarkNumberingPlanner
             }
 
             var current = GetParameter(element, parameter);
-            var target = RenderScheme(rule.Rule, element, sequence);
-            sequence++;
+            if (!string.IsNullOrWhiteSpace(current) && holdMarks.Contains(current))
+            {
+                skipped.Add(Skip(element, current, "hold-mark", $"Mark {current} is held by the rule."));
+                continue;
+            }
+
+            var target = RenderNextAvailableScheme(rule.Rule, element, ref sequence, unavailableMarks);
 
             if (string.IsNullOrWhiteSpace(target))
             {
@@ -335,6 +345,29 @@ internal static class MarkNumberingPlanner
         return GetParameter(element, parameter);
     }
 
+    private static string RenderNextAvailableScheme(
+        MarkNumberingRule rule,
+        ElementInfo element,
+        ref int sequence,
+        ISet<string> unavailableMarks)
+    {
+        for (var attempts = 0; attempts < 10000; attempts++)
+        {
+            var target = RenderScheme(rule, element, sequence);
+            sequence++;
+            if (string.IsNullOrWhiteSpace(target) || !unavailableMarks.Contains(target))
+                return target;
+        }
+
+        throw new InvalidOperationException("Mark assignment exceeded 10000 sequence attempts while skipping reserved or held Marks.");
+    }
+
+    private static HashSet<string> NormalizeRuleValues(IEnumerable<string>? values) =>
+        (values ?? Array.Empty<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 }
 
@@ -432,6 +465,8 @@ public sealed class MarkNumberingRule
     public string Parameter { get; set; } = MarkNumberingPlanner.DefaultParameter;
     public string Scheme { get; set; } = "";
     public int Start { get; set; } = 1;
+    public List<string> ReservedMarks { get; set; } = new();
+    public List<string> HoldMarks { get; set; } = new();
     public List<string> Sort { get; set; } = new();
     public Dictionary<string, string> Tokens { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

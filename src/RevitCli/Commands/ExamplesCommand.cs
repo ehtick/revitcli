@@ -307,6 +307,7 @@ public static class ExamplesCommand
             new[]
             {
                 "ls docs/templates/codex-recipes",
+                "sed -n '1,200p' docs/templates/codex-recipes/issue-day.md",
                 "sed -n '1,160p' docs/templates/codex-recipes/pre-issue.md",
                 "sed -n '1,160p' docs/templates/codex-recipes/standards-bootstrap.md",
                 "sed -n '1,160p' docs/templates/codex-recipes/family-cleanup.md",

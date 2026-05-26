@@ -64,6 +64,14 @@ public sealed class StandardsRequirements
     [JsonPropertyName("scheduleTemplates")]
     public List<string> ScheduleTemplates { get; set; } = new();
 
+    [YamlMember(Alias = "sheetMaps")]
+    [JsonPropertyName("sheetMaps")]
+    public List<string> SheetMaps { get; set; } = new();
+
+    [YamlMember(Alias = "numberingRules")]
+    [JsonPropertyName("numberingRules")]
+    public List<string> NumberingRules { get; set; } = new();
+
     [YamlMember(Alias = "familyRules")]
     [JsonPropertyName("familyRules")]
     public List<string> FamilyRules { get; set; } = new();

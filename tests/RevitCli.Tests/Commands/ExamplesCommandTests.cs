@@ -360,6 +360,7 @@ public sealed class ExamplesCommandTests
 
         var text = output.ToString();
         Assert.Equal(0, exitCode);
+        Assert.Contains("docs/templates/codex-recipes/issue-day.md", text);
         Assert.Contains("docs/templates/codex-recipes/pre-issue.md", text);
         Assert.Contains("docs/templates/codex-recipes/standards-bootstrap.md", text);
         Assert.Contains("docs/templates/codex-recipes/family-cleanup.md", text);

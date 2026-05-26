@@ -122,6 +122,7 @@ public static class ReleaseCommand
 
         writer.WriteLine();
         writer.WriteLine("Note: release verify checks local release files and CI guardrails only; real Revit smoke remains a Windows/Revit checklist gate.");
+        writer.WriteLine("For v5.0 RC handoff, use --strict so disclosed NO-GO smoke gaps block the release.");
         return writer.ToString().TrimEnd();
     }
 
@@ -152,6 +153,7 @@ public static class ReleaseCommand
         writer.WriteLine();
         writer.WriteLine("- `release verify` checks local release files and CI guardrails only.");
         writer.WriteLine("- Real Revit smoke remains a separate Windows/Revit checklist gate.");
+        writer.WriteLine("- For v5.0 RC handoff, run `release verify --strict`; disclosed NO-GO smoke gaps become blockers.");
         return writer.ToString().TrimEnd();
     }
 

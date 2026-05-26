@@ -72,7 +72,7 @@ public class FailurePathTests
     {
         var client = CreateClient();
         var writer = new StringWriter();
-        var exitCode = await SetCommand.ExecuteAsync(client, "doors", null, null, null!, "60min", false, false, null, writer);
+        var exitCode = await SetCommand.ExecuteAsync(client, "doors", null, null, null!, "60min", false, false, false, null, writer);
         Assert.Equal(1, exitCode);
         Assert.Contains("--param", writer.ToString().ToLower());
     }
@@ -82,7 +82,7 @@ public class FailurePathTests
     {
         var client = CreateClient();
         var writer = new StringWriter();
-        var exitCode = await SetCommand.ExecuteAsync(client, "doors", null, null, "", "60min", false, false, null, writer);
+        var exitCode = await SetCommand.ExecuteAsync(client, "doors", null, null, "", "60min", false, false, false, null, writer);
         Assert.Equal(1, exitCode);
         Assert.Contains("--param", writer.ToString().ToLower());
     }
@@ -92,7 +92,7 @@ public class FailurePathTests
     {
         var client = CreateClient();
         var writer = new StringWriter();
-        var exitCode = await SetCommand.ExecuteAsync(client, null, null, null, "Mark", "W-01", false, false, null, writer);
+        var exitCode = await SetCommand.ExecuteAsync(client, null, null, null, "Mark", "W-01", false, false, false, null, writer);
         Assert.Equal(1, exitCode);
         Assert.Contains("category", writer.ToString().ToLower());
     }
@@ -102,7 +102,7 @@ public class FailurePathTests
     {
         var client = CreateClient(throwException: true);
         var writer = new StringWriter();
-        var exitCode = await SetCommand.ExecuteAsync(client, "doors", null, null, "Mark", "W-01", false, false, null, writer);
+        var exitCode = await SetCommand.ExecuteAsync(client, "doors", null, null, "Mark", "W-01", false, true, false, null, writer);
         Assert.Equal(1, exitCode);
         Assert.Contains("not running", writer.ToString().ToLower());
     }
@@ -114,7 +114,7 @@ public class FailurePathTests
         var response = ApiResponse<SetResult>.Ok(result);
         var client = CreateClient(JsonSerializer.Serialize(response));
         var writer = new StringWriter();
-        var exitCode = await SetCommand.ExecuteAsync(client, null, null, 123, "Mark", "W-01", false, false, null, writer);
+        var exitCode = await SetCommand.ExecuteAsync(client, null, null, 123, "Mark", "W-01", false, true, false, null, writer);
         Assert.Equal(0, exitCode);
         Assert.Contains("Modified 1", writer.ToString());
     }

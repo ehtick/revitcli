@@ -424,6 +424,7 @@ public static class PublishCommand
                     schemaVersion = "delivery-manifest.v1",
                     kind = "publish",
                     receiptPath = Path.GetFullPath(receiptPath),
+                    receiptHash = DeliveryManifestWriter.ComputeSha256Hex(receiptPath),
                     success = failed == 0,
                     dryRun = false,
                     pipeline = pipelineName,

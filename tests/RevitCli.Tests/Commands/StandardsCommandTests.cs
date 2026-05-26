@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RevitCli.Commands;
+using RevitCli.Standards;
 
 namespace RevitCli.Tests.Commands;
 
@@ -562,6 +563,181 @@ required:
         Assert.Contains("Validation: OK", output.ToString());
     }
 
+    [Fact]
+    public async Task Install_OfficeStandardPack_DryRunIsDeterministicAndCopiesRuntimeFiles()
+    {
+        var repoRoot = FindRepositoryRoot();
+        var source = Path.Combine(repoRoot, "profiles", "office-standard");
+        var project = Path.Combine(_root, "install-target-office-standard");
+        Directory.CreateDirectory(project);
+
+        var dryRunA = new StringWriter();
+        var dryRunExitA = await StandardsCommand.ExecuteInstallAsync(
+            source,
+            project,
+            refSpec: null,
+            subPath: null,
+            force: false,
+            dryRun: true,
+            outputFormat: "json",
+            dryRunA);
+        var dryRunB = new StringWriter();
+        var dryRunExitB = await StandardsCommand.ExecuteInstallAsync(
+            source,
+            project,
+            refSpec: null,
+            subPath: null,
+            force: false,
+            dryRun: true,
+            outputFormat: "json",
+            dryRunB);
+
+        Assert.Equal(0, dryRunExitA);
+        Assert.Equal(0, dryRunExitB);
+        Assert.Equal(GetChangeFingerprint(dryRunA.ToString()), GetChangeFingerprint(dryRunB.ToString()));
+        Assert.False(File.Exists(Path.Combine(project, ".revitcli", "standards.yml")));
+        Assert.False(File.Exists(Path.Combine(project, ".revitcli", "sheets", "issue-meta.yml")));
+        Assert.False(File.Exists(Path.Combine(project, ".revitcli", "numbering", "rooms.yml")));
+
+        var installOutput = new StringWriter();
+        var installExit = await StandardsCommand.ExecuteInstallAsync(
+            source,
+            project,
+            refSpec: null,
+            subPath: null,
+            force: false,
+            dryRun: false,
+            outputFormat: "markdown",
+            installOutput);
+
+        Assert.Equal(0, installExit);
+        Assert.True(File.Exists(Path.Combine(project, ".revitcli", "standards.yml")));
+        Assert.True(File.Exists(Path.Combine(project, ".revitcli.yml")));
+        Assert.True(File.Exists(Path.Combine(project, ".revitcli", "workflows", "pre-issue.yml")));
+        Assert.True(File.Exists(Path.Combine(project, ".revitcli", "sheets", "issue-meta.yml")));
+        Assert.True(File.Exists(Path.Combine(project, ".revitcli", "numbering", "rooms.yml")));
+        Assert.True(File.Exists(Path.Combine(project, ".revitcli", "numbering", "doors.yml")));
+        Assert.True(Directory.Exists(Path.Combine(project, "deliverables")));
+        Assert.Contains("`sheet-map`", installOutput.ToString());
+        Assert.Contains("`numbering-rule`", installOutput.ToString());
+
+        var validateOutput = new StringWriter();
+        var validateExit = await StandardsCommand.ExecuteValidateAsync(null, project, "json", validateOutput);
+
+        Assert.Equal(0, validateExit);
+        using var validation = JsonDocument.Parse(validateOutput.ToString());
+        Assert.True(validation.RootElement.GetProperty("valid").GetBoolean());
+        Assert.Empty(validation.RootElement.GetProperty("issues").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Validate_OfficeStandardWorkbenchCommandShape_ExecutesFromRepositoryRoot()
+    {
+        var repoRoot = FindRepositoryRoot();
+        var project = Path.Combine(repoRoot, "profiles", "office-standard");
+        var output = new StringWriter();
+
+        var exitCode = await StandardsCommand.ExecuteValidateAsync(
+            Path.Combine(".revitcli", "standards.yml"),
+            project,
+            "json",
+            output);
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(output.ToString());
+        Assert.True(document.RootElement.GetProperty("valid").GetBoolean());
+        Assert.Equal("office-standard", document.RootElement.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public void RuntimePackSmoke_ProvesDryRunLeavesPopulatedTargetUnchanged()
+    {
+        var repoRoot = FindRepositoryRoot();
+        var source = Path.Combine(repoRoot, "profiles", "office-standard");
+
+        var result = StandardsRuntimePackSmoke.Run(source);
+
+        Assert.True(result.Success, string.Join("; ", result.Issues));
+        Assert.Contains("populated-target final file-tree snapshot evidence unchanged", result.Evidence, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("approved install", result.Evidence, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Validate_MissingSheetMapAndNumberingRule_ReturnsFailureWithRequirementPaths()
+    {
+        WriteStandards("""
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+required:
+  profiles: [.revitcli.yml]
+  workflows: [pre-issue]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  sheetMaps:
+    - .revitcli/sheets/issue-meta.yml
+  numberingRules:
+    - .revitcli/numbering/rooms.yml
+  familyRules: [name-non-empty]
+""");
+        var output = new StringWriter();
+
+        var exitCode = await StandardsCommand.ExecuteValidateAsync(null, _root, "json", output);
+
+        Assert.Equal(1, exitCode);
+        using var document = JsonDocument.Parse(output.ToString());
+        var issues = document.RootElement.GetProperty("issues").EnumerateArray().ToArray();
+        Assert.Contains(issues, issue =>
+            issue.GetProperty("path").GetString() == "required.sheetMaps[0]" &&
+            issue.GetProperty("message").GetString()!.Contains("issue-meta.yml", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(issues, issue =>
+            issue.GetProperty("path").GetString() == "required.numberingRules[0]" &&
+            issue.GetProperty("message").GetString()!.Contains("rooms.yml", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Validate_MalformedSheetMapAndNumberingRule_ReturnsFailureWithRequirementPaths()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".revitcli", "sheets"));
+        Directory.CreateDirectory(Path.Combine(_root, ".revitcli", "numbering"));
+        File.WriteAllText(Path.Combine(_root, ".revitcli", "sheets", "issue-meta.yml"), "issueCode: [Issue Code\n");
+        File.WriteAllText(Path.Combine(_root, ".revitcli", "numbering", "rooms.yml"), "scheme: [bad\n");
+        WriteStandards("""
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+required:
+  profiles: [.revitcli.yml]
+  workflows: [pre-issue]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  sheetMaps:
+    - .revitcli/sheets/issue-meta.yml
+  numberingRules:
+    - .revitcli/numbering/rooms.yml
+  familyRules: [name-non-empty]
+""");
+        var output = new StringWriter();
+
+        var exitCode = await StandardsCommand.ExecuteValidateAsync(null, _root, "json", output);
+
+        Assert.Equal(1, exitCode);
+        using var document = JsonDocument.Parse(output.ToString());
+        var issues = document.RootElement.GetProperty("issues").EnumerateArray().ToArray();
+        Assert.Contains(issues, issue =>
+            issue.GetProperty("path").GetString() == "required.sheetMaps[0]" &&
+            issue.GetProperty("message").GetString()!.Contains("sheet map failed validation", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(issues, issue =>
+            issue.GetProperty("path").GetString() == "required.numberingRules[0]" &&
+            issue.GetProperty("message").GetString()!.Contains("numbering rule failed validation", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void CreateValidProject(string root)
     {
         Directory.CreateDirectory(Path.Combine(root, ".revitcli", "workflows"));
@@ -670,4 +846,37 @@ required:
 
     private static void WritePackStandards(string root, string yaml) =>
         File.WriteAllText(Path.Combine(root, ".revitcli", "standards.yml"), yaml);
+
+    private static string GetChangeFingerprint(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var changes = document.RootElement.GetProperty("changes").EnumerateArray()
+            .Select(change => string.Join("|",
+                change.GetProperty("kind").GetString(),
+                change.GetProperty("source").GetString(),
+                change.GetProperty("target").GetString(),
+                change.GetProperty("action").GetString()))
+            .ToArray();
+        return string.Join("\n", changes);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var dir = new DirectoryInfo(Path.GetFullPath(start));
+            while (dir != null)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "README.md")) &&
+                    File.Exists(Path.Combine(dir.FullName, "profiles", "office-standard", ".revitcli", "standards.yml")))
+                {
+                    return dir.FullName;
+                }
+
+                dir = dir.Parent;
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root containing profiles/office-standard.");
+    }
 }

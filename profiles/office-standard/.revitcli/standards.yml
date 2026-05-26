@@ -1,0 +1,21 @@
+version: 1
+name: office-standard
+description: Portable v5.4 office standards runtime pack for local issue-day work.
+packVersion: 2026.5.0
+compatibility:
+  revitCli: ">=2.3.0"
+  revitYears: [2024, 2025, 2026]
+  notes:
+    - Local-first standards pack; no SaaS, MCP, dashboard, or embedded LLM dependency.
+    - Validate the pack with revitcli standards validate before any issue-day workflow.
+required:
+  profiles: [.revitcli.yml]
+  workflows: [pre-issue]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  sheetMaps:
+    - .revitcli/sheets/issue-meta.yml
+  numberingRules:
+    - .revitcli/numbering/rooms.yml
+    - .revitcli/numbering/doors.yml
+  familyRules: [name-non-empty, category-known]

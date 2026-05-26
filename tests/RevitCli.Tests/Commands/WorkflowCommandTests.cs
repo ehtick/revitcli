@@ -160,6 +160,402 @@ steps:
     }
 
     [Fact]
+    public async Task Validate_WorkflowRegistryCommand_ReturnsZero()
+    {
+        var path = Path.Combine(_root, "registry-handoff.yml");
+        WriteWorkflow(path, """
+name: registry-handoff
+steps:
+  - run: revitcli workflow registry --output markdown
+    mode: read-only
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("OK registry-handoff", output.ToString());
+    }
+
+    [Fact]
+    public async Task Validate_LedgerAppendAndReplayCommands_ReturnsZero()
+    {
+        var path = Path.Combine(_root, "ledger-workflow.yml");
+        WriteWorkflow(path, """
+name: ledger-workflow
+steps:
+  - run: revitcli ledger replay --source ledger --output json
+    mode: read-only
+  - run: revitcli ledger append --action issue.package --yes --output json
+    mode: mutating
+    requiresApproval: true
+  - run: revitcli ledger replay --source ledger --apply --yes --output json
+    mode: mutating
+    requiresApproval: true
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("OK ledger-workflow", text);
+        Assert.DoesNotContain("unknown RevitCli command", text);
+        Assert.DoesNotContain("WARNING", text);
+    }
+
+    [Fact]
+    public async Task Registry_Json_IndexesLocalWorkflowsWithContractFields()
+    {
+        var workflowDir = Path.Combine(_root, ".revitcli", "workflows");
+        var path = Path.Combine(workflowDir, "governed-issue.yml");
+        WriteWorkflow(path, """
+name: governed-issue
+description: Governed issue workflow
+steps:
+  - name: validate registry
+    run: revitcli workflow registry --output json
+    mode: read-only
+  - name: package dry-run
+    run: revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --output json
+    mode: dry-run
+  - name: apply approved plan
+    run: revitcli plan apply .revitcli/plans/sheets.json --yes
+    mode: mutating
+    requiresApproval: true
+  - name: rollback preview
+    run: revitcli rollback .revitcli/receipts/plan.json --dry-run
+    mode: dry-run
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(
+            null,
+            _root,
+            "json",
+            output,
+            DateTimeOffset.Parse("2026-05-23T00:00:00Z"));
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.Equal("workflow-registry.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.True(root.GetProperty("exists").GetBoolean());
+        Assert.Equal(1, root.GetProperty("workflowCount").GetInt32());
+        Assert.Equal(1, root.GetProperty("validWorkflowCount").GetInt32());
+        Assert.Equal(1, root.GetProperty("mutatingWorkflowCount").GetInt32());
+        Assert.Equal(1, root.GetProperty("approvalRequiredStepCount").GetInt32());
+        Assert.Equal(2, root.GetProperty("dryRunCommandCount").GetInt32());
+        Assert.Equal(1, root.GetProperty("rollbackSupportedWorkflowCount").GetInt32());
+
+        var workflow = Assert.Single(root.GetProperty("workflows").EnumerateArray());
+        Assert.Equal("governed-issue", workflow.GetProperty("name").GetString());
+        Assert.Equal("mutating", workflow.GetProperty("riskLevel").GetString());
+        Assert.True(workflow.GetProperty("canRun").GetBoolean());
+        Assert.Equal(4, workflow.GetProperty("stepCount").GetInt32());
+        Assert.Contains("read-only", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("dry-run", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("mutating", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("workflow YAML", workflow.GetProperty("inputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("profile:.revitcli/issue.yml", workflow.GetProperty("inputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("plan:.revitcli/plans/sheets.json", workflow.GetProperty("inputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("receipt:.revitcli/receipts/plan.json", workflow.GetProperty("inputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("issue package", workflow.GetProperty("outputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains(
+            "revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --output json",
+            workflow.GetProperty("dryRunCommands").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains(
+            "revitcli plan apply .revitcli/plans/sheets.json --yes",
+            workflow.GetProperty("approvalCommands").EnumerateArray().Select(item => item.GetString()));
+        Assert.True(workflow.GetProperty("rollbackSupport").GetBoolean());
+        Assert.Contains("workflow-run-receipt.v1", workflow.GetProperty("receiptSchemas").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("plan-receipt.v1", workflow.GetProperty("receiptSchemas").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("issue-package-receipt.v1", workflow.GetProperty("receiptSchemas").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("workflow receipts", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+        Assert.DoesNotContain("journal verify", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+        Assert.Empty(workflow.GetProperty("issues").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Registry_Json_InfersDeliverySchedulePublishAndJournalEvidence()
+    {
+        var workflowDir = Path.Combine(_root, ".revitcli", "workflows");
+        WriteWorkflow(Path.Combine(workflowDir, "release-package.yml"), """
+name: release-package
+description: Delivery and schedule package handoff
+steps:
+  - name: bundle preview
+    run: revitcli deliverables bundle --dry-run --output json
+    mode: dry-run
+  - name: schedule export
+    run: revitcli schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json
+    mode: mutating
+    requiresApproval: true
+  - name: publish issue
+    run: revitcli publish issue
+    mode: mutating
+    requiresApproval: true
+  - name: verify journal
+    run: revitcli journal verify --output json
+    mode: read-only
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(
+            null,
+            _root,
+            "json",
+            output,
+            DateTimeOffset.Parse("2026-05-23T00:00:00Z"));
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var workflow = Assert.Single(json.RootElement.GetProperty("workflows").EnumerateArray());
+        Assert.Equal("release-package", workflow.GetProperty("name").GetString());
+        Assert.Equal("mutating", workflow.GetProperty("riskLevel").GetString());
+        Assert.True(workflow.GetProperty("canRun").GetBoolean());
+        Assert.Contains("manifest:exports/schedules/current/manifest.json", workflow.GetProperty("inputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("dry-run", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("mutating", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("delivery bundle", workflow.GetProperty("outputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("schedule export", workflow.GetProperty("outputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("schedule-export-manifest.v1", workflow.GetProperty("outputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("publish output", workflow.GetProperty("outputs").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("delivery-bundle-receipt.v1", workflow.GetProperty("receiptSchemas").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("publish-receipt.v1", workflow.GetProperty("receiptSchemas").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("journal verify", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("schedule-export-manifest.v1", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("delivery-bundle-receipt.v1", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("publish-receipt.v1", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("revitcli deliverables bundle --dry-run --output json", workflow.GetProperty("dryRunCommands").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("revitcli schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json", workflow.GetProperty("approvalCommands").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("revitcli publish issue", workflow.GetProperty("approvalCommands").EnumerateArray().Select(item => item.GetString()));
+        Assert.Empty(workflow.GetProperty("issues").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Registry_Json_ReturnsWarningForMissingDefaultDirectory()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(null, _root, "json", output);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("exists").GetBoolean());
+        Assert.Equal(0, root.GetProperty("workflowCount").GetInt32());
+        var issue = Assert.Single(root.GetProperty("issues").EnumerateArray());
+        Assert.Equal("Warning", issue.GetProperty("severity").GetString());
+        Assert.Equal("workflowRoot", issue.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public async Task Registry_Json_EscalatesMisdeclaredWriteCapableReadOnlyStep()
+    {
+        var workflowDir = Path.Combine(_root, ".revitcli", "workflows");
+        WriteWorkflow(Path.Combine(workflowDir, "misdeclared.yml"), """
+name: misdeclared
+steps:
+  - run: revitcli sheets issue-meta --profile .revitcli/issue.yml --dry-run
+    mode: read-only
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(null, _root, "json", output);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var workflow = Assert.Single(json.RootElement.GetProperty("workflows").EnumerateArray());
+        Assert.Equal("mutating", workflow.GetProperty("riskLevel").GetString());
+        Assert.Contains("mutating", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+        var issue = Assert.Single(workflow.GetProperty("issues").EnumerateArray());
+        Assert.Equal("Warning", issue.GetProperty("severity").GetString());
+        Assert.Contains("can write", issue.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task Registry_Json_FailsInvalidGroupedSubcommand()
+    {
+        var workflowDir = Path.Combine(_root, ".revitcli", "workflows");
+        WriteWorkflow(Path.Combine(workflowDir, "bad.yml"), """
+name: bad
+steps:
+  - run: revitcli ledger made-up --output json
+    mode: read-only
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(null, _root, "json", output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        var workflow = Assert.Single(json.RootElement.GetProperty("workflows").EnumerateArray());
+        Assert.Equal("invalid", workflow.GetProperty("riskLevel").GetString());
+        Assert.Contains(
+            workflow.GetProperty("issues").EnumerateArray(),
+            issue => issue.GetProperty("severity").GetString() == "Error" &&
+                issue.GetProperty("message").GetString()!.Contains("ledger made-up", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Registry_Json_FailsForInvalidExplicitPath()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(
+            Path.Combine(_root, "missing.yml"),
+            null,
+            "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        var issue = Assert.Single(root.GetProperty("issues").EnumerateArray());
+        Assert.Equal("Error", issue.GetProperty("severity").GetString());
+        Assert.Equal("source.missing", issue.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public async Task Registry_TableAndMarkdown_RenderRequiredContractFields()
+    {
+        var workflowDir = Path.Combine(_root, ".revitcli", "workflows");
+        WriteWorkflow(Path.Combine(workflowDir, "pre-issue.yml"), ValidWorkflowYaml());
+        var table = new StringWriter();
+        var markdown = new StringWriter();
+
+        var tableExit = await WorkflowCommand.ExecuteRegistryAsync(null, _root, "table", table);
+        var markdownExit = await WorkflowCommand.ExecuteRegistryAsync(null, _root, "markdown", markdown);
+
+        Assert.Equal(0, tableExit);
+        Assert.Equal(0, markdownExit);
+        var tableText = table.ToString();
+        Assert.Contains("Workflow registry", tableText);
+        Assert.Contains("workflow-registry.v1", tableText);
+        Assert.Contains("inputs=", tableText);
+        Assert.Contains("outputs=", tableText);
+        Assert.Contains("dry-run command:", tableText);
+        Assert.Contains("approval command:", tableText);
+        Assert.Contains("rollback=", tableText);
+        Assert.Contains("receipts=", tableText);
+        Assert.Contains("acceptance evidence=", tableText);
+
+        var markdownText = markdown.ToString();
+        Assert.Contains("# Workflow Registry", markdownText);
+        Assert.Contains("Read/write scope", markdownText);
+        Assert.Contains("Risk level", markdownText);
+        Assert.Contains("Receipt schema", markdownText);
+        Assert.Contains("Acceptance evidence", markdownText);
+    }
+
+    [Fact]
+    public async Task Registry_OutputFormats_PreserveSummaryAndWorkflowSemantics()
+    {
+        var workflowDir = Path.Combine(_root, ".revitcli", "workflows");
+        WriteWorkflow(Path.Combine(workflowDir, "release-package.yml"), """
+name: release-package
+description: Delivery and schedule package handoff
+steps:
+  - name: bundle preview
+    run: revitcli deliverables bundle --dry-run --output json
+    mode: dry-run
+  - name: schedule export
+    run: revitcli schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json
+    mode: mutating
+    requiresApproval: true
+  - name: publish issue
+    run: revitcli publish issue
+    mode: mutating
+    requiresApproval: true
+  - name: verify journal
+    run: revitcli journal verify --output json
+    mode: read-only
+""");
+        var json = new StringWriter();
+        var table = new StringWriter();
+        var markdown = new StringWriter();
+
+        var jsonExit = await WorkflowCommand.ExecuteRegistryAsync(
+            null,
+            _root,
+            "json",
+            json,
+            DateTimeOffset.Parse("2026-05-23T00:00:00Z"));
+        var tableExit = await WorkflowCommand.ExecuteRegistryAsync(
+            null,
+            _root,
+            "table",
+            table,
+            DateTimeOffset.Parse("2026-05-23T00:00:00Z"));
+        var markdownExit = await WorkflowCommand.ExecuteRegistryAsync(
+            null,
+            _root,
+            "markdown",
+            markdown,
+            DateTimeOffset.Parse("2026-05-23T00:00:00Z"));
+
+        Assert.Equal(0, jsonExit);
+        Assert.Equal(0, tableExit);
+        Assert.Equal(0, markdownExit);
+        using var document = JsonDocument.Parse(json.ToString());
+        var root = document.RootElement;
+        var workflow = Assert.Single(root.GetProperty("workflows").EnumerateArray());
+        var tableText = table.ToString();
+        var markdownText = markdown.ToString();
+
+        Assert.Contains(
+            $"Workflows: {root.GetProperty("workflowCount").GetInt32()}; valid: {root.GetProperty("validWorkflowCount").GetInt32()}; invalid: {root.GetProperty("invalidWorkflowCount").GetInt32()}; mutating: {root.GetProperty("mutatingWorkflowCount").GetInt32()}; dryRunCommands={root.GetProperty("dryRunCommandCount").GetInt32()}; approvalRequired={root.GetProperty("approvalRequiredStepCount").GetInt32()}; rollbackSupported={root.GetProperty("rollbackSupportedWorkflowCount").GetInt32()}",
+            tableText);
+        Assert.Contains($"- Workflows: {root.GetProperty("workflowCount").GetInt32()}", markdownText);
+        Assert.Contains($"- Dry-run commands: {root.GetProperty("dryRunCommandCount").GetInt32()}", markdownText);
+        Assert.Contains($"- Approval-required steps: {root.GetProperty("approvalRequiredStepCount").GetInt32()}", markdownText);
+        Assert.Contains($"- Rollback-supported workflows: {root.GetProperty("rollbackSupportedWorkflowCount").GetInt32()}", markdownText);
+
+        Assert.Contains(
+            $"OK   {workflow.GetProperty("name").GetString()} risk={workflow.GetProperty("riskLevel").GetString()} steps={workflow.GetProperty("stepCount").GetInt32()} scope={JoinJsonStrings(workflow.GetProperty("readWriteScope"), ",")} rollback={(workflow.GetProperty("rollbackSupport").GetBoolean() ? "yes" : "no")} dryRuns={workflow.GetProperty("dryRunCommands").GetArrayLength()} approvals={workflow.GetProperty("approvalCommands").GetArrayLength()} receipts={JoinJsonStrings(workflow.GetProperty("receiptSchemas"), ",")}",
+            tableText);
+        Assert.Contains($"inputs={JoinJsonStrings(workflow.GetProperty("inputs"), ",")} outputs={JoinJsonStrings(workflow.GetProperty("outputs"), ",")}", tableText);
+        foreach (var command in workflow.GetProperty("dryRunCommands").EnumerateArray())
+            Assert.Contains($"dry-run command: {command.GetString()}", tableText);
+        foreach (var command in workflow.GetProperty("approvalCommands").EnumerateArray())
+            Assert.Contains($"approval command: {command.GetString()}", tableText);
+        Assert.Contains($"acceptance evidence={JoinJsonStrings(workflow.GetProperty("acceptanceEvidence"), ",")}", tableText);
+        Assert.Contains(
+            $"| {workflow.GetProperty("name").GetString()} | OK | `{workflow.GetProperty("riskLevel").GetString()}` | `{JoinJsonStrings(workflow.GetProperty("readWriteScope"), ", ")}` | {JoinJsonStrings(workflow.GetProperty("inputs"), ", ")} | {JoinJsonStrings(workflow.GetProperty("outputs"), ", ")} | {JoinJsonStrings(workflow.GetProperty("dryRunCommands"), "<br>")} | {JoinJsonStrings(workflow.GetProperty("approvalCommands"), "<br>")} | {(workflow.GetProperty("rollbackSupport").GetBoolean() ? "yes" : "no")} | `{JoinJsonStrings(workflow.GetProperty("receiptSchemas"), ", ")}` | {JoinJsonStrings(workflow.GetProperty("acceptanceEvidence"), ", ")} |",
+            markdownText);
+    }
+
+    [Fact]
+    public async Task Registry_Markdown_DistinguishesMissingDefaultDirectory()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(null, _root, "markdown", output);
+
+        var text = output.ToString();
+        Assert.Equal(0, exitCode);
+        Assert.Contains("- Exists: no", text);
+        Assert.Contains("- No local workflow directory found.", text);
+        Assert.DoesNotContain("- No local workflow YAML files found.", text);
+    }
+
+    [Fact]
+    public async Task Registry_InvalidOutput_ReturnsFailure()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteRegistryAsync(null, _root, "xml", output);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("--output must be 'table', 'json', or 'markdown'", output.ToString());
+    }
+
+    [Fact]
     public async Task Validate_IssueClosureCommands_ReturnsZero()
     {
         var path = Path.Combine(_root, "issue-closure.yml");
@@ -256,6 +652,82 @@ steps:
         Assert.Equal(1, exitCode);
         Assert.Contains("unknown RevitCli command 'workflow made-up'", text);
         Assert.Contains("existing CLI commands", text);
+    }
+
+    [Fact]
+    public async Task Validate_UnknownV5V6GroupedSubcommands_ReturnFailure()
+    {
+        var cases = new[]
+        {
+            "ledger made-up",
+            "rooms made-up",
+            "marks made-up",
+            "schedules made-up",
+            "views made-up",
+            "links made-up",
+            "model made-up",
+        };
+
+        foreach (var command in cases)
+        {
+            var path = Path.Combine(_root, command.Replace(' ', '-') + ".yml");
+            WriteWorkflow(path, $"""
+name: bad-{command.Replace(' ', '-')}
+steps:
+  - run: revitcli {command}
+    mode: read-only
+""");
+            var output = new StringWriter();
+
+            var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains($"unknown RevitCli command '{command}'", output.ToString());
+        }
+    }
+
+    [Fact]
+    public async Task Validate_ReadOnlyWriteCapablePlannerCommands_ReturnWarnings()
+    {
+        var path = Path.Combine(_root, "misdeclared.yml");
+        WriteWorkflow(path, """
+name: misdeclared
+steps:
+  - run: revitcli sheets issue-meta --profile .revitcli/issue.yml --dry-run
+    mode: read-only
+  - run: revitcli rooms renumber --rule .revitcli/numbering/rooms.yml --dry-run
+    mode: read-only
+  - run: revitcli marks assign --rule .revitcli/numbering/doors.yml --dry-run
+    mode: read-only
+  - run: revitcli schedules ensure --spec .revitcli/schedules/doors.yml --dry-run
+    mode: read-only
+  - run: revitcli views template-apply --selector Level --template Plans --dry-run
+    mode: read-only
+  - run: revitcli links repair --plan-output .revitcli/plans/links.json --dry-run
+    mode: read-only
+  - run: revitcli model map-fix --against .revitcli/model.yml --dry-run
+    mode: read-only
+  - run: revitcli ledger append --action issue.package --yes --output json
+    mode: read-only
+  - run: revitcli ledger replay --source ledger --apply --yes --output json
+    mode: read-only
+""");
+        var output = new StringWriter();
+
+        var exitCode = await WorkflowCommand.ExecuteValidateAsync(path, null, "table", output);
+
+        Assert.Equal(0, exitCode);
+        var text = output.ToString();
+        Assert.Contains("WARNING steps[0].mode", text);
+        Assert.Contains("WARNING steps[1].mode", text);
+        Assert.Contains("WARNING steps[2].mode", text);
+        Assert.Contains("WARNING steps[3].mode", text);
+        Assert.Contains("WARNING steps[4].mode", text);
+        Assert.Contains("WARNING steps[5].mode", text);
+        Assert.Contains("WARNING steps[6].mode", text);
+        Assert.Contains("WARNING steps[7].mode", text);
+        Assert.Contains("WARNING steps[8].mode", text);
+        Assert.Contains("can write", text);
     }
 
     [Fact]
@@ -619,7 +1091,7 @@ steps:
         WriteWorkflow(path, """
 name: bad
 steps:
-  - run: revitcli status && revitcli doctor
+  - run: revitcli status&&revitcli doctor
     mode: read-only
 """);
         var output = new StringWriter();
@@ -1578,6 +2050,9 @@ printf '%s\n' stderr-ready >&2
 
     private static string QuoteCommandArgument(string value) =>
         $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+
+    private static string JoinJsonStrings(JsonElement array, string separator) =>
+        string.Join(separator, array.EnumerateArray().Select(item => item.GetString()));
 
     private void WriteJournal(params string[] lines)
     {

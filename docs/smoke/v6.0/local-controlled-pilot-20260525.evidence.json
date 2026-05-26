@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "v6-local-controlled-pilot-evidence.v1",
+  "pilotId": "v6-local-controlled-pilot-20260525",
+  "sourceBundle": ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525",
+  "scope": {
+    "localControlledPilot": true,
+    "officeRolloutCompletion": false,
+    "productionSupportClaim": false
+  },
+  "requiredFiles": [
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/doctor.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/status.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/workbench.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/release.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-query.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-validate.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-stats.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/ledger-timeline.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-sign.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/outputs/journal-verify.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/ledger/operations.jsonl",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-stats.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/analytics/ledger-timeline.json",
+    ".artifacts/live-smoke/revit2026-v6-local-controlled-pilot-20260525/project/.revitcli/journal.jsonl.sig"
+  ],
+  "doctor": {
+    "success": true,
+    "targetRevitYear": 2026,
+    "versionsMatch": true
+  },
+  "status": {
+    "revitYear": 2026,
+    "documentName": "revit_cli"
+  },
+  "workbench": {
+    "success": true,
+    "issueCount": 0
+  },
+  "release": {
+    "success": true,
+    "errorCount": 0,
+    "warningCount": 0
+  },
+  "ledgerQuery": {
+    "schemaVersion": "ledger-query.v1",
+    "totalOperations": 4,
+    "issueCount": 0
+  },
+  "ledgerValidate": {
+    "schemaVersion": "ledger-validate.v1",
+    "valid": true,
+    "operationCount": 4,
+    "issueCount": 0,
+    "errorCount": 0,
+    "warningCount": 0
+  },
+  "ledgerStats": {
+    "schemaVersion": "ledger-stats.v1",
+    "operationCount": 4,
+    "issueCount": 0
+  },
+  "ledgerTimeline": {
+    "schemaVersion": "ledger-timeline.v1",
+    "operationCount": 4,
+    "bucketCount": 1,
+    "issueCount": 0
+  },
+  "journal": {
+    "signEntryCount": 2,
+    "verifyEntryCount": 2,
+    "isValid": true,
+    "signRootHash": "b915f6cf6ffea40425cb16bf51bba858339e8e00059f07455b919475968d24fe",
+    "rootHash": "b915f6cf6ffea40425cb16bf51bba858339e8e00059f07455b919475968d24fe",
+    "errors": []
+  }
+}

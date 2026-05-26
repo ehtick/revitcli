@@ -1,0 +1,16 @@
+version: 1
+name: pre-issue
+description: Local office-standard issue readiness workflow.
+steps:
+  - name: validate standards
+    run: revitcli standards validate --output markdown
+    mode: read-only
+  - name: run issue checks
+    run: revitcli check issue --output table
+    mode: read-only
+  - name: verify sheets
+    run: revitcli sheets verify --output markdown
+    mode: read-only
+  - name: dry-run issue publish
+    run: revitcli publish issue --dry-run
+    mode: dry-run

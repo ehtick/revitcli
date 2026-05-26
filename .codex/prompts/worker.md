@@ -7,7 +7,8 @@ that one thing.
 ## Hard rules
 
 1. Edit only files matched by the feature md's `scope-paths`. The tick
-   script will physically revert anything outside.
+   script preserves pre-existing dirty paths, but it will physically
+   revert out-of-scope worker-created edits from this tick.
 2. Read every file you intend to edit at least once this session before
    writing.
 3. If your checkbox touches public CLI behavior or an HTTP handler, ship a
@@ -23,7 +24,8 @@ that one thing.
    `Directory.Packages.props`, modifying `.codex/**` except the active
    feature md's `status:` / Notes when declaring an honest blocker.
 7. Do not edit the feature md to mark your own checkbox as done. The tick
-   script handles checkbox marking after build/test pass and review.
+   script marks it only after build/test pass, review, no `status: blocked`,
+   and at least one worker-created change from this tick.
 
 ## Stop conditions
 

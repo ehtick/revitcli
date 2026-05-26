@@ -100,6 +100,16 @@ public sealed class LinksCommandTests : IDisposable
     }
 
     [Fact]
+    public void LinkRepairPlanJsonEvidence_IsPathLoadOnly()
+    {
+        var evidence = LinksCommand.VerifyLinkRepairPlanJsonIsPathLoadOnly();
+
+        Assert.True(evidence.Success, evidence.Evidence);
+        Assert.Contains("path/load-only", evidence.Evidence, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("coordinate", evidence.Evidence, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Repair_DryRun_AllowsLoadOnlyPlans()
     {
         var planPath = Path.Combine(_root, ".revitcli", "plans", "link-load.json");

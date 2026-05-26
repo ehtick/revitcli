@@ -1,0 +1,32 @@
+schemaVersion: team-policy.v1
+name: team-pilot
+boundaries:
+  localFirst: true
+  terminalFirst: true
+  dryRunFirst: true
+  noSaaS: true
+  noMcp: true
+  noBuiltInLlm: true
+  noDashboardCentral: true
+install:
+  revitYears:
+    - 2024
+    - 2025
+    - 2026
+receiptRetention:
+  days: 180
+  maxFiles: 5000
+  paths:
+    - .revitcli/receipts
+    - .revitcli/workflows/receipts
+    - .revitcli/journal.jsonl
+requiredCommands:
+  - doctor --output json
+  - workbench verify --contract workbench-contract.v2 --dir . --output json
+  - release verify --strict --output json
+  - standards validate --output json
+  - journal verify --dir . --output json
+support:
+  installPostmortemTemplate: docs/smoke/v5.6/install-postmortem-template.md
+  userInterviewChecklist: docs/v5-demo-and-pilot-playbook.md
+  errorReportTemplate: docs/smoke/v5.6/support-error-report-template.md

@@ -35,6 +35,41 @@ public sealed class IssueCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Preflight_MissingProfile_ReturnsCommandError()
+    {
+        var missingProfile = Path.Combine(_root, ".revitcli", "missing-issue.yml");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePreflightAsync(
+            missingProfile,
+            outputFormat: "json",
+            failOn: "error",
+            writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("Issue profile not found", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Package_MissingProfile_ReturnsCommandError()
+    {
+        var missingProfile = Path.Combine(_root, ".revitcli", "missing-issue.yml");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePackageAsync(
+            missingProfile,
+            Path.Combine(_root, "deliverables", "issue-package.zip"),
+            dryRun: true,
+            signJournal: false,
+            includeReceipts: true,
+            outputFormat: "json",
+            writer);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("Issue profile not found", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Preflight_JsonReportsHiddenMutation()
     {
         var profilePath = WriteIssueProfile("""
@@ -58,6 +93,38 @@ checks:
         Assert.False(root.GetProperty("noHiddenMutation").GetBoolean());
         Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("code").GetString() == "hidden-model-mutation");
+    }
+
+    [Theory]
+    [InlineData("revitcli import doors.csv --category doors --match-by Mark")]
+    [InlineData("revitcli schedule create --category Doors --fields Mark --name Door")]
+    [InlineData("revitcli fix default --apply --yes")]
+    [InlineData("revitcli family purge --apply --yes")]
+    [InlineData("revitcli set doors --param Mark --value A-101 --dry-run false")]
+    public async Task Preflight_BlocksMutatingCommandsWithoutDryRunOrPlanOutput(string command)
+    {
+        var profilePath = WriteIssueProfile($$"""
+schemaVersion: issue-profile.v1
+checks:
+  - name: unsafe command
+    command: {{command}}
+""");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePreflightAsync(
+            profilePath,
+            outputFormat: "json",
+            failOn: "error",
+            writer);
+
+        Assert.Equal(2, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("noHiddenMutation").GetBoolean());
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("code").GetString() == "hidden-model-mutation" &&
+            issue.GetProperty("category").GetString() == "safety" &&
+            issue.GetProperty("command").GetString() == command);
     }
 
     [Fact]
@@ -176,6 +243,94 @@ checks:
     }
 
     [Fact]
+    public async Task Preflight_BlocksMalformedCommand()
+    {
+        var profilePath = WriteIssueProfile("""
+schemaVersion: issue-profile.v1
+checks:
+  - name: malformed apply
+    command: 'revitcli plan apply "unterminated --yes'
+""");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePreflightAsync(
+            profilePath,
+            outputFormat: "json",
+            failOn: "error",
+            writer);
+
+        Assert.Equal(2, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("noHiddenMutation").GetBoolean());
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("code").GetString() == "command-parse-failed" &&
+            issue.GetProperty("category").GetString() == "command" &&
+            issue.GetProperty("remediation").GetString()!.Contains("quoting", StringComparison.OrdinalIgnoreCase) &&
+            !issue.GetProperty("safeRetry").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData("revitcli publish issue --dry-run --output json && revitcli set doors --param Mark --value A-101")]
+    [InlineData("revitcli publish issue --dry-run --output json&&revitcli set doors --param Mark --value A-101")]
+    [InlineData("revitcli publish issue --dry-run --output json ; revitcli set doors --param Mark --value A-101")]
+    [InlineData("revitcli publish issue --dry-run --output json;revitcli set doors --param Mark --value A-101")]
+    [InlineData("revitcli publish issue --dry-run --output json | revitcli set doors --param Mark --value A-101")]
+    [InlineData("revitcli publish issue --dry-run --output json|revitcli set doors --param Mark --value A-101")]
+    [InlineData("revitcli publish issue --dry-run --output json $(revitcli set doors --param Mark --value A-101)")]
+    [InlineData("revitcli publish issue --dry-run --output json `revitcli set doors --param Mark --value A-101`")]
+    public async Task Preflight_BlocksShellOperatorCommands(string command)
+    {
+        var profilePath = WriteIssueProfile($$"""
+schemaVersion: issue-profile.v1
+checks:
+  - name: chained command
+    command: '{{command}}'
+""");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePreflightAsync(
+            profilePath,
+            outputFormat: "json",
+            failOn: "error",
+            writer);
+
+        Assert.Equal(2, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("noHiddenMutation").GetBoolean());
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("code").GetString() == "command-shell-operator" &&
+            issue.GetProperty("category").GetString() == "command" &&
+            issue.GetProperty("remediation").GetString()!.Contains("Split chained shell commands", StringComparison.OrdinalIgnoreCase) &&
+            !issue.GetProperty("safeRetry").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Preflight_MarkdownIncludesIssueTaxonomy()
+    {
+        var profilePath = WriteIssueProfile("""
+schemaVersion: issue-profile.v1
+checks:
+  - name: chained command
+    command: 'revitcli publish issue --dry-run --output json && revitcli set doors --param Mark --value A-101'
+""");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePreflightAsync(
+            profilePath,
+            outputFormat: "markdown",
+            failOn: "error",
+            writer);
+
+        var output = writer.ToString();
+        Assert.Equal(2, exitCode);
+        Assert.Contains("| Severity | Category | Code | Safe retry | Message | Remediation |", output);
+        Assert.Contains("`command` | `command-shell-operator` | `false`", output);
+        Assert.Contains("Split chained shell commands", output);
+    }
+
+    [Fact]
     public async Task Diff_JsonWrapsSnapshotReviewAsIssueDiffReport()
     {
         var fromPath = Path.Combine(_root, "baseline.json");
@@ -236,6 +391,15 @@ package:
         Assert.True(root.GetProperty("dryRun").GetBoolean());
         Assert.False(root.GetProperty("bundleWritten").GetBoolean());
         Assert.False(root.GetProperty("receiptWritten").GetBoolean());
+        Assert.Equal(Path.Combine(_root, ".revitcli", "deliveries", "manifest.jsonl"), root.GetProperty("manifestPath").GetString());
+        Assert.Equal(bundlePath, root.GetProperty("bundlePath").GetString());
+        var receiptPath = root.GetProperty("receiptPath").GetString()!;
+        Assert.StartsWith(Path.Combine(_root, ".revitcli", "receipts", "issue-package-"), receiptPath, StringComparison.Ordinal);
+        Assert.EndsWith(".json", receiptPath, StringComparison.Ordinal);
+        Assert.True(root.TryGetProperty("journalSignaturePath", out var journalSignaturePath));
+        Assert.Equal(Path.Combine(_root, ".revitcli", "journal.jsonl.sig"), journalSignaturePath.GetString());
+        Assert.False(File.Exists(journalSignaturePath.GetString()!));
+        Assert.False(File.Exists(receiptPath));
         Assert.False(File.Exists(bundlePath));
         Assert.Equal(1, root.GetProperty("receiptCount").GetInt32());
         Assert.Contains(root.GetProperty("plannedActions").EnumerateArray(), action => action.GetString() == "preflight-checks");
@@ -246,6 +410,61 @@ package:
         Assert.True(root.GetProperty("preflightCheckCount").GetInt32() >= 1);
         Assert.Contains(root.GetProperty("files").EnumerateArray(), file =>
             file.GetProperty("archivePath").GetString() == "deliverables/pdf/A101.pdf");
+        Assert.Contains(root.GetProperty("files").EnumerateArray(), file =>
+            file.GetProperty("archivePath").GetString() == ".revitcli/deliveries/manifest.jsonl");
+        Assert.Contains(root.GetProperty("files").EnumerateArray(), file =>
+            file.GetProperty("archivePath").GetString() == ".revitcli/receipts/export.json");
+        foreach (var file in root.GetProperty("files").EnumerateArray())
+        {
+            Assert.True(File.Exists(file.GetProperty("sourcePath").GetString()!), file.GetProperty("sourcePath").GetString());
+            Assert.Equal(64, file.GetProperty("sha256").GetString()!.Length);
+        }
+        var commandPaths = root.GetProperty("commandPaths").EnumerateArray().Select(command => command.GetString()).ToArray();
+        Assert.Contains(commandPaths, command => command!.Contains("journal sign", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(commandPaths, command => command!.Contains("deliverables verify", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(commandPaths, command => command!.Contains("deliverables bundle", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(commandPaths, command => command!.Contains("issue package", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Package_DryRunAllowsReviewedPlanApplyWithoutWriting()
+    {
+        var planPath = Path.Combine(_root, ".revitcli", "plans", "sheet-issue.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(planPath)!);
+        File.WriteAllText(planPath, "{}");
+        var profilePath = WriteIssueProfile("""
+schemaVersion: issue-profile.v1
+mutationPlans:
+  - name: sheet issue metadata
+    planPath: .revitcli/plans/sheet-issue.json
+package:
+  commands:
+    - revitcli plan apply .revitcli/plans/sheet-issue.json --yes --max-changes 500
+    - revitcli deliverables bundle --dry-run --output markdown
+""");
+        WriteDeliveryEvidence();
+        var bundlePath = Path.Combine(_root, "deliverables", "issue-package.zip");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePackageAsync(
+            profilePath,
+            bundlePath,
+            dryRun: true,
+            signJournal: true,
+            includeReceipts: true,
+            outputFormat: "json",
+            writer);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.Equal(0, root.GetProperty("preflightErrorCount").GetInt32());
+        Assert.False(root.GetProperty("bundleWritten").GetBoolean());
+        Assert.False(root.GetProperty("receiptWritten").GetBoolean());
+        Assert.False(File.Exists(bundlePath));
+        Assert.False(File.Exists(root.GetProperty("receiptPath").GetString()!));
+        Assert.False(File.Exists(root.GetProperty("journalSignaturePath").GetString()!));
     }
 
     [Fact]
@@ -276,6 +495,11 @@ mutationPlans:
         Assert.Equal(1, root.GetProperty("preflightErrorCount").GetInt32());
         Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("code").GetString() == "mutation-plan-missing");
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("code").GetString() == "mutation-plan-missing" &&
+            issue.GetProperty("category").GetString() == "mutation-plan" &&
+            issue.GetProperty("remediation").GetString()!.Contains("Create", StringComparison.OrdinalIgnoreCase) &&
+            !issue.GetProperty("safeRetry").GetBoolean());
         Assert.False(File.Exists(Path.Combine(_root, "deliverables", "issue-package.zip")));
     }
 
@@ -306,8 +530,85 @@ package:
         Assert.False(root.GetProperty("success").GetBoolean());
         Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("code").GetString() == "hidden-model-mutation" &&
-            issue.GetProperty("command").GetString()!.Contains("plan apply", StringComparison.OrdinalIgnoreCase));
+            issue.GetProperty("command").GetString()!.Contains("plan apply", StringComparison.OrdinalIgnoreCase) &&
+            issue.GetProperty("category").GetString() == "safety" &&
+            issue.GetProperty("remediation").GetString()!.Contains("mutation plan", StringComparison.OrdinalIgnoreCase));
         Assert.False(File.Exists(Path.Combine(_root, "deliverables", "issue-package.zip")));
+    }
+
+    [Fact]
+    public async Task Package_BlocksShellOperatorCommands()
+    {
+        var command = "revitcli publish issue --dry-run --output json && revitcli set doors --param Mark --value A-101";
+        var profilePath = WriteIssueProfile($$"""
+schemaVersion: issue-profile.v1
+package:
+  commands:
+    - '{{command}}'
+""");
+        WriteDeliveryEvidence();
+        var bundlePath = Path.Combine(_root, "deliverables", "issue-package.zip");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePackageAsync(
+            profilePath,
+            bundlePath,
+            dryRun: true,
+            signJournal: true,
+            includeReceipts: true,
+            outputFormat: "json",
+            writer);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("code").GetString() == "command-shell-operator" &&
+            issue.GetProperty("category").GetString() == "command");
+        Assert.False(File.Exists(bundlePath));
+        Assert.False(File.Exists(root.GetProperty("receiptPath").GetString()!));
+        Assert.False(File.Exists(root.GetProperty("journalSignaturePath").GetString()!));
+    }
+
+    [Theory]
+    [InlineData("revitcli import doors.csv --category doors --match-by Mark")]
+    [InlineData("revitcli schedule create --category Doors --fields Mark --name Door")]
+    [InlineData("revitcli fix default --apply --yes")]
+    [InlineData("revitcli family purge --apply --yes")]
+    [InlineData("revitcli set doors --param Mark --value A-101 --dry-run false")]
+    public async Task Package_BlocksMutatingCommandsWithoutDryRunOrPlanOutput(string command)
+    {
+        var profilePath = WriteIssueProfile($$"""
+schemaVersion: issue-profile.v1
+package:
+  commands:
+    - {{command}}
+""");
+        WriteDeliveryEvidence();
+        var bundlePath = Path.Combine(_root, "deliverables", "issue-package.zip");
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePackageAsync(
+            profilePath,
+            bundlePath,
+            dryRun: true,
+            signJournal: true,
+            includeReceipts: true,
+            outputFormat: "json",
+            writer);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("code").GetString() == "hidden-model-mutation" &&
+            issue.GetProperty("category").GetString() == "safety" &&
+            issue.GetProperty("command").GetString() == command);
+        Assert.False(File.Exists(bundlePath));
+        Assert.False(File.Exists(root.GetProperty("receiptPath").GetString()!));
+        Assert.False(File.Exists(root.GetProperty("journalSignaturePath").GetString()!));
     }
 
     [Fact]
@@ -338,6 +639,39 @@ package:
         Assert.True(File.Exists(receiptPath));
         using var receiptJson = JsonDocument.Parse(File.ReadAllText(receiptPath));
         Assert.True(receiptJson.RootElement.GetProperty("receiptWritten").GetBoolean());
+        foreach (var file in receiptJson.RootElement.GetProperty("files").EnumerateArray())
+            Assert.Equal(64, file.GetProperty("sha256").GetString()!.Length);
+    }
+
+    [Fact]
+    public async Task Package_ApplyWriteFailureCleansPartialArtifacts()
+    {
+        var profilePath = WriteIssueProfile("schemaVersion: issue-profile.v1\n");
+        WriteDeliveryEvidence();
+        var bundlePath = Path.Combine(_root, "deliverables", "issue-package.zip");
+        Directory.CreateDirectory(bundlePath);
+        var writer = new StringWriter();
+
+        var exitCode = await IssueCommand.ExecutePackageAsync(
+            profilePath,
+            bundlePath,
+            dryRun: false,
+            signJournal: false,
+            includeReceipts: true,
+            outputFormat: "json",
+            writer);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(writer.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("bundleWritten").GetBoolean());
+        Assert.False(root.GetProperty("receiptWritten").GetBoolean());
+        Assert.Null(root.GetProperty("bundleHash").GetString());
+        Assert.False(File.Exists(bundlePath));
+        Assert.False(File.Exists(root.GetProperty("receiptPath").GetString()!));
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("code").GetString() == "bundle-write-failed" &&
+            issue.GetProperty("category").GetString() == "package");
     }
 
     private string WriteIssueProfile(string yaml)

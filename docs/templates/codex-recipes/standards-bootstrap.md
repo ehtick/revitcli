@@ -8,8 +8,8 @@ first if the standards pack is not installed.
 ## Command Path
 
 ```powershell
-revitcli standards install ../office-standards --dry-run --output markdown
-revitcli standards install ../office-standards
+revitcli standards install profiles/office-standard --dry-run --output markdown
+revitcli standards install profiles/office-standard
 revitcli standards validate --output markdown
 revitcli standards validate --output json
 revitcli workflow validate --output markdown
@@ -18,5 +18,6 @@ revitcli family validate --rules-from .revitcli/standards.yml
 
 ## Handoff
 
-Report missing profiles, workflows, output paths, schedule templates, and family
-rules. For existing projects, ask before running `standards install ... --force`.
+Report missing profiles, workflows, output paths, schedule templates, sheet
+maps, numbering rules, and family rules. For existing projects, ask before
+running `standards install ... --force`.

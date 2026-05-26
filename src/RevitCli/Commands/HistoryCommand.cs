@@ -4,6 +4,7 @@ using System.CommandLine;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
 using RevitCli.History;
@@ -17,7 +18,7 @@ namespace RevitCli.Commands;
 /// <list type="bullet">
 ///   <item><c>history init</c> - create the directory + empty index.</item>
 ///   <item><c>history capture</c> - capture a fresh snapshot via the addin and append it.</item>
-///   <item><c>history list</c> - tabular listing of stored snapshots.</item>
+///   <item><c>history list</c> - listing of stored snapshots.</item>
 ///   <item><c>history prune</c> - drop entries older than retention or beyond a count cap.</item>
 ///   <item><c>history diff</c> - reuse the v1.1 differ between two stored snapshots.</item>
 ///   <item><c>history trend</c> - ASCII sparkline of any numeric metric over a window.</item>
@@ -165,17 +166,19 @@ public static class HistoryCommand
             "Include entries marked source=fix-baseline (default: hidden)");
         var limitOpt = new Option<int>("--limit", () => 20, "Maximum number of rows to display");
         var dirOpt = new Option<string?>("--dir", "Override history directory");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table|json");
         var cmd = new Command("list", "List captured snapshots")
         {
             includeFixesOpt,
             limitOpt,
             dirOpt,
+            outputOpt,
         };
 
-        cmd.SetHandler(async (bool includeFixes, int limit, string? dir) =>
+        cmd.SetHandler(async (bool includeFixes, int limit, string? dir, string output) =>
         {
-            Environment.ExitCode = await ExecuteListAsync(includeFixes, limit, dir, Console.Out);
-        }, includeFixesOpt, limitOpt, dirOpt);
+            Environment.ExitCode = await ExecuteListAsync(includeFixes, limit, dir, output, Console.Out);
+        }, includeFixesOpt, limitOpt, dirOpt, outputOpt);
 
         return cmd;
     }
@@ -184,8 +187,22 @@ public static class HistoryCommand
         bool includeFixes,
         int limit,
         string? overrideDir,
+        TextWriter output) =>
+        await ExecuteListAsync(includeFixes, limit, overrideDir, "table", output);
+
+    public static async Task<int> ExecuteListAsync(
+        bool includeFixes,
+        int limit,
+        string? overrideDir,
+        string outputFormat,
         TextWriter output)
     {
+        if (!TryNormalizeListOutput(outputFormat, out var normalizedOutput))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table' or 'json'.");
+            return 1;
+        }
+
         if (limit <= 0)
         {
             await output.WriteLineAsync("Error: --limit must be greater than 0.");
@@ -197,19 +214,45 @@ public static class HistoryCommand
             var store = ResolveStore(overrideDir);
             if (!Directory.Exists(store.RootDirectory))
             {
+                if (normalizedOutput == "json")
+                {
+                    await WriteListJsonAsync(
+                        store.RootDirectory,
+                        includeFixes,
+                        limit,
+                        initialized: false,
+                        Array.Empty<SnapshotMetadata>(),
+                        0,
+                        output);
+                    return 0;
+                }
+
                 await output.WriteLineAsync(
                     $"History store not initialised. Run 'revitcli history init' (looked in {store.RootDirectory}).");
                 return 0;
             }
 
             var entries = await store.ListAsync(includeFixes);
+            var rows = entries.Take(limit).ToList();
+            if (normalizedOutput == "json")
+            {
+                await WriteListJsonAsync(
+                    store.RootDirectory,
+                    includeFixes,
+                    limit,
+                    initialized: true,
+                    rows,
+                    Math.Max(0, entries.Count - rows.Count),
+                    output);
+                return 0;
+            }
+
             if (entries.Count == 0)
             {
                 await output.WriteLineAsync("No snapshots recorded.");
                 return 0;
             }
 
-            var rows = entries.Take(limit).ToList();
             await WriteListTableAsync(rows, output);
             if (entries.Count > rows.Count)
             {
@@ -223,6 +266,47 @@ public static class HistoryCommand
             await output.WriteLineAsync($"Error: failed to read history: {ex.Message}");
             return 1;
         }
+    }
+
+    private static bool TryNormalizeListOutput(string? outputFormat, out string normalized)
+    {
+        normalized = string.IsNullOrWhiteSpace(outputFormat)
+            ? "table"
+            : outputFormat.Trim().ToLowerInvariant();
+        return normalized is "table" or "json";
+    }
+
+    private static async Task WriteListJsonAsync(
+        string historyDirectory,
+        bool includeFixes,
+        int limit,
+        bool initialized,
+        IReadOnlyList<SnapshotMetadata> rows,
+        int hiddenCount,
+        TextWriter output)
+    {
+        var payload = new
+        {
+            schemaVersion = "history-list.v1",
+            historyDirectory = Path.GetFullPath(historyDirectory),
+            initialized,
+            includeFixes,
+            limit,
+            entryCount = rows.Count + hiddenCount,
+            returnedCount = rows.Count,
+            hiddenCount,
+            entries = rows.Select(row => new
+            {
+                row.Id,
+                row.CapturedAt,
+                row.Source,
+                row.ElementCount,
+                row.Size,
+                row.DocumentPath,
+                row.FileHash,
+            }),
+        };
+        await output.WriteLineAsync(JsonSerializer.Serialize(payload, TerminalJsonOptions.PrettyCamel));
     }
 
     private static async Task WriteListTableAsync(IReadOnlyList<SnapshotMetadata> rows, TextWriter output)

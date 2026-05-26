@@ -29,8 +29,9 @@ internal static class CliCommandCatalog
         ("inspect", "Discover model data for safe terminal workflows"),
         ("examples", "Show copy-paste examples for common architect workflows"),
         ("workbench", "Show stable terminal workbench contract for Codex CLI"),
-        ("workflow", "Create, validate, run, and review terminal workflow YAML files"),
+        ("workflow", "Create, validate, run, review, and index terminal workflow YAML files"),
         ("report", "Generate local project reports from history and journal data"),
+        ("ledger", "Query, validate, summarize, and timeline local operation ledger artifacts"),
         ("deliverables", "Review local delivery plans, manifests, and receipts"),
         ("issue", "Run issue preflight, diff, and package contracts"),
         ("standards", "Install and validate local office standards requirements"),
@@ -90,12 +91,17 @@ internal static class CliCommandCatalog
         ("workflow validate [file]", "Validate .revitcli/workflows YAML without running commands"),
         ("workflow simulate <file>", "Print workflow steps and risk modes without running commands"),
         ("workflow review <file>", "Review workflow readiness, approval gates, and handoff evidence"),
+        ("workflow registry", "Index local workflow contract fields without running commands"),
         ("workflow run <file>", "Run workflow steps (--dry-run, --yes, --continue-on-error)"),
         ("workflow suggest", "Suggest workflow YAML from repeated journal command sequences"),
         ("workflow examples", "Show architect prompts and acceptance command paths for workflow templates"),
         ("workflow receipts", "Review workflow-run receipts (--failed-only, --output table|json|markdown)"),
         ("report weekly", "Generate weekly history/score/diff/journal report"),
         ("report knowledge", "Summarize reusable local project knowledge from RevitCli artifacts"),
+        ("ledger query", "Query local journal, history, delivery, and workflow receipt artifacts"),
+        ("ledger validate", "Validate local ledger artifact references without writing"),
+        ("ledger stats", "Summarize local ledger operation counts without writing"),
+        ("ledger timeline", "Bucket local ledger operations into a read-only project-memory timeline"),
         ("deliverables list", "List delivery manifest entries and receipt status"),
         ("deliverables stats", "Summarize delivery manifest kinds, outcomes, and receipt status"),
         ("deliverables verify", "Verify delivery manifest entries point to readable receipts"),
@@ -193,6 +199,7 @@ internal static class CliCommandCatalog
         root.AddCommand(WorkbenchCommand.Create());
         root.AddCommand(WorkflowCommand.Create());
         root.AddCommand(ReportCommand.Create());
+        root.AddCommand(LedgerCommand.Create(client));
         root.AddCommand(DeliverablesCommand.Create());
         root.AddCommand(IssueCommand.Create(client));
         root.AddCommand(StandardsCommand.Create());

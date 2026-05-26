@@ -35,6 +35,46 @@ ts() { date -u +%H:%M:%SZ; }
 log() { printf '[tick %s] %s\n' "$(ts)" "$*"; }
 die() { log "ERROR: $*"; exit 1; }
 
+write_changed_paths() {
+  local out="$1"
+  {
+    git diff --name-only HEAD -- 2>/dev/null || true
+    git ls-files --others --exclude-standard 2>/dev/null || true
+  } | sed '/^$/d' | sort -u > "$out"
+}
+
+path_state_hash() {
+  local f="$1"
+  if [ -L "$f" ]; then
+    readlink "$f" 2>/dev/null | sha256sum | awk '{print "symlink:" $1}'
+  elif [ -f "$f" ]; then
+    sha256sum -- "$f" | awk '{print "file:" $1}'
+  elif [ -d "$f" ]; then
+    printf 'dir'
+  elif [ -e "$f" ]; then
+    printf 'other'
+  else
+    printf 'missing'
+  fi
+}
+
+write_changed_path_states() {
+  local paths="$1"
+  local out="$2"
+  {
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      printf '%s\t%s\n' "$f" "$(path_state_hash "$f")"
+    done < "$paths"
+  } | sort -k1,1 > "$out"
+}
+
+path_state_from_file() {
+  local state_file="$1"
+  local path="$2"
+  awk -F '\t' -v path="$path" '$1 == path { print $2; found=1; exit } END { if (!found) print "" }' "$state_file"
+}
+
 # ── Step 0: HALT check ───────────────────────────────────────────────
 if [ -f .codex/HALT ]; then
   log "HALT file present (.codex/HALT). Exiting without action."
@@ -85,6 +125,15 @@ trap cleanup_current_agent EXIT
 git status -s > "$STATE_DIR/git-status.txt" || true
 git diff --stat HEAD > "$STATE_DIR/git-diff-stat.txt" || true
 BEFORE_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+BEFORE_PATHS_FILE="$STATE_DIR/git-paths-before.txt"
+AFTER_PATHS_FILE="$STATE_DIR/git-paths-after.txt"
+TICK_PATHS_FILE="$STATE_DIR/git-paths-created-this-tick.txt"
+BEFORE_PATH_STATES_FILE="$STATE_DIR/git-path-states-before.txt"
+AFTER_PATH_STATES_FILE="$STATE_DIR/git-path-states-after.txt"
+PRE_EXISTING_PATHS_FILE="$STATE_DIR/git-paths-pre-existing-this-tick.txt"
+PRE_EXISTING_MUTATED_PATHS_FILE="$STATE_DIR/git-paths-pre-existing-mutated-this-tick.txt"
+write_changed_paths "$BEFORE_PATHS_FILE"
+write_changed_path_states "$BEFORE_PATHS_FILE" "$BEFORE_PATH_STATES_FILE"
 
 # ── Step 2: pick active feature ──────────────────────────────────────
 CURRENT_FEATURE=""
@@ -217,9 +266,26 @@ matches_pattern() {
   return 1
 }
 
-CHANGED=$(git status --porcelain | awk '{print $2}')
+write_changed_paths "$AFTER_PATHS_FILE"
+write_changed_path_states "$AFTER_PATHS_FILE" "$AFTER_PATH_STATES_FILE"
+comm -12 "$BEFORE_PATHS_FILE" "$AFTER_PATHS_FILE" > "$PRE_EXISTING_PATHS_FILE" || true
+comm -13 "$BEFORE_PATHS_FILE" "$AFTER_PATHS_FILE" > "$TICK_PATHS_FILE" || true
+PRE_EXISTING_DIRTY_COUNT=$(wc -l < "$PRE_EXISTING_PATHS_FILE" | tr -d ' ')
+TICK_CREATED_CHANGE_COUNT=$(wc -l < "$TICK_PATHS_FILE" | tr -d ' ')
+if [ "$PRE_EXISTING_DIRTY_COUNT" -gt 0 ]; then
+  log "Preserving $PRE_EXISTING_DIRTY_COUNT pre-existing dirty path(s); scope enforcement only reverts worker-created paths from this tick."
+fi
+: > "$PRE_EXISTING_MUTATED_PATHS_FILE"
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  BEFORE_STATE=$(path_state_from_file "$BEFORE_PATH_STATES_FILE" "$f")
+  AFTER_STATE=$(path_state_from_file "$AFTER_PATH_STATES_FILE" "$f")
+  if [ "$BEFORE_STATE" != "$AFTER_STATE" ]; then
+    printf '%s\n' "$f" >> "$PRE_EXISTING_MUTATED_PATHS_FILE"
+  fi
+done < "$PRE_EXISTING_PATHS_FILE"
 VIOLATIONS=0
-for f in $CHANGED; do
+while IFS= read -r f; do
   [ -z "$f" ] && continue
   # The active feature md is the control record for blocked/done state.
   # Workers may append honest blocker Notes; the tick owns done marking.
@@ -230,8 +296,8 @@ for f in $CHANGED; do
   for pat in "${FORBIDDEN[@]:-}"; do
     [ -z "$pat" ] && continue
     if matches_pattern "$f" "$pat"; then
-      log "FORBIDDEN edit: $f (matches $pat) → reverting"
-      git checkout -- "$f" 2>/dev/null || git clean -f -- "$f" 2>/dev/null || true
+      log "FORBIDDEN worker-created edit: $f (matches $pat) → reverting"
+      git checkout -- "$f" 2>/dev/null || git clean -fd -- "$f" 2>/dev/null || true
       VIOLATIONS=$((VIOLATIONS+1))
       continue 2
     fi
@@ -243,14 +309,49 @@ for f in $CHANGED; do
     if matches_pattern "$f" "$pat"; then in_scope=true; break; fi
   done
   if ! $in_scope; then
-    log "OUT OF SCOPE: $f → reverting"
-    git checkout -- "$f" 2>/dev/null || git clean -f -- "$f" 2>/dev/null || true
+    log "OUT OF SCOPE worker-created edit: $f → reverting"
+    git checkout -- "$f" 2>/dev/null || git clean -fd -- "$f" 2>/dev/null || true
     VIOLATIONS=$((VIOLATIONS+1))
   fi
-done
+done < "$TICK_PATHS_FILE"
 if [ "$VIOLATIONS" -gt 0 ]; then
   log "$VIOLATIONS scope violation(s) reverted."
 fi
+
+PRE_EXISTING_VIOLATIONS=0
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  # Pre-existing dirty paths may contain user work, so the tick must not
+  # auto-revert them. Fail closed if the worker changed one out of scope.
+  if [ "$f" = "$CURRENT_FEATURE" ]; then
+    continue
+  fi
+  for pat in "${FORBIDDEN[@]:-}"; do
+    [ -z "$pat" ] && continue
+    if matches_pattern "$f" "$pat"; then
+      log "FORBIDDEN pre-existing dirty path changed by worker: $f (matches $pat)"
+      PRE_EXISTING_VIOLATIONS=$((PRE_EXISTING_VIOLATIONS+1))
+      continue 2
+    fi
+  done
+
+  in_scope=false
+  for pat in "${SCOPE[@]:-}"; do
+    [ -z "$pat" ] && continue
+    if matches_pattern "$f" "$pat"; then in_scope=true; break; fi
+  done
+  if ! $in_scope; then
+    log "OUT OF SCOPE pre-existing dirty path changed by worker: $f"
+    PRE_EXISTING_VIOLATIONS=$((PRE_EXISTING_VIOLATIONS+1))
+  fi
+done < "$PRE_EXISTING_MUTATED_PATHS_FILE"
+if [ "$PRE_EXISTING_VIOLATIONS" -gt 0 ]; then
+  die "$PRE_EXISTING_VIOLATIONS pre-existing dirty path scope violation(s) detected; not reverting user work automatically."
+fi
+
+write_changed_paths "$AFTER_PATHS_FILE"
+comm -13 "$BEFORE_PATHS_FILE" "$AFTER_PATHS_FILE" > "$TICK_PATHS_FILE" || true
+TICK_CREATED_CHANGE_COUNT=$(wc -l < "$TICK_PATHS_FILE" | tr -d ' ')
 
 # ── Step 6: build + test (with rescue) ───────────────────────────────
 run_build_and_tests() {
@@ -339,7 +440,17 @@ if [ "$AFTER_HEAD" != "$BEFORE_HEAD" ] || [ "$WORKING_DIRTY" = "yes" ]; then
 fi
 
 # ── Step 8: mark checkbox done in feature md ─────────────────────────
-if grep -qE "^- \[ \] \*\*${NEXT_CHECKBOX}\*\*" "$CURRENT_FEATURE"; then
+FEATURE_BLOCKED=$([ -f "$CURRENT_FEATURE" ] && grep -q '^status: blocked' "$CURRENT_FEATURE" && echo yes || echo no)
+WORKER_MADE_PROGRESS=no
+if [ "$AFTER_HEAD" != "$BEFORE_HEAD" ] || [ "${TICK_CREATED_CHANGE_COUNT:-0}" -gt 0 ]; then
+  WORKER_MADE_PROGRESS=yes
+fi
+
+if [ "$FEATURE_BLOCKED" = "yes" ]; then
+  log "Feature status is blocked; not marking checkbox '$NEXT_CHECKBOX' done."
+elif [ "$WORKER_MADE_PROGRESS" != "yes" ]; then
+  log "No worker-created changes detected; not marking checkbox '$NEXT_CHECKBOX' done."
+elif grep -qE "^- \[ \] \*\*${NEXT_CHECKBOX}\*\*" "$CURRENT_FEATURE"; then
   sed -i "s/^- \[ \] \*\*${NEXT_CHECKBOX}\*\*/- [x] **${NEXT_CHECKBOX}**/" "$CURRENT_FEATURE"
   log "Checkbox '$NEXT_CHECKBOX' marked done."
 fi

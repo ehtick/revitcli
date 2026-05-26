@@ -1,16 +1,67 @@
 using System.CommandLine;
+using System.Globalization;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading;
 using RevitCli.Client;
 using RevitCli.Config;
+using RevitCli.History;
 using RevitCli.Output;
 using RevitCli.Plans;
+using RevitCli.Shared;
+using RevitCli.Standards;
+using RevitCli.Team;
 using RevitCli.Workflows;
 
 namespace RevitCli.Commands;
 
 public static class WorkbenchCommand
 {
+    private static readonly string[] V60SaasContradictions =
+    {
+        "uses SaaS",
+        "may use SaaS",
+        "requires SaaS",
+        "depends on SaaS",
+        "calls SaaS",
+    };
+
+    private static readonly string[] V60McpContradictions =
+    {
+        "uses MCP",
+        "may use MCP",
+        "requires MCP",
+        "depends on MCP",
+    };
+
+    private static readonly string[] V60LlmContradictions =
+    {
+        "uses built-in LLM",
+        "may use built-in LLM",
+        "requires built-in LLM",
+        "built-in LLM parser is required",
+    };
+
+    private static readonly string[] V60DashboardCentralContradictions =
+    {
+        "uses dashboard-central",
+        "may use dashboard-central",
+        "requires dashboard-central",
+    };
+
+    private static readonly string[] V60DatabaseContradictions =
+    {
+        "uses database",
+        "may use database",
+        "requires database",
+        "database-backed",
+    };
+
     private static readonly WorkbenchCommandContract[] CommandContracts =
     {
         new(
@@ -73,6 +124,16 @@ public static class WorkbenchCommand
             "none",
             "revitcli workbench verify --output json",
             "0 when contract verification passes; 1 for invalid output or failed readiness checks."),
+        new(
+            "release",
+            "Verify local release readiness and strict roadmap gates from the terminal.",
+            "read-only",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "none",
+            "none",
+            "revitcli release verify --strict --output json",
+            "0 when release gates pass; 1 when required docs, workflows, smoke disclosures, or strict gates fail."),
         new(
             "check",
             "Run profile-driven model checks as a gate before issue work.",
@@ -235,13 +296,13 @@ public static class WorkbenchCommand
             "0 when preview/apply succeeds; 1 for unsupported artifacts or conflict checks."),
         new(
             "workflow",
-            "Validate, simulate, run, and review reusable terminal workflows.",
+            "Validate, simulate, review, index, and run reusable terminal workflows.",
             "mixed",
             SupportsJson: true,
             SupportsMarkdown: true,
             "required before real workflow runs",
             ".revitcli/workflows/receipts/*.json",
-            "revitcli workflow review .revitcli/workflows/pre-issue.yml --output json",
+            "revitcli workflow registry --output json",
             "0 when validation/simulation/run succeeds; workflow run receipts record per-step exit codes."),
         new(
             "deliverables",
@@ -271,7 +332,7 @@ public static class WorkbenchCommand
             SupportsMarkdown: true,
             "available for install",
             "none",
-            "revitcli standards install ../office-standards --dry-run --output markdown",
+            "revitcli standards install profiles/office-standard --dry-run --output markdown",
             "0 when install/validation succeeds; non-zero for incompatible packs or missing required files."),
         new(
             "family",
@@ -312,7 +373,17 @@ public static class WorkbenchCommand
             "none",
             "optional report files",
             "revitcli report knowledge --output json",
-            "0 when local report generation succeeds; 1 for invalid paths or output options.")
+            "0 when local report generation succeeds; 1 for invalid paths or output options."),
+        new(
+            "ledger",
+            "Append, query, validate, summarize, and timeline local operation ledger artifacts across journal, history, deliveries, workflow receipts, and local operations JSONL records.",
+            "local-write",
+            SupportsJson: true,
+            SupportsMarkdown: true,
+            "--yes required for append writes",
+            ".revitcli/ledger/operations.jsonl",
+            "revitcli ledger append --action issue.package --output json",
+            "0 when local artifacts are appended, replay-previewed, queried, or validated; 1 for invalid filters, failed validation thresholds, invalid append input, or output options.")
     };
 
     private static readonly WorkbenchReceiptContract[] ReceiptContracts =
@@ -396,9 +467,9 @@ public static class WorkbenchCommand
         new(
             "standards-pack",
             "Portable office standards packs with required profiles, workflows, outputs, schedules, and family rules.",
-            "standards/manifest.yml",
-            "revitcli standards validate --manifest standards/manifest.yml --output json",
-            "revitcli standards install ../office-standards --dry-run --output markdown",
+            "profiles/office-standard/.revitcli/standards.yml",
+            "revitcli standards validate --manifest .revitcli/standards.yml --dir profiles/office-standard --output json",
+            "revitcli standards install profiles/office-standard --dry-run --output markdown",
             "install copies governed local files after dry-run review",
             "Standards packs serve terminal validation and bootstrap, not a remote package service."),
         new(
@@ -441,7 +512,7 @@ public static class WorkbenchCommand
             SupportsTable: true,
             "workbench-verify-report.v2",
             SupportsMarkdown: true,
-            "v5 issue-closure readiness checks for callable paths, package traceability, hidden mutation gates, and dashboard optionality."),
+            "v5 issue-closure readiness checks for callable paths, package traceability, hidden mutation gates, RC boundary disclosure, and dashboard optionality."),
         new(
             "workbench-receipts",
             "workbench receipts",
@@ -674,6 +745,13 @@ public static class WorkbenchCommand
             SupportsMarkdown: true,
             "Pre-run workbench handoff, approval gates, project artifact readiness, dry-run commands, acceptance evidence, and post-run receipt triage commands."),
         new(
+            "workflow-registry",
+            "workflow registry",
+            SupportsTable: true,
+            "workflow-registry.v1",
+            SupportsMarkdown: true,
+            "Read-only local workflow registry index with inputs, outputs, read/write scope, risk level, dry-run commands, approval commands, rollback support, receipt schemas, and acceptance evidence."),
+        new(
             "workflow-receipts",
             "workflow receipts",
             SupportsTable: true,
@@ -693,7 +771,49 @@ public static class WorkbenchCommand
             SupportsTable: true,
             "knowledge-report.v1",
             SupportsMarkdown: true,
-            "Reusable local project knowledge from history, journal, workflow, delivery, standards, and reports.")
+            "Reusable local project knowledge from history, journal, workflow, delivery, standards, and reports."),
+        new(
+            "ledger-append",
+            "ledger append",
+            SupportsTable: true,
+            "ledger-append.v1",
+            SupportsMarkdown: true,
+            "Append-only local operations ledger writer with dry-run default and explicit --yes approval for .revitcli/ledger/operations.jsonl."),
+        new(
+            "ledger-query",
+            "ledger query",
+            SupportsTable: true,
+            "ledger-query.v1",
+            SupportsMarkdown: true,
+            "Local operations ledger query output across journal, history, delivery, and workflow receipt artifacts."),
+        new(
+            "ledger-replay",
+            "ledger replay",
+            SupportsTable: true,
+            "ledger-replay.v1",
+            SupportsMarkdown: true,
+            "Default local operations ledger replay preview plus bounded --apply --yes support for approved set, export, and schedule batch-export records."),
+        new(
+            "ledger-validate",
+            "ledger validate",
+            SupportsTable: true,
+            "ledger-validate.v1",
+            SupportsMarkdown: true,
+            "Read-only local operations ledger validation for source readability, artifact links, receipt status, and timestamp format."),
+        new(
+            "ledger-stats",
+            "ledger stats",
+            SupportsTable: true,
+            "ledger-stats.v1",
+            SupportsMarkdown: true,
+            "Read-only local operations ledger project-memory summary for sources, actions, categories, operators, receipt status, and issues."),
+        new(
+            "ledger-timeline",
+            "ledger timeline",
+            SupportsTable: true,
+            "ledger-timeline.v1",
+            SupportsMarkdown: true,
+            "Read-only local operations ledger project-memory timeline with bucket, source, action, category, operator, receipt status, issue severity, and unbucketed timestamp evidence.")
     };
 
     private static readonly WorkbenchSafeguardContract[] SafeguardContracts =
@@ -783,8 +903,8 @@ public static class WorkbenchCommand
             "standards-install",
             "standards install",
             "local-write",
-            "revitcli standards install ../office-standards --dry-run --output markdown",
-            "revitcli standards install ../office-standards --force",
+            "revitcli standards install profiles/office-standard --dry-run --output markdown",
+            "revitcli standards install profiles/office-standard --force",
             "none",
             "revitcli standards validate --output json",
             "Standards install copies governed local files only after dry-run review."),
@@ -1398,54 +1518,60 @@ public static class WorkbenchCommand
             notes);
     }
 
-    private static IReadOnlyList<WorkbenchHandoffCommand> CreateHandoffCommands(string projectDirectory) =>
-        new[]
+    private static IReadOnlyList<WorkbenchHandoffCommand> CreateHandoffCommands(string projectDirectory)
+    {
+        var workingDirectory = Path.GetFullPath(projectDirectory);
+        WorkbenchHandoffCommand Command(string phase, string commandLine, string purpose) =>
+            new(phase, commandLine, workingDirectory, purpose);
+
+        return new[]
         {
-            new WorkbenchHandoffCommand(
+            Command(
                 "verify",
                 $"revitcli workbench verify{ProjectDirOption(projectDirectory)} --output json",
                 "Confirm the local command contract, output schemas, safeguards, receipts, and non-goals."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "project",
                 $"revitcli workbench project{ProjectDirOption(projectDirectory)} --output json",
                 "Inspect local profiles, standards, workflows, receipts, history, journal, deliveries, plans, and reports."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "paths",
                 "revitcli workbench paths --output json",
                 "Choose concrete callable command paths without scraping help text."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "receipts",
                 "revitcli workbench receipts --output json",
                 "Check which write/export paths produce reviewable receipts."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "safeguards",
                 "revitcli workbench safeguards --output json",
                 "Review dry-run, approval, receipt, and review commands for risky paths."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "schedule-create",
                 "revitcli schedule create --category Doors --fields \"Mark,Level\" --name \"Door Review\" --dry-run --output json",
                 "Preview ViewSchedule writes through the schedule-create.v1 contract before any real create."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "outputs",
                 "revitcli workbench outputs --output json",
                 "See the table, JSON schema, and Markdown output contracts available to scripts."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "examples",
                 "revitcli examples workbench --output markdown",
                 "Open copy-paste workbench recipes for recurring architect tasks."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "workflow-discovery",
                 $"revitcli inspect workflows{ProjectDirOption(projectDirectory)} --output markdown",
                 "Discover local workflow YAML files and next validate/simulate/review/dry-run/receipt commands."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "plan-discovery",
                 $"revitcli inspect plans{ProjectDirOption(projectDirectory)} --output markdown",
                 "Discover saved mutation plans and next show/dry-run/apply/rollback-preview commands."),
-            new WorkbenchHandoffCommand(
+            Command(
                 "workflow-review",
                 $"revitcli workflow review .revitcli/workflows/pre-issue.yml{ProjectDirOption(projectDirectory)} --output markdown",
                 "Review approval gates and acceptance evidence before any workflow run.")
         };
+    }
 
     private static IReadOnlyList<WorkbenchReadinessAction> CreateReadinessActions(
         string projectDirectory,
@@ -1498,7 +1624,7 @@ public static class WorkbenchCommand
                         "initialize-history",
                         artifact.Name,
                         artifact.Status,
-                        $"revitcli history init --dir {QuoteArgument(Path.Combine(projectDirectory, ".revitcli", "history"))}",
+                        "revitcli history init --dir .revitcli/history",
                         projectDirectory,
                         "Initialize local model history before trend, diff, and model-health review."));
                     break;
@@ -1730,6 +1856,33 @@ public static class WorkbenchCommand
                SerializedSheetReceiptShapeReady("sheet-renumber", "Sheet Number", "TMP-001", "A-101");
     }
 
+    private static bool NumberingPlanReceiptShapeReady(WorkbenchSafeguardIndex safeguardIndex)
+    {
+        var numberingSafeguards = safeguardIndex.Safeguards
+            .Where(safeguard =>
+                string.Equals(safeguard.Name, "rooms-renumber", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(safeguard.Name, "marks-assign", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (numberingSafeguards.Length != 2 ||
+            numberingSafeguards.Any(safeguard =>
+                !safeguard.Receipt.Contains("plan-receipt.v1", StringComparison.OrdinalIgnoreCase) ||
+                !safeguard.ReviewCommand.Contains("plan show", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return SerializedNumberingReceiptShapeReady(
+                   "room-numbering",
+                   "Number",
+                   ".revitcli/numbering/rooms.yml",
+                   Array.Empty<string>()) &&
+               SerializedNumberingReceiptShapeReady(
+                   "mark-assignment",
+                   "Mark",
+                   ".revitcli/numbering/doors.yml",
+                   new[] { "level", "zone", "type", "location" });
+    }
+
     private static bool SerializedSheetReceiptShapeReady(
         string operation,
         string param,
@@ -1745,6 +1898,9 @@ public static class WorkbenchCommand
             DocumentVersion = "2026",
             Affected = 1,
             AffectedElementIds = new List<long> { 10 },
+            RequiresRollback = true,
+            PlanActionCount = 1,
+            SkippedCount = 0,
             Param = param,
             RollbackActions = new List<PlanReceiptRollbackAction>
             {
@@ -1766,6 +1922,9 @@ public static class WorkbenchCommand
             string.IsNullOrWhiteSpace(root.GetProperty("modelPath").GetString()) ||
             string.IsNullOrWhiteSpace(root.GetProperty("documentName").GetString()) ||
             string.IsNullOrWhiteSpace(root.GetProperty("documentVersion").GetString()) ||
+            !root.GetProperty("requiresRollback").GetBoolean() ||
+            root.GetProperty("planActionCount").GetInt32() != 1 ||
+            root.GetProperty("skippedCount").GetInt32() != 0 ||
             root.GetProperty("affectedElementIds").EnumerateArray().All(id => id.GetInt64() != 10))
         {
             return false;
@@ -1777,6 +1936,70 @@ public static class WorkbenchCommand
                rollback.GetProperty("param").GetString() == param &&
                rollback.GetProperty("oldValue").GetString() == oldValue &&
                rollback.GetProperty("newValue").GetString() == newValue &&
+               rollback.GetProperty("source").GetString() == operation;
+    }
+
+    private static bool SerializedNumberingReceiptShapeReady(
+        string operation,
+        string param,
+        string rulePath,
+        IReadOnlyList<string> sort)
+    {
+        var receipt = new PlanReceipt
+        {
+            Operation = operation,
+            PlanPath = $".revitcli/plans/{operation}.json",
+            ModelPath = "D:/models/tower.rvt",
+            DocumentName = "tower.rvt",
+            DocumentVersion = "2026",
+            RulePath = rulePath,
+            Sort = sort.ToList(),
+            PlanActionCount = 1,
+            SkippedCount = 0,
+            Affected = 1,
+            AffectedElementIds = new List<long> { 20 },
+            RequiresRollback = true,
+            Param = param,
+            RollbackActions = new List<PlanReceiptRollbackAction>
+            {
+                new()
+                {
+                    ElementId = 20,
+                    Param = param,
+                    OldValue = "OLD",
+                    NewValue = "NEW",
+                    Source = operation
+                }
+            }
+        };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(receipt, SetPlanFileStore.JsonOptions));
+        var root = document.RootElement;
+        if (root.GetProperty("schemaVersion").GetString() != "plan-receipt.v1" ||
+            root.GetProperty("operation").GetString() != operation ||
+            root.GetProperty("rulePath").GetString() != rulePath ||
+            root.GetProperty("planActionCount").GetInt32() != 1 ||
+            root.GetProperty("skippedCount").GetInt32() != 0 ||
+            !root.GetProperty("requiresRollback").GetBoolean() ||
+            root.GetProperty("affectedElementIds").EnumerateArray().All(id => id.GetInt64() != 20))
+        {
+            return false;
+        }
+
+        var actualSort = root.GetProperty("sort").EnumerateArray()
+            .Select(item => item.GetString() ?? "")
+            .ToArray();
+        if (!actualSort.SequenceEqual(sort))
+        {
+            return false;
+        }
+
+        var rollback = root.GetProperty("rollbackActions").EnumerateArray().SingleOrDefault();
+        return rollback.ValueKind == JsonValueKind.Object &&
+               rollback.GetProperty("elementId").GetInt64() == 20 &&
+               rollback.GetProperty("param").GetString() == param &&
+               rollback.GetProperty("oldValue").GetString() == "OLD" &&
+               rollback.GetProperty("newValue").GetString() == "NEW" &&
                rollback.GetProperty("source").GetString() == operation;
     }
 
@@ -1897,6 +2120,7 @@ public static class WorkbenchCommand
             "workbench safeguards",
             "workbench project",
             "workbench handoff",
+            "release verify --strict",
             "examples workbench",
             "examples workflow",
             "score --history",
@@ -1926,7 +2150,13 @@ public static class WorkbenchCommand
             "standards validate",
             "family purge",
             "journal review",
-            "report knowledge"
+            "report knowledge",
+            "ledger append",
+            "ledger replay",
+            "ledger query",
+            "ledger validate",
+            "ledger stats",
+            "ledger timeline"
         };
         var missingCommandPaths = requiredCommandPaths
             .Where(path => !commandPaths.Contains(path))
@@ -2128,10 +2358,15 @@ public static class WorkbenchCommand
             "workbench-contract.v2",
             "schedule-create.v1",
             "workflow-review.v1",
+            "workflow-registry.v1",
             "workflow-receipts.v1",
             "example-recipes.v1",
             "model-health-history.v1",
-            "knowledge-report.v1"
+            "knowledge-report.v1",
+            "ledger-query.v1",
+            "ledger-validate.v1",
+            "ledger-stats.v1",
+            "ledger-timeline.v1"
         };
         var outputSchemas = outputIndex.Outputs
             .Select(output => output.JsonSchema)
@@ -2195,7 +2430,7 @@ public static class WorkbenchCommand
             completionIssues,
             "workflow subcommands",
             CompletionsCommand.WorkflowCompletionSubcommands,
-            new[] { "validate", "simulate", "review", "run", "suggest", "examples", "receipts" });
+            new[] { "validate", "simulate", "review", "registry", "run", "suggest", "examples", "receipts" });
         AddMissingCompletionValues(
             completionIssues,
             "workflow receipt options",
@@ -2401,11 +2636,51 @@ public static class WorkbenchCommand
             "issue output formats",
             CompletionsCommand.IssueCompletionOutputFormats,
             new[] { "table", "json", "markdown" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "ledger subcommands",
+            CompletionsCommand.LedgerCompletionSubcommands,
+            new[] { "query", "validate", "stats", "timeline" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "ledger options",
+            CompletionsCommand.LedgerCompletionOptions,
+            new[] { "--dir", "--source", "--since", "--until", "--window", "--action", "--category", "--operator", "--receipt-status", "--limit", "--fail-on", "--bucket", "--output" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "ledger output formats",
+            CompletionsCommand.LedgerCompletionOutputFormats,
+            new[] { "table", "json", "markdown" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "ledger sources",
+            CompletionsCommand.LedgerCompletionSources,
+            new[] { "all", "journal", "history", "deliveries", "workflows" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "ledger receipt statuses",
+            CompletionsCommand.LedgerCompletionReceiptStatuses,
+            new[] { "all", "valid", "missing", "unreadable" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "ledger fail-on values",
+            CompletionsCommand.LedgerCompletionFailOnValues,
+            new[] { "error", "warning" });
+        AddMissingCompletionValues(
+            completionIssues,
+            "ledger bucket values",
+            CompletionsCommand.LedgerCompletionBucketValues,
+            new[] { "day", "hour" });
+        AddUnexpectedCompletionValues(
+            completionIssues,
+            "ledger output formats",
+            CompletionsCommand.LedgerCompletionOutputFormats,
+            new[] { "csv", "yaml" });
         yield return Check(
             "completion-surface",
             completionIssues.Count == 0,
             completionIssues.Count == 0
-                ? "Shell completions cover inspect, workbench, workflow, schedules, views, links, model, schedule, rooms, marks, and issue subcommands, options, and output-format contracts."
+                ? "Shell completions cover inspect, workbench, workflow, schedules, views, links, model, schedule, rooms, marks, issue, and ledger subcommands, options, and output-format contracts."
                 : $"Completion surface incomplete: {string.Join("; ", completionIssues)}");
 
         var projectInventory = CreateProjectInventory(projectDirectory);
@@ -2477,6 +2752,7 @@ public static class WorkbenchCommand
             missingHandoffPhases.Length == 0 &&
             handoffCommands.All(command =>
                 !string.IsNullOrWhiteSpace(command.CommandLine) &&
+                !string.IsNullOrWhiteSpace(command.WorkingDirectory) &&
                 !string.IsNullOrWhiteSpace(command.Purpose)) &&
             handoffCommands.Any(command =>
                 string.Equals(command.Phase, "plan-discovery", StringComparison.OrdinalIgnoreCase) &&
@@ -2549,17 +2825,44 @@ public static class WorkbenchCommand
                 ? "schedule-spec.v1 exposes fields, filters, sort, and key-column contracts for validation."
                 : "schedule-spec.v1 is missing fields, filters, sort, or key-column contracts.");
 
+        var traceabilityRuntime = BuildTraceabilityRuntimeCheck();
         var scheduleExportTraceableReady =
             commandPaths.Contains("schedules batch-export") &&
             outputSchemas.Contains("schedule-export-manifest.v1") &&
+            typeof(SchedulesCommand.ScheduleExportManifest).GetProperty(nameof(SchedulesCommand.ScheduleExportManifest.Profile)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifest).GetProperty(nameof(SchedulesCommand.ScheduleExportManifest.ManifestPath)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifest).GetProperty(nameof(SchedulesCommand.ScheduleExportManifest.Command)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifest).GetProperty(nameof(SchedulesCommand.ScheduleExportManifest.ModelPath)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifest).GetProperty(nameof(SchedulesCommand.ScheduleExportManifest.DocumentName)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifest).GetProperty(nameof(SchedulesCommand.ScheduleExportManifest.DocumentVersion)) != null &&
             typeof(SchedulesCommand.ScheduleExportManifestEntry).GetProperty(nameof(SchedulesCommand.ScheduleExportManifestEntry.ScheduleId)) != null &&
-            typeof(SchedulesCommand.ScheduleExportManifestEntry).GetProperty(nameof(SchedulesCommand.ScheduleExportManifestEntry.OutputPath)) != null;
+            typeof(SchedulesCommand.ScheduleExportManifestEntry).GetProperty(nameof(SchedulesCommand.ScheduleExportManifestEntry.OutputPath)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifestEntry).GetProperty(nameof(SchedulesCommand.ScheduleExportManifestEntry.Bytes)) != null &&
+            typeof(SchedulesCommand.ScheduleExportManifestEntry).GetProperty(nameof(SchedulesCommand.ScheduleExportManifestEntry.Sha256)) != null &&
+            traceabilityRuntime.ScheduleExport;
         yield return Check(
             "schedule-export-traceable",
             scheduleExportTraceableReady,
             scheduleExportTraceableReady
-                ? "Schedule batch exports write schedule-export-manifest.v1 entries with schedule ids and CSV paths."
-                : "Schedule batch export is missing callable path, manifest schema, schedule id, or output path evidence.");
+                ? $"Schedule batch exports write schedule-export-manifest.v1 entries with schedule ids, CSV paths, byte counts, SHA256 evidence, profile, command, and model/document identity when available; {traceabilityRuntime.Evidence}."
+                : $"Schedule batch export is missing callable path, manifest schema, profile, command, model/document identity fields, schedule id, output path, byte-count, or populated SHA256 evidence. {traceabilityRuntime.Evidence}");
+
+        var scheduleDiffTraceableReady =
+            commandPaths.Contains("schedules compare") &&
+            outputSchemas.Contains("schedule-diff-report.v1") &&
+            typeof(SchedulesCommand.ScheduleFileDiff).GetProperty(nameof(SchedulesCommand.ScheduleFileDiff.BeforePath)) != null &&
+            typeof(SchedulesCommand.ScheduleFileDiff).GetProperty(nameof(SchedulesCommand.ScheduleFileDiff.AfterPath)) != null &&
+            typeof(SchedulesCommand.ScheduleFileDiff).GetProperty(nameof(SchedulesCommand.ScheduleFileDiff.BeforeSha256)) != null &&
+            typeof(SchedulesCommand.ScheduleFileDiff).GetProperty(nameof(SchedulesCommand.ScheduleFileDiff.AfterSha256)) != null &&
+            typeof(SchedulesCommand.ScheduleFileDiff).GetProperty(nameof(SchedulesCommand.ScheduleFileDiff.BeforeBytes)) != null &&
+            typeof(SchedulesCommand.ScheduleFileDiff).GetProperty(nameof(SchedulesCommand.ScheduleFileDiff.AfterBytes)) != null &&
+            traceabilityRuntime.ScheduleDiff;
+        yield return Check(
+            "schedule-diff-traceable",
+            scheduleDiffTraceableReady,
+            scheduleDiffTraceableReady
+                ? $"Schedule diff reports carry before/after file paths, bytes, and SHA256 evidence; {traceabilityRuntime.Evidence}."
+                : $"Schedule diff reports are missing callable path, schema, before/after paths, bytes, or populated SHA256 evidence. {traceabilityRuntime.Evidence}");
 
         var scheduleEnsureRollbackReady =
             commandPaths.Contains("schedules ensure") &&
@@ -2614,6 +2917,7 @@ public static class WorkbenchCommand
                 ? "View clone plans carry placed-view evidence and rollback guard text before cloned views can be deleted."
                 : "View clone rollback guards are missing placed-view evidence or rollback guard fields.");
 
+        var linkRepairJsonEvidence = LinksCommand.VerifyLinkRepairPlanJsonIsPathLoadOnly();
         var linkRepairNoCoordinateMove =
             commandPaths.Contains("links repair") &&
             outputSchemas.Contains("link-repair-plan.v1") &&
@@ -2622,14 +2926,13 @@ public static class WorkbenchCommand
             typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewPath)) != null &&
             typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.OldLoaded)) != null &&
             typeof(LinksCommand.LinkRepairAction).GetProperty(nameof(LinksCommand.LinkRepairAction.NewLoaded)) != null &&
-            typeof(LinksCommand.LinkRepairAction).GetProperty("TransformFingerprint") == null &&
-            typeof(LinksCommand.LinkRepairAction).GetProperty("Coordinate") == null;
+            linkRepairJsonEvidence.Success;
         yield return Check(
             "linkRepairNoCoordinateMove",
             linkRepairNoCoordinateMove,
             linkRepairNoCoordinateMove
-                ? "Link repair plans expose only old/new path and load-state changes; no coordinate move fields are present."
-                : "Link repair planning is missing callable path, schema, safeguard, path/load fields, or it exposes coordinate mutation fields.");
+                ? $"Link repair plans expose only old/new path and load-state changes; {linkRepairJsonEvidence.Evidence}"
+                : $"Link repair planning is missing callable path, schema, safeguard, path/load fields, or it exposes coordinate mutation fields. {linkRepairJsonEvidence.Evidence}");
 
         var modelMapWritableProbe =
             commandPaths.Contains("model map-fix") &&
@@ -2679,6 +2982,18 @@ public static class WorkbenchCommand
                 ? "Coordination plan receipts include link path/load rollback evidence and model map old/new values."
                 : "Coordination plan receipts are missing link path/load evidence or model map old/new value fields.");
 
+        yield return BuildV55ViewCoordinationHygieneGateCheck(
+            projectDirectory,
+            commandPaths,
+            outputSchemas,
+            safeguardNames,
+            viewMutationPlanIdsFrozen,
+            viewCloneNoNameCollision,
+            viewRollbackGuardsPlacedViews,
+            linkRepairNoCoordinateMove,
+            modelMapWritableProbe,
+            coordinationReceiptPaths);
+
         var contractV2Compat =
             commandPaths.Contains("issue preflight") &&
             commandPaths.Contains("issue diff") &&
@@ -2717,13 +3032,41 @@ public static class WorkbenchCommand
             typeof(IssueCommand.IssuePackageReport).GetProperty(nameof(IssueCommand.IssuePackageReport.JournalSignaturePath)) != null &&
             typeof(IssueCommand.IssuePackageReport).GetProperty(nameof(IssueCommand.IssuePackageReport.Files)) != null &&
             typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.ArchivePath)) != null &&
-            typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.SourcePath)) != null;
+            typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.SourcePath)) != null &&
+            typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.Bytes)) != null &&
+            typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.Sha256)) != null &&
+            typeof(IssueCommand.IssuePackageFile).GetProperty(nameof(IssueCommand.IssuePackageFile.LineNumber)) != null &&
+            traceabilityRuntime.DeliverablesBundle &&
+            traceabilityRuntime.IssuePackage;
         yield return Check(
             "issuePackageTraceability",
             issuePackageTraceability,
             issuePackageTraceability
-                ? "Issue package receipts trace manifest, child files, bundle hash, and optional journal signature evidence."
-                : "Issue package is missing receipt schema, safeguard, manifest, bundle hash, journal signature, or file trace fields.");
+                ? $"Issue package receipts trace manifest, child files, file hashes, bundle hash, and optional journal signature evidence; {traceabilityRuntime.Evidence}."
+                : $"Issue package is missing receipt schema, safeguard, manifest, bundle hash, journal signature, file hash, manifest-line trace fields, or runtime package hash evidence. {traceabilityRuntime.Evidence}");
+
+        var faultInjectionRuntime = BuildFaultInjectionRuntimeCheck();
+        var faultInjectionReady =
+            faultInjectionRuntime.MissingProfile &&
+            faultInjectionRuntime.ScheduleFaults &&
+            faultInjectionRuntime.DeliveryFaults &&
+            faultInjectionRuntime.BundlePathFault &&
+            faultInjectionRuntime.PackageCleanup;
+        yield return Check(
+            "v5FaultInjectionCoverage",
+            faultInjectionReady,
+            faultInjectionReady
+                ? $"v5 fault-injection runtime checks cover missing profiles, missing schedule exports, stale compare baselines, missing manifest fields, missing receipts, tampered receipts/manifests, bundle path failures, and package cleanup; {faultInjectionRuntime.Evidence}."
+                : $"v5 fault-injection runtime checks are incomplete for missing profiles, missing schedule exports, stale compare baselines, missing manifest fields, missing receipts, tampered receipts/manifests, bundle path failures, or package cleanup. {faultInjectionRuntime.Evidence}");
+
+        yield return BuildV5RealSmokeDisclosureCheck(projectDirectory);
+        yield return BuildV5RcBoundaryDisclosureCheck(projectDirectory);
+        yield return BuildV51SheetReleasePilotGateCheck(projectDirectory);
+        yield return BuildV52SchedulePackagePilotGateCheck(projectDirectory);
+        yield return BuildV53NumberingControlledApplyPilotGateCheck(projectDirectory);
+        yield return BuildV54StandardsRuntimePackGateCheck(projectDirectory);
+        yield return BuildV56TeamPilotPackGateCheck(projectDirectory, commandPaths, safeguardNames);
+        yield return BuildV60LocalBimOpsContractGateCheck(projectDirectory, commandPaths, outputSchemas, receiptSchemas, safeguardNames);
 
         var dashboardOptional =
             !CommandContracts.Any(command => string.Equals(command.Name, "dashboard", StringComparison.OrdinalIgnoreCase)) &&
@@ -2802,8 +3145,16 @@ public static class WorkbenchCommand
             "sheet-receipt-rollback-shape",
             sheetReceiptRollbackShapeReady,
             sheetReceiptRollbackShapeReady
-                ? "Sheet plan receipts expose rollback actions, affected ids, and model/document context."
-                : "Sheet plan receipts are missing rollback actions, affected ids, model context, or review commands.");
+                ? "Sheet plan receipts expose rollback actions, affected ids, plan counts, rollback requirement, and model/document context."
+                : "Sheet plan receipts are missing rollback actions, affected ids, plan counts, model context, rollback requirement, or review commands.");
+
+        var numberingReceiptRollbackShapeReady = NumberingPlanReceiptShapeReady(safeguardIndex);
+        yield return Check(
+            "numbering-receipt-rollback-shape",
+            numberingReceiptRollbackShapeReady,
+            numberingReceiptRollbackShapeReady
+                ? "Room and Mark plan receipts expose rule provenance, deterministic ordering evidence, rollback actions, affected ids, and model/document context."
+                : "Room or Mark plan receipts are missing rule provenance, ordering evidence, rollback actions, affected ids, model context, or review commands.");
 
         var workflowDurationReady =
             typeof(WorkflowRunReport).GetProperty(nameof(WorkflowRunReport.DurationMs)) != null &&
@@ -2886,6 +3237,40 @@ public static class WorkbenchCommand
                 ? "Workflow review exposes pre-run workbench handoff, project artifact readiness, and post-run receipt triage commands in the workflow-review.v1 contract."
                 : "Workflow review is missing pre-run workbench handoff commands, project artifact readiness, post-run receipt triage commands, or output-contract notes.");
 
+        var workflowRegistryReportType = typeof(WorkflowCommand)
+            .GetNestedType("WorkflowRegistryReport", BindingFlags.NonPublic);
+        var workflowRegistryEntryType = typeof(WorkflowCommand)
+            .GetNestedType("WorkflowRegistryEntry", BindingFlags.NonPublic);
+        var workflowRegistryOutput = OutputContracts.FirstOrDefault(output =>
+            string.Equals(output.JsonSchema, "workflow-registry.v1", StringComparison.OrdinalIgnoreCase));
+        var workflowRegistryReady =
+            commandPaths.Contains("workflow registry") &&
+            outputSchemas.Contains("workflow-registry.v1") &&
+            workflowRegistryOutput is not null &&
+            workflowRegistryOutput.SupportsMarkdown &&
+            workflowRegistryOutput.Notes.Contains("inputs", StringComparison.OrdinalIgnoreCase) &&
+            workflowRegistryOutput.Notes.Contains("read/write scope", StringComparison.OrdinalIgnoreCase) &&
+            workflowRegistryOutput.Notes.Contains("risk level", StringComparison.OrdinalIgnoreCase) &&
+            workflowRegistryOutput.Notes.Contains("receipt", StringComparison.OrdinalIgnoreCase) &&
+            workflowRegistryReportType?.GetProperty("SchemaVersion") != null &&
+            workflowRegistryReportType?.GetProperty("WorkflowCount") != null &&
+            workflowRegistryReportType?.GetProperty("RollbackSupportedWorkflowCount") != null &&
+            workflowRegistryEntryType?.GetProperty("Inputs") != null &&
+            workflowRegistryEntryType?.GetProperty("Outputs") != null &&
+            workflowRegistryEntryType?.GetProperty("ReadWriteScope") != null &&
+            workflowRegistryEntryType?.GetProperty("RiskLevel") != null &&
+            workflowRegistryEntryType?.GetProperty("DryRunCommands") != null &&
+            workflowRegistryEntryType?.GetProperty("ApprovalCommands") != null &&
+            workflowRegistryEntryType?.GetProperty("RollbackSupport") != null &&
+            workflowRegistryEntryType?.GetProperty("ReceiptSchemas") != null &&
+            workflowRegistryEntryType?.GetProperty("AcceptanceEvidence") != null;
+        yield return Check(
+            "workflow-registry-contract",
+            workflowRegistryReady,
+            workflowRegistryReady
+                ? "Workflow registry exposes workflow-registry.v1 with inputs, outputs, read/write scope, risk level, dry-run commands, approval commands, rollback support, receipt schemas, and acceptance evidence."
+                : "Workflow registry is missing its command path, output schema, Markdown contract, or required registry fields.");
+
         var commandsWithoutExitNotes = CommandContracts
             .Where(command => string.IsNullOrWhiteSpace(command.ExitCodeNotes))
             .Select(command => command.Name)
@@ -2911,6 +3296,4858 @@ public static class WorkbenchCommand
                 ? $"Exit-code index covers {exitIndex.CommandCount} contract commands."
                 : $"Exit-code index missing commands: {string.Join(", ", missingExitIndexCommands)}");
     }
+
+    private static WorkbenchCheckResult BuildV5RealSmokeDisclosureCheck(string projectDirectory)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v5RealSmokeDisclosure",
+                true,
+                "Project-local v5.0 docs are not present, so this workbench run verifies command contracts only and does not claim live Revit issue-closure readiness for the verified --dir.");
+        }
+
+        var smokeRoot = Path.Combine(docsRoot, "smoke", "v5.0");
+        var gapReportPath = Path.Combine(smokeRoot, "gap-report.md");
+        var requiredYears = new[] { "2024", "2025", "2026" };
+        var liveEvidenceYears = requiredYears
+            .Where(year => File.Exists(Path.Combine(smokeRoot, $"revit-{year}-issue-closure.md")))
+            .ToArray();
+        var readOnlyDryRunYears = requiredYears
+            .Where(year => File.Exists(Path.Combine(smokeRoot, $"revit-{year}-readonly-dryrun.md")))
+            .ToArray();
+        var missingYears = requiredYears
+            .Where(year => !liveEvidenceYears.Contains(year, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        var gapReportText = TryReadText(gapReportPath);
+        var undisclosedYears = missingYears
+            .Where(year => !GapReportDisclosesMissingSmoke(gapReportText, year))
+            .ToArray();
+
+        var liveText = liveEvidenceYears.Length == 0
+            ? "no issue-closure write evidence files"
+            : $"issue-closure write evidence files for Revit {string.Join(", Revit ", liveEvidenceYears)}";
+        var readOnlyText = readOnlyDryRunYears.Length == 0
+            ? "no read-only dry-run evidence files"
+            : $"read-only dry-run evidence files for Revit {string.Join(", Revit ", readOnlyDryRunYears)}";
+        var missingText = missingYears.Length == 0
+            ? "no missing Revit years"
+            : $"not-live-verified rows for Revit {string.Join(", Revit ", missingYears)}";
+        return Check(
+            "v5RealSmokeDisclosure",
+            undisclosedYears.Length == 0,
+            undisclosedYears.Length == 0
+                ? $"v5.0 issue-closure smoke readiness is separated from command-surface checks: {liveText}; {readOnlyText}; {missingText} in docs/smoke/v5.0/gap-report.md."
+                : $"v5.0 issue-closure smoke evidence is missing and not disclosed for Revit {string.Join(", Revit ", undisclosedYears)}; add evidence files or update docs/smoke/v5.0/gap-report.md.");
+    }
+
+    private static WorkbenchCheckResult BuildV5RcBoundaryDisclosureCheck(string projectDirectory)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v5RcBoundaryDisclosure",
+                true,
+                "Project-local v5.0 RC docs are not present, so this workbench run verifies command contracts only and does not claim v5.0 RC readiness for the verified --dir.");
+        }
+
+        var path = Path.Combine(docsRoot, "v5-rc-readiness.md");
+        var text = TryReadText(path);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Check(
+                "v5RcBoundaryDisclosure",
+                false,
+                "docs/v5-rc-readiness.md is missing or unreadable; v5.0 RC boundaries are not disclosed.");
+        }
+
+        var requiredPhrases = new[]
+        {
+            "Current status:",
+            "Claimed live Revit years",
+            "Stable P0 Commands",
+            "Experimental / Deferred Commands",
+            "not live verified",
+            "v5RealSmokeDisclosure",
+            "issuePackageTraceability",
+            "v5FaultInjectionCoverage",
+            "release verify --strict",
+            "MCP, SaaS, or built-in LLM parser",
+        };
+        var missing = requiredPhrases
+            .Where(phrase => !text.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        return Check(
+            "v5RcBoundaryDisclosure",
+            missing.Length == 0,
+            missing.Length == 0
+                ? "v5.0 RC readiness doc discloses current status, claimed live Revit years, stable P0 scope, experimental boundaries, live-smoke gaps, strict release gate, and v5 workbench evidence checks."
+                : $"docs/v5-rc-readiness.md is missing RC boundary disclosures: {string.Join(", ", missing)}.");
+    }
+
+    private static WorkbenchCheckResult BuildV51SheetReleasePilotGateCheck(string projectDirectory)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v51SheetReleasePilotGate",
+                true,
+                "Project-local v5.1 docs are not present, so this workbench run verifies sheet release command contracts only and does not claim v5.1 pilot readiness for the verified --dir.");
+        }
+
+        var path = Path.Combine(docsRoot, "smoke", "v5.1", "gap-report.md");
+        var text = TryReadText(path);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Check(
+                "v51SheetReleasePilotGate",
+                false,
+                "docs/smoke/v5.1/gap-report.md is missing or unreadable; v5.1 sheet release pilot gates are not disclosed.");
+        }
+
+        var requiredPhrases = new[]
+        {
+            "v5.1 sheet release control",
+            "production pilot gated",
+            "100 sheet",
+            "300 sheet",
+            "1000 sheet",
+            "not live verified",
+            "Revit 2026",
+            "dry-run/plan/receipt/rollback",
+            "journal verify",
+            "Post-rollback evidence",
+        };
+        var missing = requiredPhrases
+            .Where(phrase => !text.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        return Check(
+            "v51SheetReleasePilotGate",
+            missing.Length == 0,
+            missing.Length == 0
+                ? "v5.1 sheet release control is disclosed as production pilot gated, with 100/300/1000 sheet live fixture gaps kept separate from portable command hardening."
+                : $"docs/smoke/v5.1/gap-report.md is missing sheet release pilot gate disclosures: {string.Join(", ", missing)}.");
+    }
+
+    private static WorkbenchCheckResult BuildV52SchedulePackagePilotGateCheck(string projectDirectory)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v52SchedulePackagePilotGate",
+                true,
+                "Project-local v5.2 docs are not present, so this workbench run verifies schedule/package command contracts only and does not claim v5.2 pilot readiness for the verified --dir.");
+        }
+
+        var path = Path.Combine(docsRoot, "smoke", "v5.2", "gap-report.md");
+        var text = TryReadText(path);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Check(
+                "v52SchedulePackagePilotGate",
+                false,
+                "docs/smoke/v5.2/gap-report.md is missing or unreadable; v5.2 schedule/package pilot gates are not disclosed.");
+        }
+
+        var requiredPhrases = new[]
+        {
+            "v5.2 schedule deliverable closure",
+            "schedule/package-only",
+            "explicit go-forward decision",
+            "not live verified",
+            "schedules batch-export",
+            "schedules compare",
+            "deliverables bundle",
+            "issue package",
+            "journal verify",
+        };
+        var missing = requiredPhrases
+            .Where(phrase => !text.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        return Check(
+            "v52SchedulePackagePilotGate",
+            missing.Length == 0,
+            missing.Length == 0
+                ? "v5.2 schedule/package closure is disclosed as pilot-gated, with live smoke gaps kept separate from portable schedule/package hardening."
+                : $"docs/smoke/v5.2/gap-report.md is missing schedule/package pilot gate disclosures: {string.Join(", ", missing)}.");
+    }
+
+    private static WorkbenchCheckResult BuildV53NumberingControlledApplyPilotGateCheck(string projectDirectory)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v53NumberingControlledApplyPilotGate",
+                true,
+                "Project-local v5.3 docs are not present, so this workbench run verifies numbering command contracts only and does not claim v5.3 pilot readiness for the verified --dir.");
+        }
+
+        var path = Path.Combine(docsRoot, "smoke", "v5.3", "gap-report.md");
+        var text = TryReadText(path);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Check(
+                "v53NumberingControlledApplyPilotGate",
+                false,
+                "docs/smoke/v5.3/gap-report.md is missing or unreadable; v5.3 numbering controlled-apply pilot gates are not disclosed.");
+        }
+
+        var requiredPhrases = new[]
+        {
+            "v5.3 numbering controlled apply",
+            "explicit go-forward decision",
+            "reserved numbers",
+            "hold numbers",
+            "duplicate-target failure",
+            "not live verified",
+            "plan apply",
+            "rollback",
+            "journal verify",
+        };
+        var missing = requiredPhrases
+            .Where(phrase => !text.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        return Check(
+            "v53NumberingControlledApplyPilotGate",
+            missing.Length == 0,
+            missing.Length == 0
+                ? "v5.3 numbering controlled apply is disclosed as pilot-gated, with reserved/hold rule hardening and live Revit smoke gaps kept separate."
+                : $"docs/smoke/v5.3/gap-report.md is missing numbering controlled-apply pilot gate disclosures: {string.Join(", ", missing)}.");
+    }
+
+    private static WorkbenchCheckResult BuildV54StandardsRuntimePackGateCheck(string projectDirectory)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v54StandardsRuntimePackGate",
+                true,
+                "Project-local v5.4 docs are not present, so this workbench run verifies standards command contracts only and does not claim v5.4 runtime pack readiness for the verified --dir.");
+        }
+
+        var gapPath = Path.Combine(docsRoot, "smoke", "v5.4", "gap-report.md");
+        var gapText = TryReadText(gapPath);
+        if (string.IsNullOrWhiteSpace(gapText))
+        {
+            return Check(
+                "v54StandardsRuntimePackGate",
+                false,
+                "docs/smoke/v5.4/gap-report.md is missing or unreadable; v5.4 standards runtime pack gates are not disclosed.");
+        }
+
+        var requiredPhrases = new[]
+        {
+            "v5.4 Standards Runtime Pack",
+            "profiles/office-standard",
+            "sheet map",
+            "numbering rules",
+            "release/workbench gates",
+            "not benchmarked",
+            "not live verified",
+            "SaaS",
+            "MCP",
+            "LLM",
+        };
+        var missing = requiredPhrases
+            .Where(phrase => !gapText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            return Check(
+                "v54StandardsRuntimePackGate",
+                false,
+                $"docs/smoke/v5.4/gap-report.md is missing standards runtime pack disclosures: {string.Join(", ", missing)}.");
+        }
+
+        var repoRoot = Directory.GetParent(docsRoot)?.FullName;
+        if (string.IsNullOrWhiteSpace(repoRoot))
+        {
+            return Check(
+                "v54StandardsRuntimePackGate",
+                false,
+                "Could not resolve repository root for profiles/office-standard validation.");
+        }
+
+        var packRoot = Path.Combine(repoRoot, "profiles", "office-standard");
+        var manifestPath = Path.Combine(packRoot, ".revitcli", "standards.yml");
+        if (!File.Exists(manifestPath))
+        {
+            return Check(
+                "v54StandardsRuntimePackGate",
+                false,
+                "profiles/office-standard/.revitcli/standards.yml is missing.");
+        }
+
+        var validation = StandardsValidator.Validate(manifestPath, packRoot);
+        if (!validation.Valid)
+        {
+            var preview = string.Join("; ", validation.Issues.Take(3).Select(issue => $"{issue.Path}: {issue.Message}"));
+            return Check(
+                "v54StandardsRuntimePackGate",
+                false,
+                $"profiles/office-standard failed standards validation: {preview}");
+        }
+
+        var installSmoke = StandardsRuntimePackSmoke.Run(packRoot);
+        if (!installSmoke.Success)
+        {
+            return Check(
+                "v54StandardsRuntimePackGate",
+                false,
+                $"profiles/office-standard failed standards install dry-run/apply smoke: {installSmoke.Evidence}");
+        }
+
+        var manifestText = TryReadText(manifestPath);
+        var manifestHasRuntimeFiles =
+            manifestText.Contains("sheetMaps", StringComparison.OrdinalIgnoreCase) &&
+            manifestText.Contains("numberingRules", StringComparison.OrdinalIgnoreCase);
+
+        return Check(
+            "v54StandardsRuntimePackGate",
+            manifestHasRuntimeFiles,
+            manifestHasRuntimeFiles
+                ? $"v5.4 standards runtime pack profiles/office-standard validates offline and {installSmoke.Evidence}, covering profile, workflow, output path, schedule template, sheet map, numbering rule, and family-rule requirements."
+                : "profiles/office-standard manifest is missing sheetMaps or numberingRules runtime file requirements.");
+    }
+
+    private static WorkbenchCheckResult BuildV55ViewCoordinationHygieneGateCheck(
+        string projectDirectory,
+        IReadOnlySet<string> commandPaths,
+        IReadOnlySet<string> outputSchemas,
+        IReadOnlySet<string> safeguardNames,
+        bool viewMutationPlanIdsFrozen,
+        bool viewCloneNoNameCollision,
+        bool viewRollbackGuardsPlacedViews,
+        bool linkRepairNoCoordinateMove,
+        bool modelMapWritableProbe,
+        bool coordinationReceiptPaths)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v55ViewCoordinationHygieneGate",
+                true,
+                "Project-local v5.5 docs are not present, so this workbench run does not claim v5.5 release readiness for the verified --dir; release roots must provide docs/smoke/v5.5/gap-report.md.");
+        }
+
+        var gapPath = Path.Combine(docsRoot, "smoke", "v5.5", "gap-report.md");
+        var gapText = TryReadText(gapPath);
+        if (string.IsNullOrWhiteSpace(gapText))
+        {
+            return Check(
+                "v55ViewCoordinationHygieneGate",
+                false,
+                "docs/smoke/v5.5/gap-report.md is missing or unreadable; v5.5 view/coordination hygiene gates are not disclosed.");
+        }
+
+        var requiredPhrases = new[]
+        {
+            "v5.5 View and Coordination Hygiene",
+            "audit-first",
+            "views audit",
+            "views template-apply",
+            "views clone-set",
+            "placed-view rollback guard",
+            "links audit",
+            "links repair",
+            "no coordinate moves",
+            "model map-check",
+            "model map-fix",
+            "write-precheck",
+            "worksharing locks",
+            "not live verified",
+            "journal verify",
+            "SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+        };
+        var missing = requiredPhrases
+            .Where(phrase => !gapText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            return Check(
+                "v55ViewCoordinationHygieneGate",
+                false,
+                $"docs/smoke/v5.5/gap-report.md is missing view/coordination hygiene disclosures: {string.Join(", ", missing)}.");
+        }
+
+        var boundaryIssues = FindBoundaryEvidenceIssues(
+            gapText,
+            ("SaaS", V60SaasContradictions),
+            ("MCP", V60McpContradictions),
+            ("built-in LLM", V60LlmContradictions),
+            ("dashboard-central", V60DashboardCentralContradictions));
+        if (boundaryIssues.Length > 0)
+        {
+            return Check(
+                "v55ViewCoordinationHygieneGate",
+                false,
+                $"docs/smoke/v5.5/gap-report.md has contradictory or bare non-goal boundary disclosures: {string.Join(", ", boundaryIssues)}.");
+        }
+
+        var surfaceReady =
+            commandPaths.Contains("views audit") &&
+            commandPaths.Contains("views template-apply") &&
+            commandPaths.Contains("views clone-set") &&
+            commandPaths.Contains("links audit") &&
+            commandPaths.Contains("links repair") &&
+            commandPaths.Contains("model map-check") &&
+            commandPaths.Contains("model map-fix") &&
+            outputSchemas.Contains("view-standards-report.v1") &&
+            outputSchemas.Contains("view-template-plan.v1") &&
+            outputSchemas.Contains("view-clone-plan.v1") &&
+            outputSchemas.Contains("link-audit-report.v1") &&
+            outputSchemas.Contains("link-repair-plan.v1") &&
+            outputSchemas.Contains("model-map-report.v1") &&
+            outputSchemas.Contains("model-map-fix-plan.v1") &&
+            safeguardNames.Contains("views-template-apply") &&
+            safeguardNames.Contains("views-clone-set") &&
+            safeguardNames.Contains("links-repair") &&
+            safeguardNames.Contains("model-map-fix") &&
+            viewMutationPlanIdsFrozen &&
+            viewCloneNoNameCollision &&
+            viewRollbackGuardsPlacedViews &&
+            linkRepairNoCoordinateMove &&
+            modelMapWritableProbe &&
+            coordinationReceiptPaths;
+
+        return Check(
+            "v55ViewCoordinationHygieneGate",
+            surfaceReady,
+            surfaceReady
+                ? "v5.5 view/coordination hygiene is audit-first: view plans freeze ids and placed-view rollback guards, link repair remains path/load only with no coordinate moves, and model map-fix carries writable probe plus receipt rollback evidence while live worksharing gaps stay disclosed."
+                : "v5.5 view/coordination hygiene is missing command paths, output schemas, safeguards, placed-view guards, no-coordinate link repair, model map writable probe, or coordination receipt evidence.");
+    }
+
+    private static WorkbenchCheckResult BuildV56TeamPilotPackGateCheck(
+        string projectDirectory,
+        IReadOnlySet<string> commandPaths,
+        IReadOnlySet<string> safeguardNames)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v56TeamPilotPackGate",
+                true,
+                "Project-local v5.6 docs are not present, so this workbench run verifies command contracts only and does not claim team pilot readiness for the verified --dir.");
+        }
+
+        var gapPath = Path.Combine(docsRoot, "smoke", "v5.6", "gap-report.md");
+        var gapText = TryReadText(gapPath);
+        if (string.IsNullOrWhiteSpace(gapText))
+        {
+            return Check(
+                "v56TeamPilotPackGate",
+                false,
+                "docs/smoke/v5.6/gap-report.md is missing or unreadable; v5.6 team pilot pack gates are not disclosed.");
+        }
+
+        var requiredPhrases = new[]
+        {
+            "v5.6 Team Pilot Pack",
+            "installer",
+            "doctor",
+            "policy files",
+            "receipt retention",
+            "training",
+            "supportable error reports",
+            "office pilots",
+            "not live verified",
+            "local-first",
+            "terminal-first",
+            "SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+        };
+        var missing = requiredPhrases
+            .Where(phrase => !gapText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            return Check(
+                "v56TeamPilotPackGate",
+                false,
+                $"docs/smoke/v5.6/gap-report.md is missing team pilot disclosures: {string.Join(", ", missing)}.");
+        }
+
+        var boundaryIssues = FindBoundaryEvidenceIssues(
+            gapText,
+            ("SaaS", V60SaasContradictions),
+            ("MCP", V60McpContradictions),
+            ("built-in LLM", V60LlmContradictions),
+            ("dashboard-central", V60DashboardCentralContradictions));
+        if (boundaryIssues.Length > 0)
+        {
+            return Check(
+                "v56TeamPilotPackGate",
+                false,
+                $"docs/smoke/v5.6/gap-report.md has contradictory or bare non-goal boundary disclosures: {string.Join(", ", boundaryIssues)}.");
+        }
+
+        var policyPath = Path.Combine(projectDirectory, "profiles", "team-pilot", ".revitcli", "team-policy.yml");
+        var policy = TeamPolicyValidator.Validate(policyPath, projectDirectory);
+        if (!policy.Valid)
+        {
+            var preview = string.Join("; ", policy.Issues.Take(3).Select(issue => $"{issue.Code}: {issue.Message}"));
+            return Check(
+                "v56TeamPilotPackGate",
+                false,
+                $"profiles/team-pilot/.revitcli/team-policy.yml failed team policy validation: {preview}");
+        }
+
+        var surfaceReady =
+            commandPaths.Contains("doctor") &&
+            commandPaths.Contains("workbench verify --contract workbench-contract.v2") &&
+            commandPaths.Contains("release verify --strict") &&
+            commandPaths.Contains("standards validate") &&
+            commandPaths.Contains("journal verify") &&
+            safeguardNames.Contains("history-prune");
+
+        return Check(
+            "v56TeamPilotPackGate",
+            surfaceReady,
+            surfaceReady
+                ? "v5.6 team pilot pack has local policy validation for installer/doctor/release gates, receipt retention, support evidence, and history-prune retention review without SaaS, MCP, dashboard-central, or built-in LLM runtime behavior."
+                : "v5.6 team pilot pack is missing doctor/workbench/release/standards/journal command paths or history-prune retention safeguards.");
+    }
+
+    private static WorkbenchCheckResult BuildV60LocalBimOpsContractGateCheck(
+        string projectDirectory,
+        IReadOnlySet<string> commandPaths,
+        IReadOnlySet<string> outputSchemas,
+        IReadOnlySet<string> receiptSchemas,
+        IReadOnlySet<string> safeguardNames)
+    {
+        var docsRoot = GetProjectDocsRootForReleaseClaims(projectDirectory);
+        if (docsRoot == null)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                true,
+                "Project-local v6.0 docs are not present, so this workbench run verifies command contracts only and does not claim Local BIMOps Workbench readiness for the verified --dir.");
+        }
+
+        var contractPath = Path.Combine(docsRoot, "v6-local-bimops-contract.md");
+        var contractText = TryReadText(contractPath);
+        if (string.IsNullOrWhiteSpace(contractText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/v6-local-bimops-contract.md is missing or unreadable; v6.0 Local BIMOps contract gates are not disclosed.");
+        }
+
+        var gapPath = Path.Combine(docsRoot, "smoke", "v6.0", "gap-report.md");
+        var gapText = TryReadText(gapPath);
+        if (string.IsNullOrWhiteSpace(gapText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/gap-report.md is missing or unreadable; v6.0 Local BIMOps gaps are not disclosed.");
+        }
+
+        var contractPhrases = new[]
+        {
+            "v6.0 Local BIMOps Workbench Contract",
+            "BIM Release OS",
+            "Revit Model Operations Ledger",
+            "terminal-first",
+            "local-first",
+            "deterministic",
+            "dry-run first",
+            "explicit approval",
+            "planHash",
+            "receiptHash",
+            "journalPath",
+            "rollbackPointer",
+            "checks",
+            "artifacts",
+            "deterministic receipt",
+            "rollback preconditions",
+            "current-value conflict",
+            "audit trail",
+            "journal verify",
+            "standards runtime",
+            "project memory",
+            "workflow registry",
+            "workflow-registry.v1",
+            "ledger append",
+            "ledger replay",
+            "ledger query",
+            "ledger validate",
+            "ledger stats",
+            "ledger timeline",
+            "ledger-append.v1",
+            "ledger-replay.v1",
+            "ledger-query.v1",
+            "ledger-validate.v1",
+            "ledger-stats.v1",
+            "ledger-timeline.v1",
+            "no SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+            "database",
+        };
+        var missingContract = contractPhrases
+            .Where(phrase => !contractText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingContract.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/v6-local-bimops-contract.md is missing Local BIMOps contract disclosures: {string.Join(", ", missingContract)}.");
+        }
+
+        var contractBoundaryIssues = FindBoundaryEvidenceIssues(
+            contractText,
+            ("SaaS", V60SaasContradictions),
+            ("MCP", V60McpContradictions),
+            ("built-in LLM", V60LlmContradictions),
+            ("dashboard-central", V60DashboardCentralContradictions),
+            ("database", V60DatabaseContradictions));
+        if (contractBoundaryIssues.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/v6-local-bimops-contract.md has contradictory or bare non-goal boundary disclosures: {string.Join(", ", contractBoundaryIssues)}.");
+        }
+
+        var gapPhrases = new[]
+        {
+            "v6.0 Local BIMOps Workbench",
+            "contract baseline",
+            "operations ledger",
+            "not live verified",
+            "ledger replay",
+            "live Revit ledger integration",
+            "SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+            "real Revit pilots",
+            "office rollout pilots",
+            "pilot evidence packet",
+            "local controlled pilot packet",
+            "read-only ledger query",
+            "ledger replay preview",
+            "read-only ledger validate",
+            "read-only ledger stats",
+            "read-only ledger timeline",
+            "append-only ledger runtime",
+            "read-only workflow registry",
+            "read-only standards validate",
+            "dry-run issue package",
+            "read-only deliverables verify",
+        };
+        var missingGap = gapPhrases
+            .Where(phrase => !gapText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .Concat(MissingSemanticEvidence(
+                gapText,
+                "journal verify JSON/table validity/root-hash parity",
+                "journal verify",
+                "JSON/table",
+                "validity",
+                "root-hash",
+                "parity"))
+            .Concat(MissingSemanticEvidence(
+                gapText,
+                "history-list.v1 JSON count consistency and table row-order parity",
+                "history-list.v1",
+                "JSON count consistency",
+                "table",
+                "row-order parity"))
+            .ToArray();
+        if (missingGap.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/gap-report.md is missing Local BIMOps gap disclosures: {string.Join(", ", missingGap)}.");
+        }
+
+        var gapBoundaryIssues = FindBoundaryEvidenceIssues(
+            gapText,
+            ("SaaS", V60SaasContradictions),
+            ("MCP", V60McpContradictions),
+            ("built-in LLM", V60LlmContradictions),
+            ("dashboard-central", V60DashboardCentralContradictions),
+            ("database", V60DatabaseContradictions));
+        if (gapBoundaryIssues.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/gap-report.md has contradictory or bare non-goal boundary disclosures: {string.Join(", ", gapBoundaryIssues)}.");
+        }
+
+        var pilotEvidencePath = Path.Combine(docsRoot, "smoke", "v6.0", "pilot-evidence-template.md");
+        var pilotEvidenceText = TryReadText(pilotEvidencePath);
+        if (string.IsNullOrWhiteSpace(pilotEvidenceText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/pilot-evidence-template.md is missing or unreadable; v6.0 office rollout pilot evidence intake is not disclosed.");
+        }
+
+        var pilotEvidencePhrases = new[]
+        {
+            "v6.0 Office Rollout Pilot Evidence Packet",
+            "controlled project-copy pilots",
+            "doctor --check-version 2026 --output json",
+            "status --output json",
+            "workbench verify --contract workbench-contract.v2",
+            "release verify --strict --output json",
+            "ledger query --source ledger --output json",
+            "ledger validate --source ledger --output json",
+            "ledger stats --source ledger --analytics-snapshot",
+            "ledger timeline --source ledger --analytics-snapshot",
+            "journal verify --output json",
+            "Rollback result",
+            "no production support claim",
+            "Minimum office pilots: 2-3 completed office pilots",
+            "BIM manager signoff",
+            "Project-copy owner signoff",
+            "Support ticket review",
+            "Multi-user rollout postmortem",
+        };
+        var missingPilotEvidence = pilotEvidencePhrases
+            .Where(phrase => !pilotEvidenceText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingPilotEvidence.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/pilot-evidence-template.md is missing office rollout pilot evidence disclosures: {string.Join(", ", missingPilotEvidence)}.");
+        }
+
+        var pilotEvidenceBoundaryIssues = FindBoundaryEvidenceIssues(
+            pilotEvidenceText,
+            ("SaaS", V60SaasContradictions),
+            ("MCP", V60McpContradictions),
+            ("built-in LLM", V60LlmContradictions),
+            ("dashboard-central", V60DashboardCentralContradictions),
+            ("database", V60DatabaseContradictions));
+        if (pilotEvidenceBoundaryIssues.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/pilot-evidence-template.md has contradictory or bare non-goal boundary disclosures: {string.Join(", ", pilotEvidenceBoundaryIssues)}.");
+        }
+
+        var officeRolloutStatusPath = Path.Combine(docsRoot, "smoke", "v6.0", "office-rollout-status.json");
+        var officeRolloutStatusIssue = ValidateV60OfficeRolloutStatus(officeRolloutStatusPath);
+        if (officeRolloutStatusIssue is not null)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                officeRolloutStatusIssue);
+        }
+
+        var standardsRuntimePath = Path.Combine(docsRoot, "smoke", "v6.0", "standards-runtime.md");
+        var standardsRuntimeText = TryReadText(standardsRuntimePath);
+        if (string.IsNullOrWhiteSpace(standardsRuntimeText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/standards-runtime.md is missing or unreadable; v6.0 standards runtime smoke behavior is not disclosed.");
+        }
+
+        var standardsRuntimePhrases = new[]
+        {
+            "standards validate --output json",
+            "standards runtime",
+            "table",
+            "summary",
+            "Markdown",
+            "detail",
+            "parity",
+            "final file-tree snapshot evidence",
+            "read-only",
+            "does not start Revit",
+            "does not write model data",
+            "database",
+            "SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+        };
+        var missingStandardsRuntime = standardsRuntimePhrases
+            .Where(phrase => !standardsRuntimeText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingStandardsRuntime.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/standards-runtime.md is missing standards runtime smoke disclosures: {string.Join(", ", missingStandardsRuntime)}.");
+        }
+
+        var issueSpinePath = Path.Combine(docsRoot, "smoke", "v6.0", "issue-spine.md");
+        var issueSpineText = TryReadText(issueSpinePath);
+        if (string.IsNullOrWhiteSpace(issueSpineText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/issue-spine.md is missing or unreadable; v6.0 issue command spine smoke behavior is not disclosed.");
+        }
+
+        var issueSpinePhrases = new[]
+        {
+            "issue preflight --profile",
+            "issue package --profile",
+            "dry-run first",
+            "hidden mutation guards",
+            "issue-package-receipt.v1",
+            "table",
+            "summary",
+            "Markdown",
+            "detail",
+            "parity",
+            "dry-run no-write evidence",
+            "does not start Revit",
+            "database",
+            "SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+        };
+        var missingIssueSpine = issueSpinePhrases
+            .Where(phrase => !issueSpineText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingIssueSpine.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/issue-spine.md is missing issue command spine smoke disclosures: {string.Join(", ", missingIssueSpine)}.");
+        }
+
+        var deliverablesVerifyPath = Path.Combine(docsRoot, "smoke", "v6.0", "deliverables-verify.md");
+        var deliverablesVerifyText = TryReadText(deliverablesVerifyPath);
+        if (string.IsNullOrWhiteSpace(deliverablesVerifyText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/deliverables-verify.md is missing or unreadable; v6.0 deliverables verification smoke behavior is not disclosed.");
+        }
+
+        var deliverablesVerifyPhrases = new[]
+        {
+            "deliverables verify --output json",
+            "local manifest-read",
+            "readable-receipt evidence",
+            "Kinds",
+            "Outcomes",
+            "counts",
+            "table",
+            "Markdown",
+            "without package writes",
+            "missing receipts",
+            "no Revit API",
+            "starting Revit",
+            "database",
+            "SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+        };
+        var missingDeliverablesVerify = deliverablesVerifyPhrases
+            .Where(phrase => !deliverablesVerifyText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingDeliverablesVerify.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/deliverables-verify.md is missing deliverables verification smoke disclosures: {string.Join(", ", missingDeliverablesVerify)}.");
+        }
+
+        var ledgerQueryPath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-query.md");
+        var ledgerQueryText = TryReadText(ledgerQueryPath);
+        if (string.IsNullOrWhiteSpace(ledgerQueryText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/ledger-query.md is missing or unreadable; v6.0 ledger query smoke behavior is not disclosed.");
+        }
+
+        var ledgerQueryPhrases = new[]
+        {
+            "read-only ledger query",
+            "ledger-query.v1",
+            "journal",
+            "history",
+            "delivery",
+            "workflow receipt",
+            "timestamp/source/path/line ordering",
+            "JSON/table/Markdown output semantic parity",
+            "malformed",
+            "event-level no-write evidence",
+            "final file-tree snapshot evidence",
+            "no database",
+        };
+        var missingLedgerQuery = ledgerQueryPhrases
+            .Where(phrase => !ledgerQueryText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingLedgerQuery.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/ledger-query.md is missing ledger query smoke disclosures: {string.Join(", ", missingLedgerQuery)}.");
+        }
+
+        var ledgerValidatePath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-validate.md");
+        var ledgerValidateText = TryReadText(ledgerValidatePath);
+        if (string.IsNullOrWhiteSpace(ledgerValidateText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/ledger-validate.md is missing or unreadable; v6.0 ledger validation smoke behavior is not disclosed.");
+        }
+
+        var ledgerValidatePhrases = new[]
+        {
+            "read-only ledger validate",
+            "ledger-validate.v1",
+            "source readability",
+            "artifact links",
+            "receipt status",
+            "timestamp format",
+            "explicit UTC offset",
+            "time filters preserve invalid timestamp warnings",
+            "validation JSON/table/Markdown semantic parity",
+            "event-level no-write evidence",
+            "final file-tree snapshot evidence",
+            "does not write files",
+            "no database",
+        };
+        var missingLedgerValidate = ledgerValidatePhrases
+            .Where(phrase => !ledgerValidateText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingLedgerValidate.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/ledger-validate.md is missing ledger validation smoke disclosures: {string.Join(", ", missingLedgerValidate)}.");
+        }
+
+        var ledgerStatsPath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-stats.md");
+        var ledgerStatsText = TryReadText(ledgerStatsPath);
+        if (string.IsNullOrWhiteSpace(ledgerStatsText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/ledger-stats.md is missing or unreadable; v6.0 ledger stats smoke behavior is not disclosed.");
+        }
+
+        var ledgerStatsPhrases = new[]
+        {
+            "read-only ledger stats",
+            "ledger-stats.v1",
+            "operation counts",
+            "source counts",
+            "action counts",
+            "category and operator counts",
+            "receipt status counts",
+            "issue source counts",
+            "issue severity counts",
+            "malformed journal, delivery manifest, and workflow receipt artifacts",
+            "JSON/table/Markdown stats semantic parity",
+            "event-level no-write evidence",
+            "final file-tree snapshot evidence",
+            "does not write files",
+            "no database",
+        };
+        var missingLedgerStats = ledgerStatsPhrases
+            .Where(phrase => !ledgerStatsText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingLedgerStats.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/ledger-stats.md is missing ledger stats smoke disclosures: {string.Join(", ", missingLedgerStats)}.");
+        }
+
+        var ledgerTimelinePath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-timeline.md");
+        var ledgerTimelineText = TryReadText(ledgerTimelinePath);
+        if (string.IsNullOrWhiteSpace(ledgerTimelineText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/ledger-timeline.md is missing or unreadable; v6.0 ledger timeline smoke behavior is not disclosed.");
+        }
+
+        var ledgerTimelinePhrases = new[]
+        {
+            "read-only ledger timeline",
+            "ledger-timeline.v1",
+            "bucket",
+            "source",
+            "action",
+            "category counts per bucket",
+            "operator counts per bucket",
+            "receipt status",
+            "issue severity",
+            "JSON/table/Markdown timeline semantic parity",
+            "unbucketed timestamp",
+            "explicit UTC offset",
+            "time filters preserve unbucketed timestamp warnings",
+            "projectDirectories",
+            "byProject",
+            "event-level no-write evidence",
+            "final file-tree snapshot evidence",
+            "does not write files",
+            "no database",
+        };
+        var missingLedgerTimeline = ledgerTimelinePhrases
+            .Where(phrase => !ledgerTimelineText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingLedgerTimeline.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/ledger-timeline.md is missing ledger timeline smoke disclosures: {string.Join(", ", missingLedgerTimeline)}.");
+        }
+
+        var ledgerAppendPath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-append.md");
+        var ledgerAppendText = TryReadText(ledgerAppendPath);
+        if (string.IsNullOrWhiteSpace(ledgerAppendText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/ledger-append.md is missing or unreadable; v6.0 ledger append runtime smoke behavior is not disclosed.");
+        }
+
+        var ledgerAppendPhrases = new[]
+        {
+            "append-only ledger runtime",
+            "ledger append",
+            "ledger-append.v1",
+            "ledger-operation.v1",
+            ".revitcli/ledger/operations.jsonl",
+            "dry-run default",
+            "--yes",
+            "source ledger",
+            "deterministic evidence links",
+            "JSON/table/Markdown output semantic parity",
+            "bounded local write evidence",
+            "does not start Revit",
+            "no database",
+        };
+        var missingLedgerAppend = ledgerAppendPhrases
+            .Where(phrase => !ledgerAppendText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingLedgerAppend.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/ledger-append.md is missing ledger append runtime smoke disclosures: {string.Join(", ", missingLedgerAppend)}.");
+        }
+
+        var ledgerReplayPath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-replay.md");
+        var ledgerReplayText = TryReadText(ledgerReplayPath);
+        if (string.IsNullOrWhiteSpace(ledgerReplayText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/ledger-replay.md is missing or unreadable; v6.0 ledger replay preview smoke behavior is not disclosed.");
+        }
+
+        var ledgerReplayPhrases = new[]
+        {
+            "ledger replay",
+            "ledger-replay.v1",
+            "preview-only",
+            "dryRun",
+            "applySupported",
+            "canApply",
+            "source ledger",
+            "JSON/table/Markdown output semantic parity",
+            "does not write files",
+            "does not start Revit",
+            "no database",
+        };
+        var missingLedgerReplay = ledgerReplayPhrases
+            .Where(phrase => !ledgerReplayText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingLedgerReplay.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/ledger-replay.md is missing ledger replay preview smoke disclosures: {string.Join(", ", missingLedgerReplay)}.");
+        }
+
+        var workflowRegistryPath = Path.Combine(docsRoot, "smoke", "v6.0", "workflow-registry.md");
+        var workflowRegistryText = TryReadText(workflowRegistryPath);
+        if (string.IsNullOrWhiteSpace(workflowRegistryText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/workflow-registry.md is missing or unreadable; v6.0 workflow registry smoke behavior is not disclosed.");
+        }
+
+        var workflowRegistryPhrases = new[]
+        {
+            "read-only workflow registry",
+            "workflow-registry.v1",
+            "inputs",
+            "outputs",
+            "read/write scope",
+            "risk level",
+            "dry-run command",
+            "approval command",
+            "rollback support",
+            "receipt schema",
+            "acceptance evidence",
+            "JSON/table/Markdown output semantic parity",
+            "does not write files",
+            "final file-tree snapshot evidence",
+            "event-level no-write evidence",
+            "no SaaS",
+            "MCP",
+            "built-in LLM",
+            "dashboard-central",
+        };
+        var missingWorkflowRegistry = workflowRegistryPhrases
+            .Where(phrase => !workflowRegistryText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingWorkflowRegistry.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/workflow-registry.md is missing workflow registry smoke disclosures: {string.Join(", ", missingWorkflowRegistry)}.");
+        }
+
+        var commandSpineRuntimeReady = RunCommandSpineRuntimeCheck(
+            out var commandSpineRuntimeEvidence,
+            out var commandSpineRuntimeDetails);
+        var workflowRegistryRuntimeReady = RunWorkflowRegistryRuntimeCheck(out var workflowRegistryRuntimeEvidence);
+        var ledgerQueryValidateRuntimeReady = RunLedgerQueryValidateRuntimeCheck(out var ledgerQueryValidateRuntimeEvidence);
+        var ledgerStatsRuntimeReady = RunLedgerStatsRuntimeCheck(out var ledgerStatsRuntimeEvidence);
+        var ledgerTimelineRuntimeReady = RunLedgerTimelineRuntimeCheck(out var ledgerTimelineRuntimeEvidence);
+        var ledgerAppendRuntimeReady = RunLedgerAppendRuntimeCheck(out var ledgerAppendRuntimeEvidence);
+        var ledgerReplayRuntimeReady = RunLedgerReplayRuntimeCheck(out var ledgerReplayRuntimeEvidence);
+        var runtimeEvidence = new WorkbenchRuntimeEvidence(
+            commandSpineRuntimeReady,
+            commandSpineRuntimeDetails.OutputParity,
+            commandSpineRuntimeDetails.NoWrites,
+            workflowRegistryRuntimeReady,
+            ledgerAppendRuntimeReady,
+            ledgerQueryValidateRuntimeReady,
+            ledgerStatsRuntimeReady,
+            ledgerTimelineRuntimeReady,
+            ledgerReplayRuntimeReady,
+            commandSpineRuntimeDetails.StandardsValidate,
+            commandSpineRuntimeDetails.IssuePreflight,
+            commandSpineRuntimeDetails.IssuePackageDryRun,
+            commandSpineRuntimeDetails.DeliverablesVerify,
+            commandSpineRuntimeDetails.JournalVerify,
+            commandSpineRuntimeDetails.HistoryList,
+            commandSpineRuntimeDetails.HistoryListCountConsistency,
+            commandSpineRuntimeDetails.HistoryListRowOrder,
+            commandSpineRuntimeDetails.RollbackDryRun,
+            commandSpineRuntimeDetails.RollbackDryRunPreview,
+            commandSpineRuntimeDetails.RollbackNoMutatingSetRequest,
+            commandSpineRuntimeDetails.HistoryListEvidence,
+            commandSpineRuntimeDetails.RollbackDryRunEvidence,
+            commandSpineRuntimeReady &&
+            workflowRegistryRuntimeReady &&
+            ledgerAppendRuntimeReady &&
+            ledgerQueryValidateRuntimeReady &&
+            ledgerStatsRuntimeReady &&
+            ledgerTimelineRuntimeReady &&
+            ledgerReplayRuntimeReady);
+        var surfaceReady =
+            commandPaths.Contains("doctor") &&
+            commandPaths.Contains("workbench verify --contract workbench-contract.v2") &&
+            commandPaths.Contains("release verify --strict") &&
+            commandPaths.Contains("standards validate") &&
+            commandPaths.Contains("issue preflight") &&
+            commandPaths.Contains("issue package") &&
+            commandPaths.Contains("deliverables verify") &&
+            commandPaths.Contains("journal verify") &&
+            commandPaths.Contains("history list") &&
+            commandPaths.Contains("ledger append") &&
+            commandPaths.Contains("ledger replay") &&
+            commandPaths.Contains("ledger query") &&
+            commandPaths.Contains("ledger validate") &&
+            commandPaths.Contains("ledger stats") &&
+            commandPaths.Contains("ledger timeline") &&
+            commandPaths.Contains("workflow registry") &&
+            commandPaths.Contains("rollback") &&
+            outputSchemas.Contains("workbench-verify-report.v2") &&
+            outputSchemas.Contains("ledger-append.v1") &&
+            outputSchemas.Contains("ledger-replay.v1") &&
+            outputSchemas.Contains("ledger-query.v1") &&
+            outputSchemas.Contains("ledger-validate.v1") &&
+            outputSchemas.Contains("ledger-stats.v1") &&
+            outputSchemas.Contains("ledger-timeline.v1") &&
+            outputSchemas.Contains("workflow-registry.v1") &&
+            receiptSchemas.Contains("plan-receipt.v1") &&
+            receiptSchemas.Contains("issue-package-receipt.v1") &&
+            receiptSchemas.Contains("delivery-bundle-receipt.v1") &&
+            safeguardNames.Contains("plan-apply") &&
+            safeguardNames.Contains("rollback") &&
+            safeguardNames.Contains("issue-package") &&
+            safeguardNames.Contains("deliverables-bundle") &&
+            commandSpineRuntimeReady &&
+            workflowRegistryRuntimeReady &&
+            ledgerAppendRuntimeReady &&
+            ledgerQueryValidateRuntimeReady &&
+            ledgerStatsRuntimeReady &&
+            ledgerTimelineRuntimeReady &&
+            ledgerReplayRuntimeReady;
+
+        return Check(
+            "v60LocalBimOpsContractGate",
+            surfaceReady,
+            surfaceReady
+                ? $"v6.0 Local BIMOps contract baseline is docs/contract-first with staged local runtime: command spine, deterministic receipts, rollback preconditions, local audit trail, standards runtime, project memory, workflow registry, append-only ledger runtime, preview-only ledger replay, and non-goals are gated without SaaS, MCP, dashboard-central, built-in LLM, database, or live Revit ledger apply; {commandSpineRuntimeEvidence}; {workflowRegistryRuntimeEvidence}; {ledgerAppendRuntimeEvidence}; {ledgerReplayRuntimeEvidence}; {ledgerQueryValidateRuntimeEvidence}; {ledgerStatsRuntimeEvidence}; {ledgerTimelineRuntimeEvidence}."
+                : $"v6.0 Local BIMOps contract baseline is missing command spine paths, command-spine runtime evidence, ledger append/replay/query/validate/stats/timeline output schemas, workflow-registry.v1, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1 or ledger-timeline.v1 runtime evidence, receipt schemas, rollback/package safeguards, or workbench v2 output schema. Command spine runtime evidence: {commandSpineRuntimeEvidence}. Workflow registry runtime evidence: {workflowRegistryRuntimeEvidence}. Ledger append runtime evidence: {ledgerAppendRuntimeEvidence}. Ledger replay runtime evidence: {ledgerReplayRuntimeEvidence}. Ledger query/validate runtime evidence: {ledgerQueryValidateRuntimeEvidence}. Ledger stats runtime evidence: {ledgerStatsRuntimeEvidence}. Ledger timeline runtime evidence: {ledgerTimelineRuntimeEvidence}",
+            runtimeEvidence);
+    }
+
+    private static bool RunCommandSpineRuntimeCheck(
+        out string evidence,
+        out CommandSpineRuntimeEvidence commandSpineEvidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-command-spine-check-{Guid.NewGuid():N}");
+        commandSpineEvidence = CommandSpineRuntimeEvidence.None;
+        try
+        {
+            WriteCommandSpineStandardsProject(root);
+            WriteCommandSpineDeliveryEvidence(root);
+            var issueProfilePath = Path.Combine(root, ".revitcli", "issue.yml");
+            File.WriteAllText(issueProfilePath, """
+schemaVersion: issue-profile.v1
+checks:
+  - name: issue exports
+    command: revitcli publish issue --dry-run --output json
+package:
+  commands:
+    - revitcli deliverables bundle --dry-run --output json
+""");
+            var rollbackReceiptPath = WriteCommandSpineAuditEvidence(root);
+
+            var before = SnapshotLocalFiles(root);
+            using var writeProbe = new FileWriteProbe(root);
+            var standardsInvocation = InvokeRootCommandLine([
+                "standards",
+                "validate",
+                "--dir",
+                root,
+                "--output",
+                "json",
+            ]);
+            var standardsTableInvocation = InvokeRootCommandLine([
+                "standards",
+                "validate",
+                "--dir",
+                root,
+                "--output",
+                "table",
+            ]);
+            var standardsMarkdownInvocation = InvokeRootCommandLine([
+                "standards",
+                "validate",
+                "--dir",
+                root,
+                "--output",
+                "markdown",
+            ]);
+            var issuePreflightInvocation = InvokeRootCommandLine([
+                "issue",
+                "preflight",
+                "--profile",
+                issueProfilePath,
+                "--output",
+                "json",
+                "--fail-on",
+                "error",
+            ]);
+            var issuePreflightTableInvocation = InvokeRootCommandLine([
+                "issue",
+                "preflight",
+                "--profile",
+                issueProfilePath,
+                "--output",
+                "table",
+                "--fail-on",
+                "error",
+            ]);
+            var issuePreflightMarkdownInvocation = InvokeRootCommandLine([
+                "issue",
+                "preflight",
+                "--profile",
+                issueProfilePath,
+                "--output",
+                "markdown",
+                "--fail-on",
+                "error",
+            ]);
+            var bundlePath = Path.Combine(root, "deliverables", "issue-package.zip");
+            var issuePackageInvocation = InvokeRootCommandLine([
+                "issue",
+                "package",
+                "--profile",
+                issueProfilePath,
+                "--bundle-path",
+                bundlePath,
+                "--dry-run",
+                "--include-receipts",
+                "true",
+                "--output",
+                "json",
+            ]);
+            var issuePackageTableInvocation = InvokeRootCommandLine([
+                "issue",
+                "package",
+                "--profile",
+                issueProfilePath,
+                "--bundle-path",
+                bundlePath,
+                "--dry-run",
+                "--include-receipts",
+                "true",
+                "--output",
+                "table",
+            ]);
+            var issuePackageMarkdownInvocation = InvokeRootCommandLine([
+                "issue",
+                "package",
+                "--profile",
+                issueProfilePath,
+                "--bundle-path",
+                bundlePath,
+                "--dry-run",
+                "--include-receipts",
+                "true",
+                "--output",
+                "markdown",
+            ]);
+            var deliverablesInvocation = InvokeRootCommandLine([
+                "deliverables",
+                "verify",
+                "--dir",
+                root,
+                "--output",
+                "json",
+            ]);
+            var deliverablesTableInvocation = InvokeRootCommandLine([
+                "deliverables",
+                "verify",
+                "--dir",
+                root,
+                "--output",
+                "table",
+            ]);
+            var deliverablesMarkdownInvocation = InvokeRootCommandLine([
+                "deliverables",
+                "verify",
+                "--dir",
+                root,
+                "--output",
+                "markdown",
+            ]);
+            var journalInvocation = InvokeRootCommandLine([
+                "journal",
+                "verify",
+                "--dir",
+                root,
+                "--output",
+                "json",
+            ]);
+            var journalTableInvocation = InvokeRootCommandLine([
+                "journal",
+                "verify",
+                "--dir",
+                root,
+                "--output",
+                "table",
+            ]);
+            var historyInvocation = InvokeRootCommandLine([
+                "history",
+                "list",
+                "--dir",
+                Path.Combine(root, ".revitcli", "history"),
+                "--limit",
+                "5",
+                "--output",
+                "json",
+            ]);
+            var historyTableInvocation = InvokeRootCommandLine([
+                "history",
+                "list",
+                "--dir",
+                Path.Combine(root, ".revitcli", "history"),
+                "--limit",
+                "5",
+                "--output",
+                "table",
+            ]);
+            var rollbackHandler = new CommandSpineRollbackHandler();
+            var rollbackInvocation = InvokeRootCommandLine(
+            [
+                "rollback",
+                rollbackReceiptPath,
+                "--dry-run",
+                "--max-changes",
+                "5",
+            ],
+            rollbackHandler);
+            writeProbe.Drain();
+            var noWrites =
+                before.SequenceEqual(SnapshotLocalFiles(root)) &&
+                !File.Exists(bundlePath) &&
+                writeProbe.IsClean;
+
+            if (standardsInvocation.ExitCode != 0 ||
+                issuePreflightInvocation.ExitCode != 0 ||
+                issuePackageInvocation.ExitCode != 0 ||
+                deliverablesInvocation.ExitCode != 0 ||
+                journalInvocation.ExitCode != 0 ||
+                historyInvocation.ExitCode != 0 ||
+                rollbackInvocation.ExitCode != 0 ||
+                standardsTableInvocation.ExitCode != 0 ||
+                standardsMarkdownInvocation.ExitCode != 0 ||
+                issuePreflightTableInvocation.ExitCode != 0 ||
+                issuePreflightMarkdownInvocation.ExitCode != 0 ||
+                issuePackageTableInvocation.ExitCode != 0 ||
+                issuePackageMarkdownInvocation.ExitCode != 0 ||
+                deliverablesTableInvocation.ExitCode != 0 ||
+                deliverablesMarkdownInvocation.ExitCode != 0 ||
+                journalTableInvocation.ExitCode != 0 ||
+                historyTableInvocation.ExitCode != 0)
+            {
+                commandSpineEvidence = new CommandSpineRuntimeEvidence(
+                    standardsInvocation.ExitCode == 0,
+                    issuePreflightInvocation.ExitCode == 0,
+                    issuePackageInvocation.ExitCode == 0,
+                    deliverablesInvocation.ExitCode == 0,
+                    journalInvocation.ExitCode == 0,
+                    historyInvocation.ExitCode == 0,
+                    rollbackInvocation.ExitCode == 0,
+                    false,
+                    false,
+                    false,
+                    false,
+                    WorkbenchHistoryListEvidence.Empty,
+                    WorkbenchRollbackDryRunEvidence.Empty,
+                    false,
+                    noWrites);
+                evidence = $"command spine runtime exited standards={standardsInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{standardsTableInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{standardsMarkdownInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)} preflight={issuePreflightInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{issuePreflightTableInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{issuePreflightMarkdownInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)} package={issuePackageInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{issuePackageTableInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{issuePackageMarkdownInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)} deliverables={deliverablesInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{deliverablesTableInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{deliverablesMarkdownInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)} journal={journalInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{journalTableInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)} history={historyInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}/{historyTableInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)} rollback={rollbackInvocation.ExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            using var standardsDocument = JsonDocument.Parse(standardsInvocation.Stdout);
+            using var preflightDocument = JsonDocument.Parse(issuePreflightInvocation.Stdout);
+            using var packageDocument = JsonDocument.Parse(issuePackageInvocation.Stdout);
+            using var deliverablesDocument = JsonDocument.Parse(deliverablesInvocation.Stdout);
+            using var journalDocument = JsonDocument.Parse(journalInvocation.Stdout);
+            using var historyDocument = JsonDocument.Parse(historyInvocation.Stdout);
+            var standards = standardsDocument.RootElement;
+            var preflight = preflightDocument.RootElement;
+            var package = packageDocument.RootElement;
+            var deliverables = deliverablesDocument.RootElement;
+            var journal = journalDocument.RootElement;
+            var history = historyDocument.RootElement;
+            var standardsOutputParityReady = CommandSpineStandardsOutputParityReady(
+                standards,
+                standardsTableInvocation.Stdout,
+                standardsMarkdownInvocation.Stdout);
+            var issuePreflightOutputParityReady = CommandSpineIssuePreflightOutputParityReady(
+                preflight,
+                issuePreflightTableInvocation.Stdout,
+                issuePreflightMarkdownInvocation.Stdout);
+            var issuePackageOutputParityReady = CommandSpineIssuePackageOutputParityReady(
+                package,
+                issuePackageTableInvocation.Stdout,
+                issuePackageMarkdownInvocation.Stdout);
+            var deliverablesOutputParityReady = CommandSpineDeliverablesOutputParityReady(
+                deliverables,
+                deliverablesTableInvocation.Stdout,
+                deliverablesMarkdownInvocation.Stdout);
+            var journalOutputParityReady = CommandSpineJournalOutputParityReady(journal, journalTableInvocation.Stdout);
+            var entries = history.GetProperty("entries").EnumerateArray().ToArray();
+            var historyTableEvidence = AnalyzeHistoryTableRows(entries, historyTableInvocation.Stdout);
+            var historyListCountConsistencyReady = CommandSpineHistoryCountConsistencyReady(history, entries);
+            var historyListRowOrderReady = historyTableEvidence.IdOrderMatch;
+            var historyOutputParityReady = CommandSpineHistoryOutputParityReady(
+                history,
+                historyTableInvocation.Stdout,
+                historyListCountConsistencyReady,
+                historyTableEvidence);
+            var commandSpineOutputParityReady =
+                standardsOutputParityReady &&
+                issuePreflightOutputParityReady &&
+                issuePackageOutputParityReady &&
+                deliverablesOutputParityReady &&
+                journalOutputParityReady &&
+                historyOutputParityReady;
+
+            var standardsReady =
+                standards.GetProperty("valid").GetBoolean() &&
+                standards.GetProperty("name").GetString() == "office" &&
+                standards.GetProperty("issues").GetArrayLength() == 0 &&
+                standardsOutputParityReady;
+            var issuePreflightReady =
+                preflight.GetProperty("schemaVersion").GetString() == "issue-preflight-report.v1" &&
+                preflight.GetProperty("noHiddenMutation").GetBoolean() &&
+                preflight.GetProperty("errorCount").GetInt32() == 0 &&
+                issuePreflightOutputParityReady;
+            var issuePackageDryRunReady =
+                package.GetProperty("schemaVersion").GetString() == "issue-package-receipt.v1" &&
+                package.GetProperty("dryRun").GetBoolean() &&
+                !package.GetProperty("bundleWritten").GetBoolean() &&
+                !package.GetProperty("receiptWritten").GetBoolean() &&
+                package.GetProperty("receiptCount").GetInt32() >= 1 &&
+                issuePackageOutputParityReady;
+            var deliverablesReady =
+                deliverables.GetProperty("schemaVersion").GetString() == "deliverables.v1" &&
+                deliverables.GetProperty("success").GetBoolean() &&
+                deliverables.GetProperty("valid").GetBoolean() &&
+                deliverables.GetProperty("entryCount").GetInt32() >= 1 &&
+                deliverablesOutputParityReady;
+            var journalReady =
+                journal.GetProperty("isValid").GetBoolean() &&
+                journal.GetProperty("entryCount").GetInt32() == 2 &&
+                journalOutputParityReady;
+            var historyReady =
+                history.GetProperty("schemaVersion").GetString() == "history-list.v1" &&
+                history.GetProperty("initialized").GetBoolean() &&
+                history.GetProperty("entryCount").GetInt32() == 1 &&
+                historyOutputParityReady;
+            var rollbackReady =
+                rollbackHandler.SawDryRunSetPreview &&
+                !rollbackHandler.SawMutatingSetRequest &&
+                rollbackInvocation.Stdout.Contains("Dry run: 1 rollback action", StringComparison.OrdinalIgnoreCase) &&
+                rollbackInvocation.Stdout.Contains("Safe apply command after review", StringComparison.OrdinalIgnoreCase);
+            var rollbackDryRunEvidence = CreateRollbackDryRunEvidence(rollbackInvocation.Stdout, rollbackHandler);
+            var historyListEvidence = new WorkbenchHistoryListEvidence(
+                history.GetProperty("entryCount").GetInt32(),
+                history.GetProperty("hiddenCount").GetInt32(),
+                history.GetProperty("returnedCount").GetInt32(),
+                historyTableEvidence.TableRowCount,
+                historyListCountConsistencyReady,
+                historyListRowOrderReady,
+                historyTableEvidence.HeaderMatched);
+            commandSpineEvidence = new CommandSpineRuntimeEvidence(
+                standardsReady,
+                issuePreflightReady,
+                issuePackageDryRunReady,
+                deliverablesReady,
+                journalReady,
+                historyReady,
+                rollbackReady,
+                historyListCountConsistencyReady,
+                historyListRowOrderReady,
+                rollbackHandler.SawDryRunSetPreview,
+                !rollbackHandler.SawMutatingSetRequest,
+                historyListEvidence,
+                rollbackDryRunEvidence,
+                commandSpineOutputParityReady,
+                noWrites);
+            var ok =
+                commandSpineEvidence.AllReady;
+
+            evidence = ok
+                ? $"command spine runtime validates public CLI parser paths for standards validate, issue preflight, issue package dry-run, deliverables verify, journal verify, history list JSON/table outputs, and rollback dry-run with JSON schemas, table summary and Markdown detail parity for supported command-spine paths, journal verify JSON/table validity/root-hash parity, history-list.v1 JSON count consistency and table row-order parity, hidden mutation guard, dry-run no-write package evidence, readable receipt evidence, signed journal execution, history-list.v1 execution, rollback safe preview execution, rollback dry-run request enforcement, final file-tree snapshot evidence, event-level no-write evidence, and sub-command runtime evidence {commandSpineEvidence.Describe()}"
+                : $"command spine runtime payload is missing required standards/issue/deliverables/journal/history/rollback evidence ({commandSpineEvidence.Describe()}, outputParity standards={standardsOutputParityReady.ToString().ToLowerInvariant()} preflight={issuePreflightOutputParityReady.ToString().ToLowerInvariant()} package={issuePackageOutputParityReady.ToString().ToLowerInvariant()} deliverables={deliverablesOutputParityReady.ToString().ToLowerInvariant()} journal={journalOutputParityReady.ToString().ToLowerInvariant()} history={historyOutputParityReady.ToString().ToLowerInvariant()}, historyListCountConsistency={historyListCountConsistencyReady.ToString().ToLowerInvariant()}, historyListRowOrder={historyListRowOrderReady.ToString().ToLowerInvariant()}, noWrites={noWrites.ToString().ToLowerInvariant()}, writes={writeProbe.Describe()}, rollbackDryRunPreview={rollbackHandler.SawDryRunSetPreview.ToString().ToLowerInvariant()}, rollbackNoMutatingSetRequest={(!rollbackHandler.SawMutatingSetRequest).ToString().ToLowerInvariant()})";
+            return ok;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            commandSpineEvidence = CommandSpineRuntimeEvidence.None;
+            evidence = $"command spine runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static CommandLineInvocation InvokeRootCommandLine(string[] args, HttpMessageHandler? httpHandler = null)
+    {
+        var previousOut = Console.Out;
+        var previousError = Console.Error;
+        var previousExitCode = Environment.ExitCode;
+        var stdout = new StringWriter(CultureInfo.InvariantCulture);
+        var stderr = new StringWriter(CultureInfo.InvariantCulture);
+        try
+        {
+            Environment.ExitCode = 0;
+            Console.SetOut(stdout);
+            Console.SetError(stderr);
+            var http = httpHandler == null
+                ? new HttpClient()
+                : new HttpClient(httpHandler);
+            http.BaseAddress = new Uri("http://127.0.0.1:17839");
+            var client = new RevitClient(http);
+            var root = CliCommandCatalog.CreateRootCommand(
+                client,
+                new CliConfig(),
+                includeInteractiveCommand: false,
+                includeBatchCommand: false);
+            var invokeExitCode = root.InvokeAsync(args).GetAwaiter().GetResult();
+            var exitCode = Environment.ExitCode != 0 ? Environment.ExitCode : invokeExitCode;
+            return new CommandLineInvocation(exitCode, stdout.ToString(), stderr.ToString());
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+            Console.SetError(previousError);
+            Environment.ExitCode = previousExitCode;
+        }
+    }
+
+    private sealed record CommandLineInvocation(int ExitCode, string Stdout, string Stderr);
+
+    private static bool CommandSpineStandardsOutputParityReady(JsonElement report, string table, string markdown)
+    {
+        var name = report.GetProperty("name").GetString() ?? "";
+        var packVersion = report.GetProperty("packVersion").GetString() ?? "";
+        var status = report.GetProperty("valid").GetBoolean() ? "OK" : "FAIL";
+        return ContainsAll(table, "Standards validation", $"Name: {name}", $"Pack version: {packVersion}", $"Status: {status}", "No issues.") &&
+               ContainsAll(markdown, "# Standards Validation", $"- Name: `{name}`", $"- Pack version: `{packVersion}`", $"- Status: `{status}`", "## Issues", "- None.");
+    }
+
+    private static bool CommandSpineIssuePreflightOutputParityReady(JsonElement report, string table, string markdown)
+    {
+        var schema = report.GetProperty("schemaVersion").GetString() ?? "";
+        var checkCount = report.GetProperty("checkCount").GetInt32();
+        var errorCount = report.GetProperty("errorCount").GetInt32();
+        var warningCount = report.GetProperty("warningCount").GetInt32();
+        var summaryReady =
+            ContainsAll(
+                table,
+                $"Issue preflight ({schema})",
+                $"checks={checkCount.ToString(CultureInfo.InvariantCulture)}",
+                $"errors={errorCount.ToString(CultureInfo.InvariantCulture)}",
+                $"warnings={warningCount.ToString(CultureInfo.InvariantCulture)}") &&
+            ContainsAll(
+                markdown,
+                "# Issue Preflight",
+                $"- Schema: `{schema}`",
+                $"- Checks: `{checkCount.ToString(CultureInfo.InvariantCulture)}`",
+                $"- Errors: `{errorCount.ToString(CultureInfo.InvariantCulture)}`",
+                $"- Warnings: `{warningCount.ToString(CultureInfo.InvariantCulture)}`");
+        return summaryReady &&
+               JsonObjectArrayValuesAppear(report.GetProperty("checks"), markdown, "name", "status", "severity") &&
+               JsonStringArrayValuesAppear(report.GetProperty("commandPaths"), markdown);
+    }
+
+    private static bool CommandSpineIssuePackageOutputParityReady(JsonElement report, string table, string markdown)
+    {
+        var schema = report.GetProperty("schemaVersion").GetString() ?? "";
+        var fileCount = report.GetProperty("fileCount").GetInt32();
+        var errorCount = report.GetProperty("errorCount").GetInt32();
+        var written = report.GetProperty("bundleWritten").GetBoolean().ToString().ToLowerInvariant();
+        var summaryReady =
+            ContainsAll(
+                table,
+                $"Issue package ({schema})",
+                $"files={fileCount.ToString(CultureInfo.InvariantCulture)}",
+                $"errors={errorCount.ToString(CultureInfo.InvariantCulture)}",
+                $"written={written}") &&
+            ContainsAll(
+                markdown,
+                "# Issue Package",
+                $"- Schema: `{schema}`",
+                $"- Dry run: `{report.GetProperty("dryRun").GetBoolean().ToString().ToLowerInvariant()}`",
+                $"- Files: `{fileCount.ToString(CultureInfo.InvariantCulture)}`");
+        return summaryReady &&
+               JsonStringArrayValuesAppear(report.GetProperty("plannedActions"), markdown) &&
+               JsonObjectArrayValuesAppear(report.GetProperty("files"), markdown, "kind", "archivePath", "sourcePath") &&
+               JsonStringArrayValuesAppear(report.GetProperty("commandPaths"), markdown);
+    }
+
+    private static bool CommandSpineDeliverablesOutputParityReady(JsonElement report, string table, string markdown)
+    {
+        var entryCount = report.GetProperty("entryCount").GetInt32();
+        var stats = report.GetProperty("stats");
+        return ContainsAll(
+                   table,
+                   "OK: Delivery manifest valid",
+                   $"OK: Entries verified: {entryCount.ToString(CultureInfo.InvariantCulture)}") &&
+               ContainsAll(
+                   markdown,
+                   "# Delivery Manifest Verification",
+                   "- Status: `OK`",
+                   $"- Entries verified: `{entryCount.ToString(CultureInfo.InvariantCulture)}`") &&
+               JsonStatsCountsAppear(stats.GetProperty("kinds"), table) &&
+               JsonStatsCountsAppear(stats.GetProperty("outcomes"), table) &&
+               JsonStatsCountsAppear(stats.GetProperty("kinds"), markdown) &&
+               JsonStatsCountsAppear(stats.GetProperty("outcomes"), markdown);
+    }
+
+    private static bool CommandSpineJournalOutputParityReady(JsonElement report, string table)
+    {
+        if (!report.GetProperty("isValid").GetBoolean() ||
+            report.GetProperty("errors").GetArrayLength() != 0)
+        {
+            return false;
+        }
+
+        var entryCount = report.GetProperty("entryCount").GetInt32();
+        var rootHash = report.GetProperty("rootHash").GetString() ?? "";
+        var signaturePath = report.GetProperty("signaturePath").GetString() ?? "";
+        return ContainsAll(
+            table,
+            $"OK: Journal signature valid: {signaturePath}",
+            $"OK: Entries verified: {entryCount.ToString(CultureInfo.InvariantCulture)}",
+            $"OK: Root hash: {rootHash}");
+    }
+
+    private static bool CommandSpineHistoryOutputParityReady(
+        JsonElement report,
+        string table,
+        bool countConsistencyReady,
+        HistoryTableEvidence tableEvidence)
+    {
+        if (report.GetProperty("schemaVersion").GetString() != "history-list.v1" ||
+            string.IsNullOrWhiteSpace(report.GetProperty("historyDirectory").GetString()) ||
+            !report.GetProperty("initialized").GetBoolean())
+        {
+            return false;
+        }
+
+        return countConsistencyReady &&
+               ContainsAll(table, "capturedAt", "source", "elements") &&
+               tableEvidence.HeaderMatched &&
+               tableEvidence.IdOrderMatch;
+    }
+
+    private static bool CommandSpineHistoryCountConsistencyReady(JsonElement report, IReadOnlyList<JsonElement> entries)
+    {
+        var returnedCount = report.GetProperty("returnedCount").GetInt32();
+        var hiddenCount = report.GetProperty("hiddenCount").GetInt32();
+        var entryCount = report.GetProperty("entryCount").GetInt32();
+        return entryCount == returnedCount + hiddenCount &&
+               returnedCount == entries.Count;
+    }
+
+    private static HistoryTableEvidence AnalyzeHistoryTableRows(IReadOnlyList<JsonElement> entries, string table)
+    {
+        var lines = table
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .ToArray();
+        var headerIndex = Array.FindIndex(lines, line =>
+            line.Contains("capturedAt", StringComparison.Ordinal) &&
+            line.Contains("source", StringComparison.Ordinal) &&
+            line.Contains("elements", StringComparison.Ordinal));
+        if (headerIndex < 0 || headerIndex + 1 + entries.Count > lines.Length)
+        {
+            return new HistoryTableEvidence(false, 0, false);
+        }
+
+        var tableRowCount = 0;
+        for (var i = headerIndex + 1; i < lines.Length; i++)
+        {
+            if (string.IsNullOrWhiteSpace(lines[i]))
+                break;
+
+            tableRowCount++;
+        }
+
+        var idOrderMatch = tableRowCount == entries.Count;
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var entry = entries[i];
+            var row = lines[headerIndex + 1 + i];
+            var columns = row.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (columns.Length < 4 ||
+                !string.Equals(columns[0], entry.GetProperty("id").GetString() ?? "", StringComparison.Ordinal) ||
+                !string.Equals(columns[1], entry.GetProperty("capturedAt").GetString() ?? "", StringComparison.Ordinal) ||
+                !string.Equals(columns[2], entry.GetProperty("source").GetString() ?? "", StringComparison.Ordinal) ||
+                !string.Equals(columns[3], entry.GetProperty("elementCount").GetInt32().ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
+            {
+                idOrderMatch = false;
+                break;
+            }
+        }
+
+        return new HistoryTableEvidence(true, tableRowCount, idOrderMatch);
+    }
+
+    private static WorkbenchRollbackDryRunEvidence CreateRollbackDryRunEvidence(
+        string output,
+        CommandSpineRollbackHandler rollbackHandler)
+    {
+        return new WorkbenchRollbackDryRunEvidence(
+            ExtractRollbackCount(output, "Dry run: ", " rollback action"),
+            ExtractRollbackCount(output, " rollback action(s); ", " conflict"),
+            ExtractRollbackCount(output, " conflict(s); ", " error"),
+            ExtractLineSuffix(output, "Safe apply command after review: "),
+            output.Contains("Safe apply command after review", StringComparison.OrdinalIgnoreCase),
+            rollbackHandler.SawDryRunSetPreview && !rollbackHandler.SawMutatingSetRequest,
+            rollbackHandler.SawDryRunSetPreview,
+            rollbackHandler.SawMutatingSetRequest);
+    }
+
+    private static int ExtractRollbackCount(string text, string prefix, string suffix)
+    {
+        var prefixIndex = text.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+        if (prefixIndex < 0)
+            return -1;
+
+        var start = prefixIndex + prefix.Length;
+        var suffixIndex = text.IndexOf(suffix, start, StringComparison.OrdinalIgnoreCase);
+        if (suffixIndex < 0 || suffixIndex <= start)
+            return -1;
+
+        return int.TryParse(text[start..suffixIndex].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : -1;
+    }
+
+    private static string? ExtractLineSuffix(string text, string prefix)
+    {
+        foreach (var line in text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+        {
+            var prefixIndex = line.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+            if (prefixIndex >= 0)
+                return line[(prefixIndex + prefix.Length)..].Trim();
+        }
+
+        return null;
+    }
+
+    private static bool ContainsAll(string text, params string[] values) =>
+        values.All(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
+
+    private static string[] MissingSemanticEvidence(string text, string label, params string[] terms) =>
+        terms.All(term => text.Contains(term, StringComparison.OrdinalIgnoreCase))
+            ? Array.Empty<string>()
+            : new[] { label };
+
+    private static string[] FindBoundaryEvidenceIssues(
+        string text,
+        params (string Needle, string[] Contradictions)[] boundaries)
+    {
+        return boundaries
+            .Select(boundary =>
+            {
+                var evidence = FindBoundaryEvidenceLine(text, boundary.Needle);
+                if (evidence is null)
+                    return $"{boundary.Needle} boundary wording";
+
+                var contradiction = boundary.Contradictions
+                    .FirstOrDefault(phrase => evidence.Contains(phrase, StringComparison.OrdinalIgnoreCase));
+                return contradiction is null
+                    ? null
+                    : $"{boundary.Needle} contradictory wording '{contradiction}'";
+            })
+            .Where(issue => issue is not null)
+            .Select(issue => issue!)
+            .ToArray();
+    }
+
+    private static string? FindBoundaryEvidenceLine(string text, string needle)
+    {
+        foreach (var line in text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+        {
+            if (line.Contains(needle, StringComparison.OrdinalIgnoreCase) &&
+                !IsIgnoredBoundaryExampleLine(line) &&
+                IsBoundaryEvidenceLine(line, needle))
+            {
+                return line;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsBoundaryEvidenceLine(string line, string needle)
+    {
+        var normalizedLine = line.Trim().ToLowerInvariant();
+        var normalizedNeedle = needle.Trim().ToLowerInvariant();
+        return normalizedNeedle.Contains("read-only", StringComparison.Ordinal) ||
+               normalizedNeedle.Contains("no-write", StringComparison.Ordinal) ||
+               normalizedNeedle.Contains("does not", StringComparison.Ordinal) ||
+               normalizedNeedle.Contains("without", StringComparison.Ordinal) ||
+               normalizedNeedle.StartsWith("no ", StringComparison.Ordinal) ||
+               normalizedLine.Contains("no " + normalizedNeedle, StringComparison.Ordinal) ||
+               normalizedLine.Contains("not " + normalizedNeedle, StringComparison.Ordinal) ||
+               normalizedLine.Contains("without " + normalizedNeedle, StringComparison.Ordinal) ||
+               normalizedLine.Contains("avoids " + normalizedNeedle, StringComparison.Ordinal) ||
+               normalizedLine.Contains("excludes " + normalizedNeedle, StringComparison.Ordinal) ||
+               normalizedLine.Contains("does not introduce " + normalizedNeedle, StringComparison.Ordinal) ||
+               normalizedLine.Contains("do not introduce " + normalizedNeedle, StringComparison.Ordinal) ||
+               BoundaryPhraseAppearsBeforeNeedle(normalizedLine, normalizedNeedle, "does not introduce") ||
+               BoundaryPhraseAppearsBeforeNeedle(normalizedLine, normalizedNeedle, "do not introduce") ||
+               KeepsNeedleOut(normalizedLine, normalizedNeedle);
+    }
+
+    private static bool IsIgnoredBoundaryExampleLine(string line)
+    {
+        var normalizedLine = line.Trim().ToLowerInvariant();
+        return normalizedLine.StartsWith("rejected example", StringComparison.Ordinal) ||
+               normalizedLine.StartsWith("reviewer note", StringComparison.Ordinal) ||
+               normalizedLine.Contains("rejected example wording", StringComparison.Ordinal);
+    }
+
+    private static bool KeepsNeedleOut(string normalizedLine, string normalizedNeedle)
+    {
+        var keepsIndex = normalizedLine.IndexOf("keeps", StringComparison.Ordinal);
+        var needleIndex = normalizedLine.IndexOf(normalizedNeedle, StringComparison.Ordinal);
+        var outIndex = normalizedLine.IndexOf("out", StringComparison.Ordinal);
+        return keepsIndex >= 0 &&
+               needleIndex > keepsIndex &&
+               outIndex > needleIndex;
+    }
+
+    private static bool BoundaryPhraseAppearsBeforeNeedle(string normalizedLine, string normalizedNeedle, string boundaryPhrase)
+    {
+        var boundaryIndex = normalizedLine.IndexOf(boundaryPhrase, StringComparison.Ordinal);
+        var needleIndex = normalizedLine.IndexOf(normalizedNeedle, StringComparison.Ordinal);
+        return boundaryIndex >= 0 &&
+               needleIndex > boundaryIndex;
+    }
+
+    private static bool JsonStringArrayValuesAppear(JsonElement array, string text) =>
+        array.ValueKind == JsonValueKind.Array &&
+        array.EnumerateArray().All(item =>
+            item.ValueKind == JsonValueKind.String &&
+            text.Contains(item.GetString() ?? "", StringComparison.OrdinalIgnoreCase));
+
+    private static bool JsonObjectArrayValuesAppear(JsonElement array, string text, params string[] propertyNames) =>
+        array.ValueKind == JsonValueKind.Array &&
+        array.EnumerateArray().All(item =>
+            item.ValueKind == JsonValueKind.Object &&
+            propertyNames.All(propertyName =>
+                !item.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind == JsonValueKind.Null ||
+                text.Contains(property.ToString(), StringComparison.OrdinalIgnoreCase)));
+
+    private static bool JsonStatsCountsAppear(JsonElement array, string text) =>
+        array.ValueKind == JsonValueKind.Array &&
+        array.EnumerateArray().All(item =>
+            item.TryGetProperty("name", out var name) &&
+            item.TryGetProperty("count", out var count) &&
+            TextContainsCountPair(text, name.GetString() ?? "", count.GetInt32()));
+
+    private static bool TextContainsCountPair(string text, string name, int count)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+
+        var expectedCount = count.ToString(CultureInfo.InvariantCulture);
+        return text
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Any(line =>
+                line.Contains(name, StringComparison.OrdinalIgnoreCase) &&
+                line.Contains(expectedCount, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record CommandSpineRuntimeEvidence(
+        bool StandardsValidate,
+        bool IssuePreflight,
+        bool IssuePackageDryRun,
+        bool DeliverablesVerify,
+        bool JournalVerify,
+        bool HistoryList,
+        bool RollbackDryRun,
+        bool HistoryListCountConsistency,
+        bool HistoryListRowOrder,
+        bool RollbackDryRunPreview,
+        bool RollbackNoMutatingSetRequest,
+        WorkbenchHistoryListEvidence HistoryListEvidence,
+        WorkbenchRollbackDryRunEvidence RollbackDryRunEvidence,
+        bool OutputParity,
+        bool NoWrites)
+    {
+        public static CommandSpineRuntimeEvidence None { get; } = new(
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            WorkbenchHistoryListEvidence.Empty,
+            WorkbenchRollbackDryRunEvidence.Empty,
+            false,
+            false);
+
+        public bool AllReady =>
+            StandardsValidate &&
+            IssuePreflight &&
+            IssuePackageDryRun &&
+            DeliverablesVerify &&
+            JournalVerify &&
+            HistoryList &&
+            RollbackDryRun &&
+            HistoryListCountConsistency &&
+            HistoryListRowOrder &&
+            RollbackDryRunPreview &&
+            RollbackNoMutatingSetRequest &&
+            OutputParity &&
+            NoWrites;
+
+        public string Describe() =>
+            $"standardsValidate={Format(StandardsValidate)}, issuePreflight={Format(IssuePreflight)}, issuePackageDryRun={Format(IssuePackageDryRun)}, deliverablesVerify={Format(DeliverablesVerify)}, journalVerify={Format(JournalVerify)}, historyList={Format(HistoryList)}, historyListCountConsistency={Format(HistoryListCountConsistency)}, historyListRowOrder={Format(HistoryListRowOrder)}, rollbackDryRun={Format(RollbackDryRun)}, rollbackDryRunPreview={Format(RollbackDryRunPreview)}, rollbackNoMutatingSetRequest={Format(RollbackNoMutatingSetRequest)}, outputParity={Format(OutputParity)}, noWrites={Format(NoWrites)}";
+
+        private static string Format(bool value) => value.ToString().ToLowerInvariant();
+    }
+
+    private sealed record HistoryTableEvidence(bool HeaderMatched, int TableRowCount, bool IdOrderMatch);
+
+    public sealed record WorkbenchHistoryListEvidence(
+        int JsonEntryCount,
+        int JsonHiddenCount,
+        int JsonReturnedCount,
+        int TableRowCount,
+        bool CountConsistency,
+        bool IdOrderMatch,
+        bool HeaderMatched)
+    {
+        public static WorkbenchHistoryListEvidence Empty { get; } = new(0, 0, 0, 0, false, false, false);
+    }
+
+    public sealed record WorkbenchRollbackDryRunEvidence(
+        int ActionCount,
+        int ConflictCount,
+        int ErrorCount,
+        string? SafeApplyCommand,
+        bool SafeApplyEmitted,
+        bool DryRunPreviewOnly,
+        bool SawDryRunSetPreview,
+        bool SawMutatingSetRequest)
+    {
+        public static WorkbenchRollbackDryRunEvidence Empty { get; } = new(0, 0, 0, null, false, false, false, false);
+    }
+
+    private sealed class FileWriteProbe : IDisposable
+    {
+        private readonly string _root;
+        private readonly FileSystemWatcher _watcher;
+        private readonly object _gate = new();
+        private readonly List<string> _events = new();
+        private readonly string _calibrationRelativePath;
+        private bool _calibrating;
+        private bool _calibrated;
+        private int _calibrationEventCount;
+        private string? _calibrationError;
+
+        public FileWriteProbe(string root)
+        {
+            _root = Path.GetFullPath(root);
+            _calibrationRelativePath = $".revitcli-write-probe-{Guid.NewGuid():N}.tmp";
+            _watcher = new FileSystemWatcher(_root)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter =
+                    NotifyFilters.FileName |
+                    NotifyFilters.DirectoryName |
+                    NotifyFilters.LastWrite |
+                    NotifyFilters.CreationTime |
+                    NotifyFilters.Size,
+            };
+            _watcher.Created += (_, args) => Record("created", args.FullPath);
+            _watcher.Changed += (_, args) => Record("changed", args.FullPath);
+            _watcher.Deleted += (_, args) => Record("deleted", args.FullPath);
+            _watcher.Renamed += (_, args) => Record(
+                "renamed",
+                $"{FormatRelative(args.OldFullPath)}->{FormatRelative(args.FullPath)}",
+                    alreadyRelative: true);
+            _watcher.EnableRaisingEvents = true;
+            Calibrate();
+        }
+
+        public bool IsClean
+        {
+            get
+            {
+                lock (_gate)
+                    return _calibrated && _events.Count == 0;
+            }
+        }
+
+        public bool CalibrationObserved
+        {
+            get
+            {
+                lock (_gate)
+                    return _calibrated;
+            }
+        }
+
+        public void Drain()
+        {
+            DrainUntilStable();
+        }
+
+        public string Describe()
+        {
+            lock (_gate)
+            {
+                if (!_calibrated)
+                    return string.IsNullOrWhiteSpace(_calibrationError)
+                        ? "none (probe calibration missed events)"
+                        : $"none (probe calibration failed: {_calibrationError})";
+
+                return _events.Count == 0
+                    ? "none (probe calibrated)"
+                    : string.Join(", ", _events.Take(5));
+            }
+        }
+
+        public void Dispose()
+        {
+            _watcher.Dispose();
+        }
+
+        private void Record(string kind, string path, bool alreadyRelative = false)
+        {
+            if (!alreadyRelative &&
+                string.Equals(kind, "changed", StringComparison.Ordinal) &&
+                IsDirectoryPath(path))
+            {
+                return;
+            }
+
+            var relative = alreadyRelative ? path : FormatRelative(path);
+            lock (_gate)
+            {
+                if (_calibrating)
+                {
+                    _calibrationEventCount++;
+                    return;
+                }
+
+                if (string.Equals(relative, _calibrationRelativePath, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _events.Add($"{kind}:{relative}");
+            }
+        }
+
+        private static bool IsDirectoryPath(string path)
+        {
+            try
+            {
+                return Directory.Exists(path);
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        private void Calibrate()
+        {
+            var calibrationPath = Path.Combine(_root, _calibrationRelativePath);
+            try
+            {
+                lock (_gate)
+                {
+                    _calibrating = true;
+                    _calibrationEventCount = 0;
+                }
+
+                File.WriteAllText(calibrationPath, "probe");
+                File.AppendAllText(calibrationPath, "probe");
+                File.Delete(calibrationPath);
+                DrainUntilStable();
+                lock (_gate)
+                {
+                    _calibrated = _calibrationEventCount > 0;
+                    if (!_calibrated)
+                        _calibrationError = "FileSystemWatcher did not observe calibration writes";
+                    _events.Clear();
+                }
+                DrainUntilStable();
+                lock (_gate)
+                {
+                    _calibrating = false;
+                    _events.Clear();
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                lock (_gate)
+                {
+                    _calibrationError = ex.Message;
+                    _calibrated = false;
+                    _calibrating = false;
+                    _events.Clear();
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(calibrationPath))
+                        File.Delete(calibrationPath);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+
+        private void DrainUntilStable()
+        {
+            var previousCount = -1;
+            var stableSamples = 0;
+            var deadline = DateTimeOffset.UtcNow.AddMilliseconds(1000);
+            while (DateTimeOffset.UtcNow < deadline && stableSamples < 3)
+            {
+                Thread.Sleep(50);
+                int currentCount;
+                lock (_gate)
+                    currentCount = _events.Count + _calibrationEventCount;
+
+                if (currentCount == previousCount)
+                    stableSamples++;
+                else
+                    stableSamples = 0;
+
+                previousCount = currentCount;
+            }
+        }
+
+        private string FormatRelative(string path)
+        {
+            try
+            {
+                return Path.GetRelativePath(_root, path).Replace('\\', '/');
+            }
+            catch (ArgumentException)
+            {
+                return path.Replace('\\', '/');
+            }
+        }
+    }
+
+    private static string WriteCommandSpineAuditEvidence(string root)
+    {
+        var revitCliDir = Path.Combine(root, ".revitcli");
+        Directory.CreateDirectory(revitCliDir);
+        File.WriteAllLines(
+            Path.Combine(revitCliDir, "journal.jsonl"),
+            new[]
+            {
+                """{"action":"issue.preflight","timestamp":"2026-05-23T10:00:00Z","category":"issue","operator":"workbench-runtime","affectedElementCount":0}""",
+                """{"action":"issue.package","timestamp":"2026-05-23T10:05:00Z","category":"deliverables","operator":"workbench-runtime","affectedElementCount":0}""",
+            });
+        var signOutput = new StringWriter(CultureInfo.InvariantCulture);
+        var signExit = JournalCommand.ExecuteSignAsync(
+                root,
+                journal: null,
+                signature: null,
+                key: null,
+                until: null,
+                outputFormat: "json",
+                signOutput)
+            .GetAwaiter()
+            .GetResult();
+        if (signExit != 0)
+        {
+            throw new InvalidOperationException($"failed to sign command-spine journal: {signOutput}");
+        }
+
+        var historyStore = HistoryStore.ForProject(root);
+        historyStore.InitAsync().GetAwaiter().GetResult();
+        historyStore.AppendAsync(
+                new ModelSnapshot
+                {
+                    SchemaVersion = 1,
+                    TakenAt = "2026-05-23T10:10:00Z",
+                    Revit = new SnapshotRevit
+                    {
+                        Version = "2026",
+                        Document = "CommandSpine.rvt",
+                        DocumentPath = "D:/models/CommandSpine.rvt",
+                    },
+                    Summary = new SnapshotSummary
+                    {
+                        ElementCounts = new Dictionary<string, int> { ["doors"] = 1 },
+                    },
+                },
+                "command-spine-runtime",
+                DateTimeOffset.Parse("2026-05-23T10:10:00Z", CultureInfo.InvariantCulture))
+            .GetAwaiter()
+            .GetResult();
+
+        var planPath = Path.Combine(revitCliDir, "plans", "rollback-plan.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(planPath)!);
+        File.WriteAllText(
+            planPath,
+            """
+{"schemaVersion":1,"type":"set","summary":{"operation":"set","param":"Mark","value":"NEW","affected":1}}
+""");
+        var planHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(planPath))).ToLowerInvariant();
+        var receiptPath = Path.Combine(revitCliDir, "plans", "rollback-plan.receipt.json");
+        File.WriteAllText(
+            receiptPath,
+            JsonSerializer.Serialize(
+                new PlanReceipt
+                {
+                    Operation = "set",
+                    Action = "plan.apply",
+                    PlanPath = planPath,
+                    PlanHash = planHash,
+                    Command = "revitcli plan apply .revitcli/plans/rollback-plan.json --yes",
+                    DryRun = false,
+                    Timestamp = "2026-05-23T10:15:00Z",
+                    AppliedAtUtc = "2026-05-23T10:15:00Z",
+                    Operator = "workbench-runtime",
+                    User = "workbench-runtime",
+                    AppliedBy = "workbench-runtime",
+                    Machine = "local",
+                    ModelPath = "D:/models/CommandSpine.rvt",
+                    DocumentName = "CommandSpine.rvt",
+                    DocumentVersion = "2026",
+                    Affected = 1,
+                    AffectedElementIds = new List<long> { 900 },
+                    RequiresRollback = true,
+                    PlanActionCount = 1,
+                    SkippedCount = 0,
+                    Param = "Mark",
+                    RollbackActions = new List<PlanReceiptRollbackAction>
+                    {
+                        new()
+                        {
+                            ElementId = 900,
+                            Param = "Mark",
+                            OldValue = "OLD",
+                            NewValue = "NEW",
+                            Source = "set",
+                        },
+                    },
+                },
+                SetPlanFileStore.JsonOptions));
+        return receiptPath;
+    }
+
+    private sealed class CommandSpineRollbackHandler : HttpMessageHandler
+    {
+        public bool SawDryRunSetPreview { get; private set; }
+
+        public bool SawMutatingSetRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            object payload;
+            if (request.Method == HttpMethod.Get && request.RequestUri?.AbsolutePath == "/api/status")
+            {
+                payload = ApiResponse<StatusInfo>.Ok(new StatusInfo
+                {
+                    RevitVersion = "2026",
+                    DocumentName = "CommandSpine.rvt",
+                    DocumentPath = "D:/models/CommandSpine.rvt",
+                });
+            }
+            else if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/api/elements/set")
+            {
+                var body = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult() ?? "{}";
+                var setRequest = JsonSerializer.Deserialize<SetRequest>(
+                    body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new SetRequest();
+                if (!setRequest.DryRun)
+                {
+                    SawMutatingSetRequest = true;
+                    payload = ApiResponse<SetResult>.Fail("rollback dry-run attempted a mutating set request");
+                }
+                else
+                {
+                    SawDryRunSetPreview = true;
+                    var elementId = setRequest.ElementId ?? setRequest.ElementIds?.FirstOrDefault() ?? 900;
+                    payload = ApiResponse<SetResult>.Ok(new SetResult
+                    {
+                        Affected = 1,
+                        Preview = new List<SetPreviewItem>
+                        {
+                            new()
+                            {
+                                Id = elementId,
+                                Name = "Door 900",
+                                OldValue = "NEW",
+                                NewValue = setRequest.Value,
+                            },
+                        },
+                    });
+                }
+            }
+            else
+            {
+                payload = ApiResponse<object>.Fail($"unexpected command-spine rollback request: {request.Method} {request.RequestUri?.AbsolutePath}");
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private static void WriteCommandSpineStandardsProject(string root)
+    {
+        Directory.CreateDirectory(Path.Combine(root, ".revitcli", "workflows"));
+        Directory.CreateDirectory(Path.Combine(root, "deliverables"));
+        File.WriteAllText(Path.Combine(root, ".revitcli.yml"), """
+version: 1
+checks:
+  default:
+    failOn: error
+exports:
+  pdf:
+    format: pdf
+publish:
+  issue:
+    precheck: default
+    presets: [pdf]
+schedules:
+  doors:
+    category: doors
+    fields: [Mark, Fire Rating]
+    name: Door Schedule
+""");
+        File.WriteAllText(Path.Combine(root, ".revitcli", "workflows", "pre-issue.yml"), """
+version: 1
+name: pre-issue
+steps:
+  - run: revitcli check issue --output table
+    mode: read-only
+  - run: revitcli publish issue --dry-run
+    mode: dry-run
+""");
+        File.WriteAllText(Path.Combine(root, ".revitcli", "standards.yml"), """
+version: 1
+name: office
+packVersion: 2026.4.0
+compatibility:
+  revitCli: ">=0.1.0"
+  revitYears: [2024, 2025, 2026]
+  notes:
+    - Portable standards pack for CLI-only validation.
+required:
+  profiles: [.revitcli.yml]
+  workflows: [pre-issue]
+  outputPaths: [deliverables]
+  scheduleTemplates: [doors]
+  familyRules: [name-non-empty, category-known]
+""");
+    }
+
+    private static void WriteCommandSpineDeliveryEvidence(string root)
+    {
+        var outputDir = Path.Combine(root, "deliverables", "pdf");
+        Directory.CreateDirectory(outputDir);
+        File.WriteAllText(Path.Combine(outputDir, "A101.pdf"), "pdf-bytes");
+        var receiptPath = Path.Combine(root, ".revitcli", "receipts", "export.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(receiptPath)!);
+        File.WriteAllText(
+            receiptPath,
+            JsonSerializer.Serialize(new
+            {
+                schemaVersion = "export-receipt.v1",
+                action = "export",
+                success = true,
+                dryRun = false,
+                outputDir,
+            }));
+        var manifestPath = Path.Combine(root, ".revitcli", "deliveries", "manifest.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
+        File.WriteAllText(
+            manifestPath,
+            JsonSerializer.Serialize(new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath,
+                timestamp = "2026-05-23T00:00:00Z",
+            }) + Environment.NewLine);
+    }
+
+    private static bool RunWorkflowRegistryRuntimeCheck(out string evidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workflow-registry-check-{Guid.NewGuid():N}");
+        try
+        {
+            var workflowDir = Path.Combine(root, ".revitcli", "workflows");
+            Directory.CreateDirectory(workflowDir);
+            File.WriteAllText(Path.Combine(workflowDir, "registry-smoke.yml"), """
+name: registry-smoke
+description: Runtime check for workflow registry payload.
+steps:
+  - name: registry
+    run: revitcli workflow registry --output json
+    mode: read-only
+  - name: package preview
+    run: revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --output json
+    mode: dry-run
+  - name: delivery bundle preview
+    run: revitcli deliverables bundle --dry-run --output json
+    mode: dry-run
+  - name: schedule export
+    run: revitcli schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json
+    mode: mutating
+    requiresApproval: true
+  - name: publish issue
+    run: revitcli publish issue
+    mode: mutating
+    requiresApproval: true
+  - name: approved plan
+    run: revitcli plan apply .revitcli/plans/sheets.json --yes
+    mode: mutating
+    requiresApproval: true
+  - name: rollback preview
+    run: revitcli rollback .revitcli/receipts/plan.json --dry-run
+    mode: dry-run
+  - name: verify journal
+    run: revitcli journal verify --output json
+    mode: read-only
+""");
+            var output = new StringWriter();
+            var tableOutput = new StringWriter();
+            var markdownOutput = new StringWriter();
+            var before = SnapshotLocalFiles(root);
+            int exitCode;
+            int tableExitCode;
+            int markdownExitCode;
+            bool eventNoWrites;
+            string eventWrites;
+            using (var writeProbe = new FileWriteProbe(root))
+            {
+                exitCode = WorkflowCommand.ExecuteRegistryAsync(
+                        null,
+                        root,
+                        "json",
+                        output,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                tableExitCode = WorkflowCommand.ExecuteRegistryAsync(
+                        null,
+                        root,
+                        "table",
+                        tableOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                markdownExitCode = WorkflowCommand.ExecuteRegistryAsync(
+                        null,
+                        root,
+                        "markdown",
+                        markdownOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                writeProbe.Drain();
+                eventNoWrites = writeProbe.IsClean;
+                eventWrites = writeProbe.Describe();
+            }
+            if (exitCode != 0)
+            {
+                evidence = $"workflow registry runtime exited {exitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+            if (tableExitCode != 0 || markdownExitCode != 0)
+            {
+                evidence = $"workflow registry output parity runtime exited table={tableExitCode.ToString(CultureInfo.InvariantCulture)} markdown={markdownExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(output.ToString());
+            var registry = document.RootElement;
+            if (registry.GetProperty("schemaVersion").GetString() != "workflow-registry.v1" ||
+                !registry.GetProperty("success").GetBoolean() ||
+                registry.GetProperty("workflowCount").GetInt32() != 1)
+            {
+                evidence = "workflow registry runtime did not emit a successful workflow-registry.v1 payload";
+                return false;
+            }
+
+            var workflow = registry.GetProperty("workflows").EnumerateArray().Single();
+            var finalSnapshotNoWrites = before.SequenceEqual(SnapshotLocalFiles(root));
+            var noWrites =
+                finalSnapshotNoWrites &&
+                eventNoWrites;
+            var outputParityReady = WorkflowRegistryOutputFormatParityReady(
+                registry,
+                tableOutput.ToString(),
+                markdownOutput.ToString());
+            var ok =
+                noWrites &&
+                outputParityReady &&
+                workflow.GetProperty("name").GetString() == "registry-smoke" &&
+                workflow.GetProperty("riskLevel").GetString() == "mutating" &&
+                JsonArrayContains(workflow.GetProperty("readWriteScope"), "read-only") &&
+                JsonArrayContains(workflow.GetProperty("readWriteScope"), "dry-run") &&
+                JsonArrayContains(workflow.GetProperty("readWriteScope"), "mutating") &&
+                JsonArrayContains(workflow.GetProperty("inputs"), "workflow YAML") &&
+                JsonArrayContains(workflow.GetProperty("inputs"), "profile:.revitcli/issue.yml") &&
+                JsonArrayContains(workflow.GetProperty("inputs"), "manifest:exports/schedules/current/manifest.json") &&
+                JsonArrayContains(workflow.GetProperty("inputs"), "plan:.revitcli/plans/sheets.json") &&
+                JsonArrayContains(workflow.GetProperty("inputs"), "receipt:.revitcli/receipts/plan.json") &&
+                JsonArrayContains(workflow.GetProperty("outputs"), "issue package") &&
+                JsonArrayContains(workflow.GetProperty("outputs"), "delivery bundle") &&
+                JsonArrayContains(workflow.GetProperty("outputs"), "schedule export") &&
+                JsonArrayContains(workflow.GetProperty("outputs"), "schedule-export-manifest.v1") &&
+                JsonArrayContains(workflow.GetProperty("outputs"), "publish output") &&
+                workflow.GetProperty("dryRunCommands").GetArrayLength() >= 2 &&
+                workflow.GetProperty("approvalCommands").GetArrayLength() >= 3 &&
+                workflow.GetProperty("rollbackSupport").GetBoolean() &&
+                JsonArrayContains(workflow.GetProperty("receiptSchemas"), "workflow-run-receipt.v1") &&
+                JsonArrayContains(workflow.GetProperty("receiptSchemas"), "plan-receipt.v1") &&
+                JsonArrayContains(workflow.GetProperty("receiptSchemas"), "issue-package-receipt.v1") &&
+                JsonArrayContains(workflow.GetProperty("receiptSchemas"), "delivery-bundle-receipt.v1") &&
+                JsonArrayContains(workflow.GetProperty("receiptSchemas"), "publish-receipt.v1") &&
+                JsonArrayContains(workflow.GetProperty("acceptanceEvidence"), "workflow receipts") &&
+                JsonArrayContains(workflow.GetProperty("acceptanceEvidence"), "journal verify") &&
+                JsonArrayContains(workflow.GetProperty("acceptanceEvidence"), "schedule-export-manifest.v1") &&
+                JsonArrayContains(workflow.GetProperty("acceptanceEvidence"), "delivery-bundle-receipt.v1") &&
+                JsonArrayContains(workflow.GetProperty("acceptanceEvidence"), "publish-receipt.v1") &&
+                !workflow.GetProperty("issues").EnumerateArray().Any(issue =>
+                    string.Equals(issue.GetProperty("severity").GetString(), "Error", StringComparison.OrdinalIgnoreCase));
+
+            evidence = ok
+                ? "workflow registry runtime emits workflow-registry.v1 with inputs, delivery, schedule, publish outputs, scope, risk, dry-run, approval, rollback, receipt, journal verify, schema evidence fields, JSON/table/Markdown output semantic parity, final file-tree snapshot evidence, and event-level no-write evidence"
+                : $"workflow registry runtime payload is missing required workflow-registry.v1 fields, JSON/table/Markdown output semantic parity, final file-tree snapshot evidence, or event-level no-write evidence (outputParity={outputParityReady.ToString().ToLowerInvariant()}, noWrites={noWrites.ToString().ToLowerInvariant()}, events={eventWrites})";
+            return ok;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            evidence = $"workflow registry runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool RunLedgerAppendRuntimeCheck(out string evidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-ledger-append-check-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(root);
+            var receiptDir = Path.Combine(root, ".revitcli", "receipts");
+            Directory.CreateDirectory(receiptDir);
+            var receiptPath = Path.Combine(receiptDir, "append-smoke.json");
+            File.WriteAllText(receiptPath, JsonSerializer.Serialize(new
+            {
+                schemaVersion = "publish-receipt.v1",
+                action = "issue.package",
+                success = true,
+                dryRun = false,
+            }));
+            var artifactPath = Path.Combine(root, "out", "issue-package.zip");
+            Directory.CreateDirectory(Path.GetDirectoryName(artifactPath)!);
+            File.WriteAllText(artifactPath, "package");
+            var receiptHash = DeliveryManifestWriter.ComputeSha256Hex(receiptPath);
+            var now = DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture);
+
+            var beforeDryRun = SnapshotLocalFiles(root);
+            var dryRunOutput = new StringWriter();
+            var dryRunMarkdownOutput = new StringWriter();
+            var dryRunTableOutput = new StringWriter();
+            int dryRunExitCode;
+            int dryRunMarkdownExitCode;
+            int dryRunTableExitCode;
+            bool dryRunEventNoWrites;
+            string dryRunEventWrites;
+            using (var writeProbe = new FileWriteProbe(root))
+            {
+                dryRunExitCode = LedgerCommand.ExecuteAppendAsync(
+                        root,
+                        "issue.package",
+                        "issue",
+                        "alice",
+                        "succeeded",
+                        "package issue deliverables",
+                        "2026-05-23T00:00:00Z",
+                        "AppendSmoke.rvt",
+                        "models/AppendSmoke.rvt",
+                        "plan-append-smoke",
+                        artifactPath,
+                        receiptPath,
+                        receiptHash,
+                        "revitcli rollback append-smoke.json",
+                        new[] { receiptPath, artifactPath, receiptPath },
+                        yes: false,
+                        outputFormat: "json",
+                        dryRunOutput,
+                        now)
+                    .GetAwaiter()
+                    .GetResult();
+                dryRunMarkdownExitCode = LedgerCommand.ExecuteAppendAsync(
+                        root,
+                        "issue.package",
+                        "issue",
+                        "alice",
+                        "succeeded",
+                        "package issue deliverables",
+                        "2026-05-23T00:00:00Z",
+                        "AppendSmoke.rvt",
+                        "models/AppendSmoke.rvt",
+                        "plan-append-smoke",
+                        artifactPath,
+                        receiptPath,
+                        receiptHash,
+                        "revitcli rollback append-smoke.json",
+                        new[] { receiptPath, artifactPath, receiptPath },
+                        yes: false,
+                        outputFormat: "markdown",
+                        dryRunMarkdownOutput,
+                        now)
+                    .GetAwaiter()
+                    .GetResult();
+                dryRunTableExitCode = LedgerCommand.ExecuteAppendAsync(
+                        root,
+                        "issue.package",
+                        "issue",
+                        "alice",
+                        "succeeded",
+                        "package issue deliverables",
+                        "2026-05-23T00:00:00Z",
+                        "AppendSmoke.rvt",
+                        "models/AppendSmoke.rvt",
+                        "plan-append-smoke",
+                        artifactPath,
+                        receiptPath,
+                        receiptHash,
+                        "revitcli rollback append-smoke.json",
+                        new[] { receiptPath, artifactPath, receiptPath },
+                        yes: false,
+                        outputFormat: "table",
+                        dryRunTableOutput,
+                        now)
+                    .GetAwaiter()
+                    .GetResult();
+                writeProbe.Drain();
+                dryRunEventNoWrites = writeProbe.IsClean;
+                dryRunEventWrites = writeProbe.Describe();
+            }
+
+            var ledgerPath = Path.Combine(root, ".revitcli", "ledger", "operations.jsonl");
+            var dryRunNoWrites =
+                beforeDryRun.SequenceEqual(SnapshotLocalFiles(root)) &&
+                !File.Exists(ledgerPath) &&
+                dryRunEventNoWrites;
+            if (dryRunExitCode != 0 || dryRunMarkdownExitCode != 0 || dryRunTableExitCode != 0 || !dryRunNoWrites)
+            {
+                evidence = $"ledger append dry-run runtime failed no-write or output checks (json={dryRunExitCode.ToString(CultureInfo.InvariantCulture)}, markdown={dryRunMarkdownExitCode.ToString(CultureInfo.InvariantCulture)}, table={dryRunTableExitCode.ToString(CultureInfo.InvariantCulture)}, noWrites={dryRunNoWrites.ToString().ToLowerInvariant()}, events={dryRunEventWrites})";
+                return false;
+            }
+
+            using var dryRunDocument = JsonDocument.Parse(dryRunOutput.ToString());
+            var dryRun = dryRunDocument.RootElement;
+            var dryRunOperation = dryRun.GetProperty("operation");
+            var outputParityReady =
+                dryRun.GetProperty("schemaVersion").GetString() == "ledger-append.v1" &&
+                dryRun.GetProperty("dryRun").GetBoolean() &&
+                !dryRun.GetProperty("written").GetBoolean() &&
+                dryRunMarkdownOutput.ToString().Contains("RevitCli Ledger Append", StringComparison.OrdinalIgnoreCase) &&
+                dryRunTableOutput.ToString().Contains("Ledger append", StringComparison.OrdinalIgnoreCase) &&
+                dryRunMarkdownOutput.ToString().Contains("issue.package", StringComparison.OrdinalIgnoreCase) &&
+                dryRunTableOutput.ToString().Contains("issue.package", StringComparison.OrdinalIgnoreCase) &&
+                dryRunOperation.GetProperty("source").GetString() == "ledger" &&
+                dryRunOperation.GetProperty("action").GetString() == "issue.package" &&
+                dryRunOperation.GetProperty("receiptStatus").GetString() == "valid";
+
+            var beforeAppend = SnapshotLocalFiles(root);
+            var appendOutput = new StringWriter();
+            var appendExitCode = LedgerCommand.ExecuteAppendAsync(
+                    root,
+                    "issue.package",
+                    "issue",
+                    "alice",
+                    "succeeded",
+                    "package issue deliverables",
+                    "2026-05-23T00:00:00Z",
+                    "AppendSmoke.rvt",
+                    "models/AppendSmoke.rvt",
+                    "plan-append-smoke",
+                    artifactPath,
+                    receiptPath,
+                    receiptHash,
+                    "revitcli rollback append-smoke.json",
+                    new[] { receiptPath, artifactPath, receiptPath },
+                    yes: true,
+                    outputFormat: "json",
+                    appendOutput,
+                    now)
+                .GetAwaiter()
+                .GetResult();
+            var afterAppend = SnapshotLocalFiles(root);
+            var addedPaths = afterAppend.Keys.Except(beforeAppend.Keys, StringComparer.Ordinal).OrderBy(path => path, StringComparer.Ordinal).ToArray();
+            var boundedWriteReady =
+                appendExitCode == 0 &&
+                addedPaths.SequenceEqual(new[] { ".revitcli/ledger/", ".revitcli/ledger/operations.jsonl" }, StringComparer.Ordinal) &&
+                File.Exists(ledgerPath) &&
+                File.ReadAllLines(ledgerPath).Length == 1;
+
+            var queryOutput = new StringWriter();
+            var validateOutput = new StringWriter();
+            var afterAppendStable = SnapshotLocalFiles(root);
+            var queryExitCode = LedgerCommand.ExecuteQueryAsync(
+                    root,
+                    "ledger",
+                    since: null,
+                    until: null,
+                    window: null,
+                    action: null,
+                    category: null,
+                    operatorFilter: null,
+                    receiptStatus: "all",
+                    limit: 10,
+                    outputFormat: "json",
+                    queryOutput,
+                    now)
+                .GetAwaiter()
+                .GetResult();
+            var validateExitCode = LedgerCommand.ExecuteValidateAsync(
+                    root,
+                    "ledger",
+                    since: null,
+                    until: null,
+                    window: null,
+                    action: null,
+                    category: null,
+                    operatorFilter: null,
+                    receiptStatus: "all",
+                    failOn: "error",
+                    outputFormat: "json",
+                    validateOutput,
+                    now)
+                .GetAwaiter()
+                .GetResult();
+            var readBackNoWrites = afterAppendStable.SequenceEqual(SnapshotLocalFiles(root));
+            using var queryDocument = JsonDocument.Parse(queryOutput.ToString());
+            using var validateDocument = JsonDocument.Parse(validateOutput.ToString());
+            var operation = queryDocument.RootElement.GetProperty("operations").EnumerateArray().SingleOrDefault();
+            var readBackReady =
+                queryExitCode == 0 &&
+                validateExitCode == 0 &&
+                readBackNoWrites &&
+                queryDocument.RootElement.GetProperty("schemaVersion").GetString() == "ledger-query.v1" &&
+                validateDocument.RootElement.GetProperty("schemaVersion").GetString() == "ledger-validate.v1" &&
+                queryDocument.RootElement.GetProperty("summary").GetProperty("totalOperations").GetInt32() == 1 &&
+                validateDocument.RootElement.GetProperty("valid").GetBoolean() &&
+                validateDocument.RootElement.GetProperty("summary").GetProperty("operationCount").GetInt32() == 1 &&
+                operation.ValueKind == JsonValueKind.Object &&
+                operation.GetProperty("source").GetString() == "ledger" &&
+                operation.GetProperty("action").GetString() == "issue.package" &&
+                operation.GetProperty("receiptStatus").GetString() == "valid" &&
+                operation.GetProperty("receiptHash").GetString() == receiptHash;
+            var evidenceSortedReady =
+                operation.ValueKind == JsonValueKind.Object &&
+                operation.GetProperty("evidenceLinks").EnumerateArray()
+                    .Select(item => item.GetString())
+                    .SequenceEqual(
+                        operation.GetProperty("evidenceLinks").EnumerateArray()
+                            .Select(item => item.GetString())
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(item => item, StringComparer.OrdinalIgnoreCase),
+                        StringComparer.OrdinalIgnoreCase);
+
+            var ok = outputParityReady && boundedWriteReady && readBackReady && evidenceSortedReady;
+            evidence = ok
+                ? "ledger append runtime emits ledger-append.v1, preserves dry-run default no-write behavior, writes exactly .revitcli/ledger/operations.jsonl with --yes, records ledger-operation.v1 with deterministic evidence links, and query/validate read back the source ledger record without additional writes"
+                : $"ledger append runtime payload is missing output parity, bounded local write evidence, source ledger read-back, validation evidence, or deterministic evidence links (outputParity={outputParityReady.ToString().ToLowerInvariant()}, boundedWrite={boundedWriteReady.ToString().ToLowerInvariant()}, readBack={readBackReady.ToString().ToLowerInvariant()}, evidenceSorted={evidenceSortedReady.ToString().ToLowerInvariant()}, added={string.Join(",", addedPaths)})";
+            return ok;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            evidence = $"ledger append runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool RunLedgerReplayRuntimeCheck(out string evidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-ledger-replay-check-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(root);
+            var now = DateTimeOffset.Parse("2026-05-23T01:00:00Z", CultureInfo.InvariantCulture);
+            var appendOutput = new StringWriter();
+            var appendExitCode = LedgerCommand.ExecuteAppendAsync(
+                    root,
+                    "issue.package",
+                    "issue",
+                    "alice",
+                    "succeeded",
+                    "package issue deliverables",
+                    "2026-05-23T01:00:00Z",
+                    "ReplaySmoke.rvt",
+                    "models/ReplaySmoke.rvt",
+                    "plan-replay-smoke",
+                    "out/issue-package.zip",
+                    null,
+                    null,
+                    "revitcli rollback replay-smoke.json",
+                    new[] { "out/issue-package.zip" },
+                    yes: true,
+                    outputFormat: "json",
+                    appendOutput,
+                    now)
+                .GetAwaiter()
+                .GetResult();
+            if (appendExitCode != 0)
+            {
+                evidence = $"ledger replay runtime setup append failed ({appendExitCode.ToString(CultureInfo.InvariantCulture)})";
+                return false;
+            }
+
+            var beforeReplay = SnapshotLocalFiles(root);
+            var jsonOutput = new StringWriter();
+            var markdownOutput = new StringWriter();
+            var tableOutput = new StringWriter();
+            int jsonExitCode;
+            int markdownExitCode;
+            int tableExitCode;
+            bool eventNoWrites;
+            string eventWrites;
+            using (var writeProbe = new FileWriteProbe(root))
+            {
+                jsonExitCode = LedgerCommand.ExecuteReplayAsync(
+                        root,
+                        "ledger",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        limit: 10,
+                        outputFormat: "json",
+                        jsonOutput,
+                        now)
+                    .GetAwaiter()
+                    .GetResult();
+                markdownExitCode = LedgerCommand.ExecuteReplayAsync(
+                        root,
+                        "ledger",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        limit: 10,
+                        outputFormat: "markdown",
+                        markdownOutput,
+                        now)
+                    .GetAwaiter()
+                    .GetResult();
+                tableExitCode = LedgerCommand.ExecuteReplayAsync(
+                        root,
+                        "ledger",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        limit: 10,
+                        outputFormat: "table",
+                        tableOutput,
+                        now)
+                    .GetAwaiter()
+                    .GetResult();
+                writeProbe.Drain();
+                eventNoWrites = writeProbe.IsClean;
+                eventWrites = writeProbe.Describe();
+            }
+
+            var replayNoWrites = beforeReplay.SequenceEqual(SnapshotLocalFiles(root)) && eventNoWrites;
+            using var document = JsonDocument.Parse(jsonOutput.ToString());
+            var report = document.RootElement;
+            var step = report.GetProperty("steps").EnumerateArray().SingleOrDefault();
+            var outputParityReady =
+                jsonExitCode == 0 &&
+                markdownExitCode == 0 &&
+                tableExitCode == 0 &&
+                report.GetProperty("schemaVersion").GetString() == "ledger-replay.v1" &&
+                markdownOutput.ToString().Contains("Ledger Replay Preview", StringComparison.OrdinalIgnoreCase) &&
+                tableOutput.ToString().Contains("Ledger replay preview", StringComparison.OrdinalIgnoreCase);
+            var previewReady =
+                report.GetProperty("source").GetString() == "ledger" &&
+                report.GetProperty("dryRun").GetBoolean() &&
+                !report.GetProperty("applySupported").GetBoolean() &&
+                report.GetProperty("summary").GetProperty("stepCount").GetInt32() == 1 &&
+                report.GetProperty("summary").GetProperty("blockedStepCount").GetInt32() == 1 &&
+                step.ValueKind == JsonValueKind.Object &&
+                step.GetProperty("replayMode").GetString() == "preview" &&
+                !step.GetProperty("canApply").GetBoolean() &&
+                step.GetProperty("blockReason").GetString()!.Contains("preview-only", StringComparison.OrdinalIgnoreCase);
+
+            var ok = outputParityReady && previewReady && replayNoWrites;
+            evidence = ok
+                ? "ledger replay preview emits ledger-replay.v1 from source ledger with dryRun=true, applySupported=false, canApply=false steps, JSON/table/Markdown output semantic parity, and event-level no-write evidence"
+                : $"ledger replay preview runtime payload is missing preview contract or no-write evidence (outputParity={outputParityReady.ToString().ToLowerInvariant()}, preview={previewReady.ToString().ToLowerInvariant()}, noWrites={replayNoWrites.ToString().ToLowerInvariant()}, events={eventWrites})";
+            return ok;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            evidence = $"ledger replay runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool RunLedgerQueryValidateRuntimeCheck(out string evidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-ledger-query-validate-check-{Guid.NewGuid():N}");
+        try
+        {
+            const string deterministicTimestamp = "2026-05-23T00:00:00Z";
+            var revitCliDir = Path.Combine(root, ".revitcli");
+            Directory.CreateDirectory(revitCliDir);
+            var historyStore = HistoryStore.ForProject(root);
+            historyStore.InitAsync().GetAwaiter().GetResult();
+            historyStore.AppendAsync(
+                    new ModelSnapshot
+                    {
+                        SchemaVersion = 1,
+                        TakenAt = deterministicTimestamp,
+                        Revit = new SnapshotRevit
+                        {
+                            Version = "2026",
+                            Document = "LedgerQueryValidate.rvt",
+                            DocumentPath = "C:/models/LedgerQueryValidate.rvt",
+                        },
+                        Summary = new SnapshotSummary
+                        {
+                            ElementCounts = new Dictionary<string, int> { ["walls"] = 1 },
+                            SheetCount = 1,
+                            ScheduleCount = 1,
+                        },
+                    },
+                    "query-validate-baseline",
+                    DateTimeOffset.Parse(deterministicTimestamp, CultureInfo.InvariantCulture))
+                .GetAwaiter()
+                .GetResult();
+
+            File.WriteAllLines(
+                Path.Combine(revitCliDir, "journal.jsonl"),
+                new[]
+                {
+                    JsonSerializer.Serialize(new
+                    {
+                        timestamp = deterministicTimestamp,
+                        action = "issue.preflight",
+                        category = "issue",
+                        user = "alice",
+                        @operator = "alice",
+                        affected = 0,
+                    }),
+                    JsonSerializer.Serialize(new
+                    {
+                        timestamp = deterministicTimestamp,
+                        action = "issue.review",
+                        category = "issue",
+                        user = "alice",
+                        @operator = "alice",
+                        affected = 0,
+                    }),
+                });
+
+            var receiptDir = Path.Combine(revitCliDir, "receipts");
+            Directory.CreateDirectory(receiptDir);
+            var deliveryReceipt = Path.Combine(receiptDir, "query-validate-delivery.json");
+            File.WriteAllText(
+                deliveryReceipt,
+                JsonSerializer.Serialize(new
+                {
+                    schemaVersion = "export-receipt.v1",
+                    action = "export",
+                    success = true,
+                    dryRun = false,
+                    command = "revitcli export --output json",
+                }));
+            var deliveryDir = Path.Combine(revitCliDir, "deliveries");
+            Directory.CreateDirectory(deliveryDir);
+            File.WriteAllText(
+                Path.Combine(deliveryDir, "manifest.jsonl"),
+                JsonSerializer.Serialize(new
+                {
+                    schemaVersion = "delivery-manifest.v1",
+                    kind = "export",
+                    success = true,
+                    dryRun = false,
+                    pipeline = "issue",
+                    receiptPath = deliveryReceipt,
+                    receiptHash = DeliveryManifestWriter.ComputeSha256Hex(deliveryReceipt),
+                    timestamp = deterministicTimestamp,
+                }) + Environment.NewLine);
+
+            var workflowReceiptDir = Path.Combine(revitCliDir, "workflows", "receipts");
+            Directory.CreateDirectory(workflowReceiptDir);
+            File.WriteAllText(
+                Path.Combine(workflowReceiptDir, "z-query-validate-workflow.json"),
+                JsonSerializer.Serialize(new
+                {
+                    schemaVersion = "workflow-run-receipt.v1",
+                    action = "workflow.run",
+                    path = Path.Combine(revitCliDir, "workflows", "query-validate.yml"),
+                    name = "z-query-validate",
+                    command = "revitcli workflow run .revitcli/workflows/query-validate.yml --yes",
+                    startedAtUtc = deterministicTimestamp,
+                    completedAtUtc = deterministicTimestamp,
+                    @operator = "alice",
+                    machine = "workstation",
+                    dryRun = false,
+                    success = true,
+                    canRun = true,
+                    exitCode = 0,
+                    issues = Array.Empty<object>(),
+                    steps = Array.Empty<object>(),
+                }));
+            File.WriteAllText(
+                Path.Combine(workflowReceiptDir, "a-query-validate-workflow.json"),
+                JsonSerializer.Serialize(new
+                {
+                    schemaVersion = "workflow-run-receipt.v1",
+                    action = "workflow.run",
+                    path = Path.Combine(revitCliDir, "workflows", "query-validate.yml"),
+                    name = "a-query-validate",
+                    command = "revitcli workflow run .revitcli/workflows/query-validate.yml --yes",
+                    startedAtUtc = deterministicTimestamp,
+                    completedAtUtc = deterministicTimestamp,
+                    @operator = "alice",
+                    machine = "workstation",
+                    dryRun = false,
+                    success = true,
+                    canRun = true,
+                    exitCode = 0,
+                    issues = Array.Empty<object>(),
+                    steps = Array.Empty<object>(),
+                }));
+
+            var queryOutput = new StringWriter();
+            var queryMarkdownOutput = new StringWriter();
+            var queryTableOutput = new StringWriter();
+            var validateOutput = new StringWriter();
+            var validateMarkdownOutput = new StringWriter();
+            var validateTableOutput = new StringWriter();
+            var before = SnapshotLocalFiles(root);
+            SortedDictionary<string, string> afterQuery;
+            int queryExitCode;
+            int queryMarkdownExitCode;
+            int queryTableExitCode;
+            int validateExitCode;
+            int validateMarkdownExitCode;
+            int validateTableExitCode;
+            bool eventNoWrites;
+            string eventWrites;
+            using (var writeProbe = new FileWriteProbe(root))
+            {
+                queryExitCode = LedgerCommand.ExecuteQueryAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        limit: 100,
+                        outputFormat: "json",
+                        queryOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                queryMarkdownExitCode = LedgerCommand.ExecuteQueryAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        limit: 100,
+                        outputFormat: "markdown",
+                        queryMarkdownOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                queryTableExitCode = LedgerCommand.ExecuteQueryAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        limit: 100,
+                        outputFormat: "table",
+                        queryTableOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                afterQuery = SnapshotLocalFiles(root);
+                validateExitCode = LedgerCommand.ExecuteValidateAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        failOn: "error",
+                        outputFormat: "json",
+                        validateOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                validateMarkdownExitCode = LedgerCommand.ExecuteValidateAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        failOn: "error",
+                        outputFormat: "markdown",
+                        validateMarkdownOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                validateTableExitCode = LedgerCommand.ExecuteValidateAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        failOn: "error",
+                        outputFormat: "table",
+                        validateTableOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                writeProbe.Drain();
+                eventNoWrites = writeProbe.IsClean;
+                eventWrites = writeProbe.Describe();
+            }
+
+            var noWrites =
+                before.SequenceEqual(afterQuery) &&
+                before.SequenceEqual(SnapshotLocalFiles(root)) &&
+                eventNoWrites;
+            if (queryExitCode != 0 ||
+                queryMarkdownExitCode != 0 ||
+                queryTableExitCode != 0 ||
+                validateExitCode != 0 ||
+                validateMarkdownExitCode != 0 ||
+                validateTableExitCode != 0)
+            {
+                evidence = $"ledger query/validate runtime exited query={queryExitCode.ToString(CultureInfo.InvariantCulture)} queryMarkdown={queryMarkdownExitCode.ToString(CultureInfo.InvariantCulture)} queryTable={queryTableExitCode.ToString(CultureInfo.InvariantCulture)} validate={validateExitCode.ToString(CultureInfo.InvariantCulture)} validateMarkdown={validateMarkdownExitCode.ToString(CultureInfo.InvariantCulture)} validateTable={validateTableExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            using var queryDocument = JsonDocument.Parse(queryOutput.ToString());
+            using var validateDocument = JsonDocument.Parse(validateOutput.ToString());
+            var query = queryDocument.RootElement;
+            var validate = validateDocument.RootElement;
+            if (query.GetProperty("schemaVersion").GetString() != "ledger-query.v1" ||
+                validate.GetProperty("schemaVersion").GetString() != "ledger-validate.v1")
+            {
+                evidence = "ledger query/validate runtime did not emit ledger-query.v1 and ledger-validate.v1";
+                return false;
+            }
+
+            var operations = query.GetProperty("operations").EnumerateArray().ToArray();
+            var expectedTimestamp = DateTimeOffset.Parse(deterministicTimestamp, CultureInfo.InvariantCulture);
+            var sameTimestampReady = operations
+                .Select(operation => operation.GetProperty("timestamp").GetString())
+                .Select(value => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
+                    ? parsed.ToUniversalTime()
+                    : (DateTimeOffset?)null)
+                .All(timestamp => timestamp == expectedTimestamp);
+            var deterministicOrderReady =
+                operations.Length == 6 &&
+                OperationMatches(root, operations[0], "deliveries", "deliverables.export", ".revitcli/deliveries/manifest.jsonl", 1) &&
+                OperationMatches(root, operations[1], "history", "history.capture", ".revitcli/history/", null) &&
+                OperationMatches(root, operations[2], "journal", "issue.preflight", ".revitcli/journal.jsonl", 1) &&
+                OperationMatches(root, operations[3], "journal", "issue.review", ".revitcli/journal.jsonl", 2) &&
+                OperationMatches(root, operations[4], "workflows", "workflow.run", ".revitcli/workflows/receipts/a-query-validate-workflow.json", null) &&
+                OperationMatches(root, operations[5], "workflows", "workflow.run", ".revitcli/workflows/receipts/z-query-validate-workflow.json", null);
+            var outputFormatParityReady = QueryOutputFormatParityReady(
+                query,
+                queryMarkdownOutput.ToString(),
+                queryTableOutput.ToString());
+            var validateOutputFormatParityReady = ValidateOutputFormatParityReady(
+                validate,
+                validateMarkdownOutput.ToString(),
+                validateTableOutput.ToString());
+            var ok =
+                noWrites &&
+                sameTimestampReady &&
+                query.GetProperty("summary").GetProperty("totalOperations").GetInt32() == 6 &&
+                operations.Length == 6 &&
+                deterministicOrderReady &&
+                outputFormatParityReady &&
+                validateOutputFormatParityReady &&
+                operations.Any(operation => operation.GetProperty("source").GetString() == "history") &&
+                operations.Any(operation => operation.GetProperty("source").GetString() == "journal") &&
+                operations.Any(operation => operation.GetProperty("source").GetString() == "deliveries") &&
+                operations.Any(operation => operation.GetProperty("source").GetString() == "workflows") &&
+                validate.GetProperty("valid").GetBoolean() &&
+                validate.GetProperty("summary").GetProperty("operationCount").GetInt32() == 6 &&
+                validate.GetProperty("summary").GetProperty("errorCount").GetInt32() == 0 &&
+                validate.GetProperty("checks").EnumerateArray().Any(check =>
+                    check.GetProperty("id").GetString() == "sources-readable" &&
+                    check.GetProperty("status").GetString() == "pass") &&
+                validate.GetProperty("checks").EnumerateArray().Any(check =>
+                    check.GetProperty("id").GetString() == "artifact-links" &&
+                    check.GetProperty("status").GetString() == "pass") &&
+                validate.GetProperty("checks").EnumerateArray().Any(check =>
+                    check.GetProperty("id").GetString() == "receipt-status" &&
+                    check.GetProperty("status").GetString() == "pass") &&
+                validate.GetProperty("checks").EnumerateArray().Any(check =>
+                    check.GetProperty("id").GetString() == "receipt-hashes" &&
+                    check.GetProperty("status").GetString() == "pass") &&
+                validate.GetProperty("checks").EnumerateArray().Any(check =>
+                    check.GetProperty("id").GetString() == "timestamp-format" &&
+                    check.GetProperty("status").GetString() == "pass");
+
+            if (!ok)
+            {
+                evidence = $"ledger query/validate runtime payload is missing required read-only source, deterministic timestamp/source/path/line order, JSON/table/Markdown output semantic parity, validation JSON/table/Markdown semantic parity, validation evidence, final file-tree snapshot evidence, or event-level no-write evidence (sameTimestamp={sameTimestampReady.ToString().ToLowerInvariant()}, deterministicOrder={deterministicOrderReady.ToString().ToLowerInvariant()}, outputParity={outputFormatParityReady.ToString().ToLowerInvariant()}, validateOutputParity={validateOutputFormatParityReady.ToString().ToLowerInvariant()}, noWrites={noWrites.ToString().ToLowerInvariant()}, events={eventWrites})";
+                return false;
+            }
+
+            File.AppendAllText(
+                Path.Combine(revitCliDir, "journal.jsonl"),
+                JsonSerializer.Serialize(new
+                {
+                    timestamp = "2026-05-23T00:30:00",
+                    action = "issue.review",
+                    category = "issue",
+                    user = "alice",
+                    @operator = "alice",
+                    affected = 0,
+                }) + Environment.NewLine);
+
+            var filteredQueryOutput = new StringWriter();
+            var filteredValidateOutput = new StringWriter();
+            var semanticBefore = SnapshotLocalFiles(root);
+            int filteredQueryExitCode;
+            int filteredValidateExitCode;
+            bool semanticEventNoWrites;
+            string semanticEventWrites;
+            using (var writeProbe = new FileWriteProbe(root))
+            {
+                filteredQueryExitCode = LedgerCommand.ExecuteQueryAsync(
+                        root,
+                        "all",
+                        since: "2026-05-23T00:00:00Z",
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        limit: 100,
+                        outputFormat: "json",
+                        filteredQueryOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                filteredValidateExitCode = LedgerCommand.ExecuteValidateAsync(
+                        root,
+                        "all",
+                        since: "2026-05-23T00:00:00Z",
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        failOn: "error",
+                        outputFormat: "json",
+                        filteredValidateOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                writeProbe.Drain();
+                semanticEventNoWrites = writeProbe.IsClean;
+                semanticEventWrites = writeProbe.Describe();
+            }
+
+            var semanticNoWrites =
+                semanticBefore.SequenceEqual(SnapshotLocalFiles(root)) &&
+                semanticEventNoWrites;
+            if (filteredQueryExitCode != 0 || filteredValidateExitCode != 0)
+            {
+                evidence = $"ledger query/validate timestamp-filter runtime exited query={filteredQueryExitCode.ToString(CultureInfo.InvariantCulture)} validate={filteredValidateExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            using var filteredQueryDocument = JsonDocument.Parse(filteredQueryOutput.ToString());
+            using var filteredValidateDocument = JsonDocument.Parse(filteredValidateOutput.ToString());
+            var filteredQuery = filteredQueryDocument.RootElement;
+            var filteredValidate = filteredValidateDocument.RootElement;
+            var filteredQueryCount = filteredQuery.GetProperty("summary").GetProperty("totalOperations").GetInt32();
+            var filteredValidateCount = filteredValidate.GetProperty("summary").GetProperty("operationCount").GetInt32();
+            var preservesTimestampWarning =
+                semanticNoWrites &&
+                filteredValidateCount == filteredQueryCount + 1 &&
+                filteredValidate.GetProperty("issues").EnumerateArray().Any(issue =>
+                    issue.GetProperty("code").GetString() == "timestamp.invalid" &&
+                    issue.GetProperty("message").GetString()!.Contains("explicit UTC offset", StringComparison.OrdinalIgnoreCase));
+            if (!preservesTimestampWarning)
+            {
+                evidence = $"ledger query/validate timestamp-filter semantics failed (queryCount={filteredQueryCount.ToString(CultureInfo.InvariantCulture)}, validateCount={filteredValidateCount.ToString(CultureInfo.InvariantCulture)}, noWrites={semanticNoWrites.ToString().ToLowerInvariant()}, events={semanticEventWrites})";
+                return false;
+            }
+
+            evidence = "ledger query/validate runtime emits ledger-query.v1 and ledger-validate.v1 across journal, history, delivery, and workflow sources with deterministic timestamp/source/path/line ordering, JSON/table/Markdown output semantic parity, validation JSON/table/Markdown semantic parity, source readability, artifact link, receipt status, receipt hash, timestamp format, explicit UTC offset warning preservation under time filters, query invalid-timestamp filtering, final file-tree snapshot evidence, and event-level no-write evidence";
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            evidence = $"ledger query/validate runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool RunLedgerStatsRuntimeCheck(out string evidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-ledger-stats-check-{Guid.NewGuid():N}");
+        try
+        {
+            var revitCliDir = Path.Combine(root, ".revitcli");
+            Directory.CreateDirectory(revitCliDir);
+            var historyStore = HistoryStore.ForProject(root);
+            historyStore.InitAsync().GetAwaiter().GetResult();
+            historyStore.AppendAsync(
+                    new ModelSnapshot
+                    {
+                        SchemaVersion = 1,
+                        TakenAt = "2026-05-22T22:15:00Z",
+                        Revit = new SnapshotRevit
+                        {
+                            Version = "2026",
+                            Document = "LedgerStats.rvt",
+                            DocumentPath = "C:/models/LedgerStats.rvt",
+                        },
+                        Summary = new SnapshotSummary
+                        {
+                            ElementCounts = new Dictionary<string, int> { ["walls"] = 1 },
+                            SheetCount = 1,
+                            ScheduleCount = 1,
+                        },
+                    },
+                    "stats-baseline",
+                    DateTimeOffset.Parse("2026-05-22T22:15:00Z", CultureInfo.InvariantCulture))
+                .GetAwaiter()
+                .GetResult();
+
+            File.WriteAllText(Path.Combine(revitCliDir, "journal.jsonl"), "{bad-json");
+
+            var deliveryDir = Path.Combine(revitCliDir, "deliveries");
+            Directory.CreateDirectory(deliveryDir);
+            File.WriteAllText(Path.Combine(deliveryDir, "manifest.jsonl"), "{bad-json");
+
+            var workflowReceiptDir = Path.Combine(revitCliDir, "workflows", "receipts");
+            Directory.CreateDirectory(workflowReceiptDir);
+            File.WriteAllText(Path.Combine(workflowReceiptDir, "bad-workflow.json"), "{bad-json");
+
+            var before = SnapshotLocalFiles(root);
+            var output = new StringWriter();
+            var markdownOutput = new StringWriter();
+            var tableOutput = new StringWriter();
+            int exitCode;
+            int markdownExitCode;
+            int tableExitCode;
+            bool eventNoWrites;
+            string eventWrites;
+            using (var writeProbe = new FileWriteProbe(root))
+            {
+                exitCode = LedgerCommand.ExecuteStatsAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        outputFormat: "json",
+                        output,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                markdownExitCode = LedgerCommand.ExecuteStatsAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        outputFormat: "markdown",
+                        markdownOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                tableExitCode = LedgerCommand.ExecuteStatsAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        outputFormat: "table",
+                        tableOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                writeProbe.Drain();
+                eventNoWrites = writeProbe.IsClean;
+                eventWrites = writeProbe.Describe();
+            }
+
+            var finalSnapshotNoWrites = before.SequenceEqual(SnapshotLocalFiles(root));
+            var noWrites =
+                finalSnapshotNoWrites &&
+                eventNoWrites;
+            if (exitCode != 0 || markdownExitCode != 0 || tableExitCode != 0)
+            {
+                evidence = $"ledger stats runtime exited json={exitCode.ToString(CultureInfo.InvariantCulture)} markdown={markdownExitCode.ToString(CultureInfo.InvariantCulture)} table={tableExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(output.ToString());
+            var stats = document.RootElement;
+            if (stats.GetProperty("schemaVersion").GetString() != "ledger-stats.v1")
+            {
+                evidence = "ledger stats runtime did not emit ledger-stats.v1";
+                return false;
+            }
+
+            var summary = stats.GetProperty("summary");
+            var operationCount = summary.GetProperty("operationCount").GetInt32();
+            var issueCount = summary.GetProperty("issueCount").GetInt32();
+            var errorIssueCount = summary.GetProperty("errorIssueCount").GetInt32();
+            var warningIssueCount = summary.GetProperty("warningIssueCount").GetInt32();
+            var missingReceiptCount = summary.GetProperty("missingReceiptCount").GetInt32();
+            var unreadableReceiptCount = summary.GetProperty("unreadableReceiptCount").GetInt32();
+            var outputFormatParityReady = StatsOutputFormatParityReady(
+                stats,
+                markdownOutput.ToString(),
+                tableOutput.ToString());
+            var ok =
+                noWrites &&
+                outputFormatParityReady &&
+                operationCount == 3 &&
+                issueCount == 3 &&
+                errorIssueCount == 3 &&
+                warningIssueCount == 0 &&
+                missingReceiptCount == 0 &&
+                unreadableReceiptCount == 2 &&
+                JsonArrayCountsEqual(
+                    stats.GetProperty("bySource"),
+                    ("deliveries", 1),
+                    ("history", 1),
+                    ("workflows", 1)) &&
+                JsonArrayCountsEqual(
+                    stats.GetProperty("byAction"),
+                    ("deliverables.manifest-issue", 1),
+                    ("history.capture", 1),
+                    ("workflow.receipt-issue", 1)) &&
+                JsonArrayCountsEqual(
+                    stats.GetProperty("byCategory"),
+                    ("none", 2),
+                    ("stats-baseline", 1)) &&
+                JsonArrayCountsEqual(stats.GetProperty("byOperator"), ("none", 3)) &&
+                JsonArrayCountsEqual(
+                    stats.GetProperty("byReceiptStatus"),
+                    ("none", 1),
+                    ("unreadable", 2)) &&
+                JsonArrayCountsEqual(
+                    stats.GetProperty("issuesBySource"),
+                    ("deliveries", 1),
+                    ("journal", 1),
+                    ("workflows", 1)) &&
+                JsonArrayCountsEqual(stats.GetProperty("issuesBySeverity"), ("error", 3));
+
+            evidence = ok
+                ? "ledger stats runtime emits ledger-stats.v1 with exact counters operationCount=3 issueCount=3 errorIssueCount=3 unreadableReceiptCount=2, exact source/action/category/operator/receipt-status/issue-source/issue-severity sets, JSON/table/Markdown stats semantic parity for malformed journal, delivery, and workflow artifacts, final file-tree snapshot evidence, and event-level no-write evidence"
+                : $"ledger stats runtime payload does not match exact ledger-stats.v1 parity counters or sets (operationCount={operationCount.ToString(CultureInfo.InvariantCulture)}, issueCount={issueCount.ToString(CultureInfo.InvariantCulture)}, errorIssueCount={errorIssueCount.ToString(CultureInfo.InvariantCulture)}, unreadableReceiptCount={unreadableReceiptCount.ToString(CultureInfo.InvariantCulture)}, outputParity={outputFormatParityReady.ToString().ToLowerInvariant()}, finalSnapshotNoWrites={finalSnapshotNoWrites.ToString().ToLowerInvariant()}, eventNoWrites={eventNoWrites.ToString().ToLowerInvariant()}, events={eventWrites})";
+            return ok;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            evidence = $"ledger stats runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool RunLedgerTimelineRuntimeCheck(out string evidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-ledger-timeline-check-{Guid.NewGuid():N}");
+        try
+        {
+            var revitCliDir = Path.Combine(root, ".revitcli");
+            Directory.CreateDirectory(revitCliDir);
+            var historyStore = HistoryStore.ForProject(root);
+            historyStore.InitAsync().GetAwaiter().GetResult();
+            historyStore.AppendAsync(
+                    new ModelSnapshot
+                    {
+                        SchemaVersion = 1,
+                        TakenAt = "2026-05-22T22:15:00Z",
+                        Revit = new SnapshotRevit
+                        {
+                            Version = "2026",
+                            Document = "LedgerTimeline.rvt",
+                            DocumentPath = "C:/models/LedgerTimeline.rvt",
+                        },
+                        Summary = new SnapshotSummary
+                        {
+                            ElementCounts = new Dictionary<string, int> { ["walls"] = 1 },
+                            SheetCount = 1,
+                            ScheduleCount = 1,
+                        },
+                    },
+                    "timeline-baseline",
+                    DateTimeOffset.Parse("2026-05-22T22:15:00Z", CultureInfo.InvariantCulture))
+                .GetAwaiter()
+                .GetResult();
+
+            File.WriteAllLines(
+                Path.Combine(revitCliDir, "journal.jsonl"),
+                new[]
+                {
+                    JsonSerializer.Serialize(new
+                    {
+                        timestamp = "2026-05-22T23:30:00Z",
+                        action = "issue.preflight",
+                        category = "issue",
+                        user = "alice",
+                        @operator = "alice",
+                        affected = 0,
+                    }),
+                    JsonSerializer.Serialize(new
+                    {
+                        timestamp = "2026-05-23T00:15:00Z",
+                        action = "issue.package",
+                        category = "issue",
+                        user = "alice",
+                        @operator = "alice",
+                        affected = 1,
+                    }),
+                    JsonSerializer.Serialize(new
+                    {
+                        timestamp = "not-a-date",
+                        action = "issue.review",
+                        category = "issue",
+                        user = "alice",
+                        @operator = "alice",
+                        affected = 0,
+                    }),
+                });
+            var receiptDir = Path.Combine(revitCliDir, "receipts");
+            Directory.CreateDirectory(receiptDir);
+            var deliveryReceipt = Path.Combine(receiptDir, "timeline-delivery.json");
+            File.WriteAllText(
+                deliveryReceipt,
+                JsonSerializer.Serialize(new
+                {
+                    schemaVersion = "delivery-bundle-receipt.v1",
+                    action = "deliverables.bundle",
+                    success = true,
+                    dryRun = false,
+                    command = "revitcli deliverables bundle --output json",
+                }));
+            var deliveryDir = Path.Combine(revitCliDir, "deliveries");
+            Directory.CreateDirectory(deliveryDir);
+            File.WriteAllText(
+                Path.Combine(deliveryDir, "manifest.jsonl"),
+                JsonSerializer.Serialize(new
+                {
+                    schemaVersion = "delivery-manifest.v1",
+                    kind = "bundle",
+                    success = true,
+                    dryRun = false,
+                    pipeline = "issue",
+                    receiptPath = deliveryReceipt,
+                    timestamp = "2026-05-23T00:45:00Z",
+                }));
+            var workflowReceiptDir = Path.Combine(revitCliDir, "workflows", "receipts");
+            Directory.CreateDirectory(workflowReceiptDir);
+            File.WriteAllText(
+                Path.Combine(workflowReceiptDir, "timeline-workflow.json"),
+                JsonSerializer.Serialize(new
+                {
+                    schemaVersion = "workflow-run-receipt.v1",
+                    action = "workflow.run",
+                    path = Path.Combine(revitCliDir, "workflows", "timeline.yml"),
+                    name = "timeline",
+                    command = "revitcli workflow run .revitcli/workflows/timeline.yml --yes",
+                    startedAtUtc = "2026-05-23T01:00:00Z",
+                    completedAtUtc = "2026-05-23T01:05:00Z",
+                    @operator = "alice",
+                    machine = "workstation",
+                    dryRun = false,
+                    success = true,
+                    canRun = true,
+                    exitCode = 0,
+                    issues = Array.Empty<object>(),
+                    steps = Array.Empty<object>(),
+                }));
+
+            var before = SnapshotLocalFiles(root);
+            var output = new StringWriter();
+            var markdownOutput = new StringWriter();
+            var tableOutput = new StringWriter();
+            int exitCode;
+            int markdownExitCode;
+            int tableExitCode;
+            bool eventNoWrites;
+            string eventWrites;
+            using (var writeProbe = new FileWriteProbe(root))
+            {
+                exitCode = LedgerCommand.ExecuteTimelineAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        bucket: "day",
+                        outputFormat: "json",
+                        output,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                markdownExitCode = LedgerCommand.ExecuteTimelineAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        bucket: "day",
+                        outputFormat: "markdown",
+                        markdownOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                tableExitCode = LedgerCommand.ExecuteTimelineAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        bucket: "day",
+                        outputFormat: "table",
+                        tableOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                writeProbe.Drain();
+                eventNoWrites = writeProbe.IsClean;
+                eventWrites = writeProbe.Describe();
+            }
+
+            var finalSnapshotNoWrites = before.SequenceEqual(SnapshotLocalFiles(root));
+            var noWrites =
+                finalSnapshotNoWrites &&
+                eventNoWrites;
+            if (exitCode != 0 || markdownExitCode != 0 || tableExitCode != 0)
+            {
+                evidence = $"ledger timeline runtime exited json={exitCode.ToString(CultureInfo.InvariantCulture)} markdown={markdownExitCode.ToString(CultureInfo.InvariantCulture)} table={tableExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(output.ToString());
+            var timeline = document.RootElement;
+            if (timeline.GetProperty("schemaVersion").GetString() != "ledger-timeline.v1")
+            {
+                evidence = "ledger timeline runtime did not emit ledger-timeline.v1";
+                return false;
+            }
+
+            var summary = timeline.GetProperty("summary");
+            var buckets = timeline.GetProperty("buckets").EnumerateArray().ToArray();
+            var timelineSources = buckets
+                .SelectMany(bucket => bucket.GetProperty("bySource").EnumerateArray())
+                .Select(item => item.GetProperty("name").GetString())
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var outputFormatParityReady = TimelineOutputFormatParityReady(
+                timeline,
+                markdownOutput.ToString(),
+                tableOutput.ToString());
+            var ok =
+                noWrites &&
+                outputFormatParityReady &&
+                timeline.GetProperty("query").GetProperty("bucket").GetString() == "day" &&
+                summary.GetProperty("operationCount").GetInt32() == 6 &&
+                summary.GetProperty("bucketCount").GetInt32() == 2 &&
+                summary.GetProperty("unbucketedOperationCount").GetInt32() == 1 &&
+                summary.GetProperty("warningIssueCount").GetInt32() >= 1 &&
+                JsonArrayCountContains(timeline.GetProperty("issuesBySeverity"), "warning") &&
+                buckets.Length == 2 &&
+                timelineSources.SetEquals(new[] { "deliveries", "history", "journal", "workflows" }) &&
+                TimelineBucketCountsEqual(
+                    buckets,
+                    "2026-05-22T00:00:00.0000000+00:00",
+                    2,
+                    bySource: new[] { ("history", 1), ("journal", 1) },
+                    byAction: new[] { ("history.capture", 1), ("issue.preflight", 1) },
+                    byCategory: new[] { ("issue", 1), ("timeline-baseline", 1) },
+                    byOperator: new[] { ("alice", 1), ("none", 1) },
+                    byReceiptStatus: new[] { ("none", 2) }) &&
+                TimelineBucketCountsEqual(
+                    buckets,
+                    "2026-05-23T00:00:00.0000000+00:00",
+                    3,
+                    bySource: new[] { ("deliveries", 1), ("journal", 1), ("workflows", 1) },
+                    byAction: new[] { ("deliverables.bundle", 1), ("issue.package", 1), ("workflow.run", 1) },
+                    byCategory: new[] { ("issue", 2), ("timeline", 1) },
+                    byOperator: new[] { ("alice", 2), ("none", 1) },
+                    byReceiptStatus: new[] { ("valid", 2), ("none", 1) }) &&
+                timeline.GetProperty("issues").EnumerateArray().Any(issue =>
+                    issue.GetProperty("message").GetString()!.Contains("timeline bucket", StringComparison.OrdinalIgnoreCase));
+
+            if (!ok)
+            {
+                evidence = $"ledger timeline runtime payload is missing required ledger-timeline.v1 fields, JSON/table/Markdown timeline semantic parity, final file-tree snapshot evidence, or event-level no-write evidence (outputParity={outputFormatParityReady.ToString().ToLowerInvariant()}, finalSnapshotNoWrites={finalSnapshotNoWrites.ToString().ToLowerInvariant()}, eventNoWrites={eventNoWrites.ToString().ToLowerInvariant()}, events={eventWrites}, buckets={DescribeTimelineBuckets(buckets)})";
+                return false;
+            }
+
+            var sinceFilteredOutput = new StringWriter();
+            var untilFilteredOutput = new StringWriter();
+            var windowFilteredOutput = new StringWriter();
+            int sinceFilteredExitCode;
+            int untilFilteredExitCode;
+            int windowFilteredExitCode;
+            bool filteredEventNoWrites;
+            string filteredEventWrites;
+            using (var filteredWriteProbe = new FileWriteProbe(root))
+            {
+                sinceFilteredExitCode = LedgerCommand.ExecuteTimelineAsync(
+                        root,
+                        "all",
+                        since: "2026-05-23T00:00:00Z",
+                        until: null,
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        bucket: "day",
+                        outputFormat: "json",
+                        sinceFilteredOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                untilFilteredExitCode = LedgerCommand.ExecuteTimelineAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: "2026-05-22T23:59:59Z",
+                        window: null,
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        bucket: "day",
+                        outputFormat: "json",
+                        untilFilteredOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                windowFilteredExitCode = LedgerCommand.ExecuteTimelineAsync(
+                        root,
+                        "all",
+                        since: null,
+                        until: null,
+                        window: "1h",
+                        action: null,
+                        category: null,
+                        operatorFilter: null,
+                        receiptStatus: "all",
+                        bucket: "day",
+                        outputFormat: "json",
+                        windowFilteredOutput,
+                        DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture))
+                    .GetAwaiter()
+                    .GetResult();
+                filteredWriteProbe.Drain();
+                filteredEventNoWrites = filteredWriteProbe.IsClean;
+                filteredEventWrites = filteredWriteProbe.Describe();
+            }
+            if (sinceFilteredExitCode != 0 || untilFilteredExitCode != 0 || windowFilteredExitCode != 0)
+            {
+                evidence = $"ledger timeline timestamp-filter runtime exited since={sinceFilteredExitCode.ToString(CultureInfo.InvariantCulture)} until={untilFilteredExitCode.ToString(CultureInfo.InvariantCulture)} window={windowFilteredExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            using var sinceFilteredDocument = JsonDocument.Parse(sinceFilteredOutput.ToString());
+            using var untilFilteredDocument = JsonDocument.Parse(untilFilteredOutput.ToString());
+            using var windowFilteredDocument = JsonDocument.Parse(windowFilteredOutput.ToString());
+            var sinceFilteredTimeline = sinceFilteredDocument.RootElement;
+            var untilFilteredTimeline = untilFilteredDocument.RootElement;
+            var windowFilteredTimeline = windowFilteredDocument.RootElement;
+            var sinceFilteredSummary = sinceFilteredTimeline.GetProperty("summary");
+            var untilFilteredSummary = untilFilteredTimeline.GetProperty("summary");
+            var windowFilteredSummary = windowFilteredTimeline.GetProperty("summary");
+            var filteredFinalSnapshotNoWrites = before.SequenceEqual(SnapshotLocalFiles(root));
+            var filteredNoWrites =
+                filteredFinalSnapshotNoWrites &&
+                filteredEventNoWrites;
+            var preservesTimestampWarning =
+                filteredNoWrites &&
+                sinceFilteredTimeline.GetProperty("query").GetProperty("sinceUtc").GetString() == "2026-05-23T00:00:00.0000000+00:00" &&
+                sinceFilteredSummary.GetProperty("operationCount").GetInt32() == 4 &&
+                sinceFilteredSummary.GetProperty("unbucketedOperationCount").GetInt32() == 1 &&
+                sinceFilteredTimeline.GetProperty("issues").EnumerateArray().Any(issue =>
+                    issue.GetProperty("message").GetString()!.Contains("explicit UTC offset", StringComparison.OrdinalIgnoreCase)) &&
+                untilFilteredTimeline.GetProperty("query").GetProperty("untilUtc").GetString() == "2026-05-22T23:59:59.0000000+00:00" &&
+                untilFilteredSummary.GetProperty("operationCount").GetInt32() == 3 &&
+                untilFilteredSummary.GetProperty("bucketCount").GetInt32() == 1 &&
+                untilFilteredSummary.GetProperty("unbucketedOperationCount").GetInt32() == 1 &&
+                untilFilteredTimeline.GetProperty("issues").EnumerateArray().Any(issue =>
+                    issue.GetProperty("message").GetString()!.Contains("explicit UTC offset", StringComparison.OrdinalIgnoreCase)) &&
+                windowFilteredTimeline.GetProperty("query").GetProperty("window").GetString() == "1h" &&
+                windowFilteredSummary.GetProperty("operationCount").GetInt32() == 2 &&
+                windowFilteredSummary.GetProperty("bucketCount").GetInt32() == 1 &&
+                windowFilteredSummary.GetProperty("unbucketedOperationCount").GetInt32() == 1 &&
+                windowFilteredTimeline.GetProperty("issues").EnumerateArray().Any(issue =>
+                    issue.GetProperty("message").GetString()!.Contains("explicit UTC offset", StringComparison.OrdinalIgnoreCase));
+            if (!preservesTimestampWarning)
+            {
+                evidence = $"ledger timeline timestamp-filter semantics failed (sinceOperationCount={sinceFilteredSummary.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture)}, sinceUnbucketed={sinceFilteredSummary.GetProperty("unbucketedOperationCount").GetInt32().ToString(CultureInfo.InvariantCulture)}, untilOperationCount={untilFilteredSummary.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture)}, untilUnbucketed={untilFilteredSummary.GetProperty("unbucketedOperationCount").GetInt32().ToString(CultureInfo.InvariantCulture)}, windowOperationCount={windowFilteredSummary.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture)}, windowUnbucketed={windowFilteredSummary.GetProperty("unbucketedOperationCount").GetInt32().ToString(CultureInfo.InvariantCulture)}, finalSnapshotNoWrites={filteredFinalSnapshotNoWrites.ToString().ToLowerInvariant()}, eventNoWrites={filteredEventNoWrites.ToString().ToLowerInvariant()}, events={filteredEventWrites})";
+                return false;
+            }
+
+            evidence = "ledger timeline runtime emits ledger-timeline.v1 across journal, history, delivery, and workflow sources with exact day-bucket source/action/category/operator/receipt-status counts, issue severity, JSON/table/Markdown timeline semantic parity, unbucketed timestamp, explicit UTC offset warning preservation under since/until/window time filters, final file-tree snapshot evidence, and event-level no-write evidence";
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            evidence = $"ledger timeline runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static bool JsonArrayCountsEqual(JsonElement array, params (string Name, int Count)[] expected)
+    {
+        if (array.ValueKind != JsonValueKind.Array)
+            return false;
+
+        var actual = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in array.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object ||
+                !item.TryGetProperty("name", out var nameElement) ||
+                !item.TryGetProperty("count", out var countElement) ||
+                nameElement.ValueKind != JsonValueKind.String ||
+                !countElement.TryGetInt32(out var count))
+            {
+                return false;
+            }
+
+            var name = nameElement.GetString();
+            if (string.IsNullOrWhiteSpace(name) || !actual.TryAdd(name, count))
+                return false;
+        }
+
+        if (actual.Count != expected.Length)
+            return false;
+
+        foreach (var (name, count) in expected)
+        {
+            if (!actual.TryGetValue(name, out var actualCount) || actualCount != count)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool TimelineBucketCountsEqual(
+        JsonElement[] buckets,
+        string bucketStartUtc,
+        int operationCount,
+        (string Name, int Count)[] bySource,
+        (string Name, int Count)[] byAction,
+        (string Name, int Count)[] byCategory,
+        (string Name, int Count)[] byOperator,
+        (string Name, int Count)[] byReceiptStatus)
+    {
+        var bucket = buckets.FirstOrDefault(item =>
+            item.ValueKind == JsonValueKind.Object &&
+            item.TryGetProperty("bucketStartUtc", out var start) &&
+            string.Equals(start.GetString(), bucketStartUtc, StringComparison.OrdinalIgnoreCase));
+        if (bucket.ValueKind != JsonValueKind.Object)
+            return false;
+
+        return bucket.GetProperty("operationCount").GetInt32() == operationCount &&
+               bucket.TryGetProperty("issuesBySeverity", out var bucketSeverity) &&
+               bucketSeverity.ValueKind == JsonValueKind.Array &&
+               JsonArrayCountsEqual(bucket.GetProperty("bySource"), bySource) &&
+               JsonArrayCountsEqual(bucket.GetProperty("byAction"), byAction) &&
+               JsonArrayCountsEqual(bucket.GetProperty("byCategory"), byCategory) &&
+               JsonArrayCountsEqual(bucket.GetProperty("byOperator"), byOperator) &&
+               JsonArrayCountsEqual(bucket.GetProperty("byReceiptStatus"), byReceiptStatus);
+    }
+
+    private static string DescribeTimelineBuckets(JsonElement[] buckets) =>
+        string.Join(
+            "; ",
+            buckets.Select(bucket =>
+                $"{bucket.GetProperty("bucketStartUtc").GetString()} ops={bucket.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture)} source=[{DescribeCounts(bucket.GetProperty("bySource"))}] action=[{DescribeCounts(bucket.GetProperty("byAction"))}] category=[{DescribeCounts(bucket.GetProperty("byCategory"))}] operator=[{DescribeCounts(bucket.GetProperty("byOperator"))}] receipt=[{DescribeCounts(bucket.GetProperty("byReceiptStatus"))}]"));
+
+    private static string DescribeCounts(JsonElement array) =>
+        array.ValueKind == JsonValueKind.Array
+            ? string.Join(
+                ",",
+                array.EnumerateArray().Select(item =>
+                    $"{item.GetProperty("name").GetString()}:{item.GetProperty("count").GetInt32().ToString(CultureInfo.InvariantCulture)}"))
+            : "not-array";
+
+    private static bool OperationMatches(
+        string root,
+        JsonElement operation,
+        string source,
+        string action,
+        string relativeArtifactPath,
+        int? line)
+    {
+        if (operation.GetProperty("source").GetString() != source ||
+            operation.GetProperty("action").GetString() != action ||
+            ReadNullableInt(operation, "line") != line)
+        {
+            return false;
+        }
+
+        var artifactPath = operation.GetProperty("artifactPath").GetString();
+        if (string.IsNullOrWhiteSpace(artifactPath))
+            return false;
+
+        var relative = Path.GetRelativePath(root, artifactPath).Replace('\\', '/');
+        return relativeArtifactPath.EndsWith("/", StringComparison.Ordinal)
+            ? relative.StartsWith(relativeArtifactPath, StringComparison.OrdinalIgnoreCase) &&
+              relative.EndsWith(".json.gz", StringComparison.OrdinalIgnoreCase)
+            : string.Equals(relative, relativeArtifactPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool QueryOutputFormatParityReady(JsonElement query, string markdown, string table)
+    {
+        var totalOperations = query.GetProperty("summary").GetProperty("totalOperations").GetInt32();
+        var issueCount = query.GetProperty("summary").GetProperty("issueCount").GetInt32();
+        var operations = query.GetProperty("operations").EnumerateArray()
+            .Select(QueryOutputProjection.FromJson)
+            .ToArray();
+        if (totalOperations != operations.Length ||
+            !table.Contains($"Operations: {totalOperations.ToString(CultureInfo.InvariantCulture)}; issues={issueCount.ToString(CultureInfo.InvariantCulture)}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Operations: `{totalOperations.ToString(CultureInfo.InvariantCulture)}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Issues: `{issueCount.ToString(CultureInfo.InvariantCulture)}`", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var markdownRows = ParseQueryMarkdownRows(markdown);
+        if (!operations.SequenceEqual(markdownRows))
+            return false;
+
+        var tableRows = ParseQueryTableRows(table, operations.Length);
+        if (!operations.SequenceEqual(tableRows))
+            return false;
+
+        return true;
+    }
+
+    private static bool ValidateOutputFormatParityReady(JsonElement validate, string markdown, string table)
+    {
+        var summary = validate.GetProperty("summary");
+        var valid = validate.GetProperty("valid").GetBoolean().ToString().ToLowerInvariant();
+        var operations = summary.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var errors = summary.GetProperty("errorCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var warnings = summary.GetProperty("warningCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        if (!markdown.Contains($"- Valid: `{valid}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Operations: `{operations}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Errors: `{errors}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Warnings: `{warnings}`", StringComparison.Ordinal) ||
+            !table.Contains($"Valid: {valid}; operations={operations}; errors={errors}; warnings={warnings}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (var check in validate.GetProperty("checks").EnumerateArray())
+        {
+            var status = check.GetProperty("status").GetString() ?? "";
+            var id = check.GetProperty("id").GetString() ?? "";
+            var evidence = check.GetProperty("evidence").GetString() ?? "";
+            if (!markdown.Contains($"| `{status}` | `{id}` | {evidence} |", StringComparison.Ordinal) ||
+                !table.Contains($"{status,-8} {id,-18} {evidence}", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool StatsOutputFormatParityReady(JsonElement stats, string markdown, string table)
+    {
+        var summary = stats.GetProperty("summary");
+        var operations = summary.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var issues = summary.GetProperty("issueCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var missingReceipts = summary.GetProperty("missingReceiptCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var unreadableReceipts = summary.GetProperty("unreadableReceiptCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        if (!markdown.Contains($"- Operations: `{operations}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Issues: `{issues}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Missing receipts: `{missingReceipts}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Unreadable receipts: `{unreadableReceipts}`", StringComparison.Ordinal) ||
+            !table.Contains($"Operations: {operations}; issues={issues}; missingReceipts={missingReceipts}; unreadableReceipts={unreadableReceipts}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return CountsRendered(stats.GetProperty("bySource"), markdown, table) &&
+               CountsRendered(stats.GetProperty("byAction"), markdown, table) &&
+               CountsRendered(stats.GetProperty("byCategory"), markdown, table) &&
+               CountsRendered(stats.GetProperty("byOperator"), markdown, table) &&
+               CountsRendered(stats.GetProperty("byReceiptStatus"), markdown, table) &&
+               CountsRendered(stats.GetProperty("issuesBySource"), markdown, table) &&
+               CountsRendered(stats.GetProperty("issuesBySeverity"), markdown, table);
+    }
+
+    private static bool TimelineOutputFormatParityReady(JsonElement timeline, string markdown, string table)
+    {
+        var query = timeline.GetProperty("query");
+        var summary = timeline.GetProperty("summary");
+        var bucketName = query.GetProperty("bucket").GetString() ?? "";
+        var operations = summary.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var bucketCount = summary.GetProperty("bucketCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var issues = summary.GetProperty("issueCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var unbucketed = summary.GetProperty("unbucketedOperationCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        if (!markdown.Contains($"- Bucket: `{bucketName}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Operations: `{operations}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Buckets: `{bucketCount}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Issues: `{issues}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Unbucketed operations: `{unbucketed}`", StringComparison.Ordinal) ||
+            !table.Contains($"Bucket: {bucketName}; operations={operations}; buckets={bucketCount}; issues={issues}; unbucketed={unbucketed}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (var bucket in timeline.GetProperty("buckets").EnumerateArray())
+        {
+            var start = bucket.GetProperty("bucketStartUtc").GetString() ?? "";
+            var end = bucket.GetProperty("bucketEndUtc").GetString() ?? "";
+            var operationCount = bucket.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+            var bySource = JoinJsonCounts(bucket.GetProperty("bySource"));
+            var byAction = JoinJsonCounts(bucket.GetProperty("byAction"));
+            var byCategory = JoinJsonCounts(bucket.GetProperty("byCategory"));
+            var byOperator = JoinJsonCounts(bucket.GetProperty("byOperator"));
+            var byReceipt = JoinJsonCounts(bucket.GetProperty("byReceiptStatus"));
+            var issueCount = bucket.GetProperty("issueCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+            if (!markdown.Contains($"| {start} | {end} | {operationCount} | {bySource} | {byAction} | {byCategory} | {byOperator} | {byReceipt} | {issueCount} |", StringComparison.Ordinal) ||
+                !table.Contains($"{start}", StringComparison.Ordinal) ||
+                !table.Contains($"operations={operationCount}", StringComparison.Ordinal) ||
+                !table.Contains($"bucketEnd={end}", StringComparison.Ordinal) ||
+                !table.Contains($"sources={bySource}", StringComparison.Ordinal) ||
+                !table.Contains($"actions={byAction}", StringComparison.Ordinal) ||
+                !table.Contains($"categories={byCategory}", StringComparison.Ordinal) ||
+                !table.Contains($"operators={byOperator}", StringComparison.Ordinal) ||
+                !table.Contains($"receipts={byReceipt}", StringComparison.Ordinal) ||
+                !table.Contains($"issues={issueCount}", StringComparison.Ordinal) ||
+                !table.Contains($"issueSeverity={JoinJsonCounts(bucket.GetProperty("issuesBySeverity"))}", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return CountsRendered(timeline.GetProperty("issuesBySeverity"), markdown, table);
+    }
+
+    private static bool WorkflowRegistryOutputFormatParityReady(JsonElement registry, string table, string markdown)
+    {
+        var workflowCount = registry.GetProperty("workflowCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var validWorkflowCount = registry.GetProperty("validWorkflowCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var invalidWorkflowCount = registry.GetProperty("invalidWorkflowCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var mutatingWorkflowCount = registry.GetProperty("mutatingWorkflowCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var dryRunCommandCount = registry.GetProperty("dryRunCommandCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var approvalRequiredStepCount = registry.GetProperty("approvalRequiredStepCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var rollbackSupportedWorkflowCount = registry.GetProperty("rollbackSupportedWorkflowCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var success = registry.GetProperty("success").GetBoolean() ? "yes" : "no";
+        var exists = registry.GetProperty("exists").GetBoolean() ? "yes" : "no";
+
+        if (!table.Contains($"Schema: {registry.GetProperty("schemaVersion").GetString()}", StringComparison.Ordinal) ||
+            !table.Contains($"Workflows: {workflowCount}; valid: {validWorkflowCount}; invalid: {invalidWorkflowCount}; mutating: {mutatingWorkflowCount}; dryRunCommands={dryRunCommandCount}; approvalRequired={approvalRequiredStepCount}; rollbackSupported={rollbackSupportedWorkflowCount}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Schema: `{registry.GetProperty("schemaVersion").GetString()}`", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Exists: {exists}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Success: {success}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Workflows: {workflowCount}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Valid workflows: {validWorkflowCount}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Invalid workflows: {invalidWorkflowCount}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Dry-run commands: {dryRunCommandCount}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Approval-required steps: {approvalRequiredStepCount}", StringComparison.Ordinal) ||
+            !markdown.Contains($"- Rollback-supported workflows: {rollbackSupportedWorkflowCount}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (var workflow in registry.GetProperty("workflows").EnumerateArray())
+        {
+            var name = workflow.GetProperty("name").GetString() ?? "";
+            var status = workflow.GetProperty("canRun").GetBoolean() ? "OK" : "FAIL";
+            var risk = workflow.GetProperty("riskLevel").GetString() ?? "";
+            var stepCount = workflow.GetProperty("stepCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+            var scopeCsv = string.Join(",", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+            var scopeMarkdown = string.Join(", ", workflow.GetProperty("readWriteScope").EnumerateArray().Select(item => item.GetString()));
+            var inputsCsv = string.Join(",", workflow.GetProperty("inputs").EnumerateArray().Select(item => item.GetString()));
+            var inputsMarkdown = string.Join(", ", workflow.GetProperty("inputs").EnumerateArray().Select(item => item.GetString()));
+            var outputsCsv = string.Join(",", workflow.GetProperty("outputs").EnumerateArray().Select(item => item.GetString()));
+            var outputsMarkdown = string.Join(", ", workflow.GetProperty("outputs").EnumerateArray().Select(item => item.GetString()));
+            var dryRunCommands = workflow.GetProperty("dryRunCommands").GetArrayLength().ToString(CultureInfo.InvariantCulture);
+            var approvalCommands = workflow.GetProperty("approvalCommands").GetArrayLength().ToString(CultureInfo.InvariantCulture);
+            var rollback = workflow.GetProperty("rollbackSupport").GetBoolean() ? "yes" : "no";
+            var receiptsCsv = string.Join(",", workflow.GetProperty("receiptSchemas").EnumerateArray().Select(item => item.GetString()));
+            var receiptsMarkdown = string.Join(", ", workflow.GetProperty("receiptSchemas").EnumerateArray().Select(item => item.GetString()));
+            var acceptanceCsv = string.Join(",", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+            var acceptanceMarkdown = string.Join(", ", workflow.GetProperty("acceptanceEvidence").EnumerateArray().Select(item => item.GetString()));
+            var dryRunCommandsTable = workflow.GetProperty("dryRunCommands").EnumerateArray()
+                .Select(item => $"dry-run command: {item.GetString()}")
+                .ToArray();
+            var approvalCommandsTable = workflow.GetProperty("approvalCommands").EnumerateArray()
+                .Select(item => $"approval command: {item.GetString()}")
+                .ToArray();
+            var dryRunCommandsMarkdown = string.Join("<br>", workflow.GetProperty("dryRunCommands").EnumerateArray().Select(item => item.GetString()));
+            var approvalCommandsMarkdown = string.Join("<br>", workflow.GetProperty("approvalCommands").EnumerateArray().Select(item => item.GetString()));
+
+            if (!table.Contains($"{status,-4} {name} risk={risk} steps={stepCount} scope={scopeCsv} rollback={rollback} dryRuns={dryRunCommands} approvals={approvalCommands} receipts={receiptsCsv}", StringComparison.Ordinal) ||
+                !table.Contains($"inputs={inputsCsv} outputs={outputsCsv}", StringComparison.Ordinal) ||
+                !table.Contains($"acceptance evidence={acceptanceCsv}", StringComparison.Ordinal) ||
+                dryRunCommandsTable.Any(command => !table.Contains(command, StringComparison.Ordinal)) ||
+                approvalCommandsTable.Any(command => !table.Contains(command, StringComparison.Ordinal)) ||
+                !markdown.Contains($"| {name} | {status} | `{risk}` | `{scopeMarkdown}` | {inputsMarkdown} | {outputsMarkdown} | {dryRunCommandsMarkdown} | {approvalCommandsMarkdown} | {rollback} | `{receiptsMarkdown}` | {acceptanceMarkdown} |", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool CountsRendered(JsonElement counts, string markdown, string table)
+    {
+        if (counts.ValueKind != JsonValueKind.Array || counts.GetArrayLength() == 0)
+            return true;
+
+        foreach (var count in counts.EnumerateArray())
+        {
+            var name = count.GetProperty("name").GetString() ?? "";
+            var value = count.GetProperty("count").GetInt32().ToString(CultureInfo.InvariantCulture);
+            if (!markdown.Contains($"| {name} | {value} |", StringComparison.Ordinal) ||
+                !table.Contains($"  - {name}: {value}", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string JoinJsonCounts(JsonElement counts)
+    {
+        if (counts.ValueKind != JsonValueKind.Array || counts.GetArrayLength() == 0)
+            return "none";
+
+        return string.Join(", ", counts.EnumerateArray().Select(count =>
+            $"{count.GetProperty("name").GetString()}={count.GetProperty("count").GetInt32().ToString(CultureInfo.InvariantCulture)}"));
+    }
+
+    private static IReadOnlyList<QueryOutputProjection> ParseQueryMarkdownRows(string markdown)
+    {
+        var rows = new List<QueryOutputProjection>();
+        var lines = SplitLines(markdown);
+        var headerIndex = Array.FindIndex(lines, line =>
+            string.Equals(line.Trim(), "| Timestamp | Source | Action | Receipt | Artifact |", StringComparison.Ordinal));
+        if (headerIndex < 0 || headerIndex + 1 >= lines.Length)
+            return rows;
+
+        foreach (var line in lines.Skip(headerIndex + 2))
+        {
+            if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("|", StringComparison.Ordinal))
+                break;
+
+            var cells = SplitMarkdownTableRow(line);
+            if (cells.Length == 5)
+            {
+                rows.Add(new QueryOutputProjection(cells[0], cells[1], cells[2], cells[3], cells[4]));
+            }
+        }
+
+        return rows;
+    }
+
+    private static IReadOnlyList<QueryOutputProjection> ParseQueryTableRows(string table, int expectedCount)
+    {
+        var rows = new List<QueryOutputProjection>();
+        foreach (var line in SplitLines(table).Skip(3).Take(expectedCount))
+        {
+            if (!TryParseQueryTableRow(line, out var row))
+                return Array.Empty<QueryOutputProjection>();
+
+            rows.Add(row);
+        }
+
+        return rows;
+    }
+
+    private static bool TryParseQueryTableRow(string line, out QueryOutputProjection row)
+    {
+        row = new QueryOutputProjection("", "", "", "", "");
+        var columns = line.Split(new[] { ' ' }, 5, StringSplitOptions.RemoveEmptyEntries);
+        if (columns.Length != 5)
+        {
+            return false;
+        }
+
+        row = new QueryOutputProjection(
+            columns[0],
+            columns[1],
+            columns[2],
+            columns[3],
+            columns[4]);
+        return true;
+    }
+
+    private static string[] SplitMarkdownTableRow(string line)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.StartsWith("|", StringComparison.Ordinal))
+            trimmed = trimmed[1..];
+        if (trimmed.EndsWith("|", StringComparison.Ordinal))
+            trimmed = trimmed[..^1];
+
+        var cells = new List<string>();
+        var cell = new StringBuilder();
+        for (var i = 0; i < trimmed.Length; i++)
+        {
+            var current = trimmed[i];
+            if (current == '\\' && i + 1 < trimmed.Length && trimmed[i + 1] == '|')
+            {
+                cell.Append('|');
+                i++;
+                continue;
+            }
+
+            if (current == '|')
+            {
+                cells.Add(cell.ToString().Trim());
+                cell.Clear();
+                continue;
+            }
+
+            cell.Append(current);
+        }
+
+        cells.Add(cell.ToString().Trim());
+        return cells.ToArray();
+    }
+
+    private static string[] SplitLines(string value) =>
+        value.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+    private sealed record QueryOutputProjection(
+        string Timestamp,
+        string Source,
+        string Action,
+        string Receipt,
+        string Artifact)
+    {
+        public static QueryOutputProjection FromJson(JsonElement operation) =>
+            new(
+                ReadString(operation, "timestamp"),
+                ReadString(operation, "source"),
+                ReadString(operation, "action"),
+                ReadString(operation, "receiptStatus"),
+                ReadString(operation, "artifactPath"));
+
+        private static string ReadString(JsonElement element, string propertyName)
+        {
+            var value = element.GetProperty(propertyName).GetString();
+            return string.IsNullOrWhiteSpace(value) ? "n/a" : value;
+        }
+    }
+
+    private static int? ReadNullableInt(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number
+            ? property.GetInt32()
+            : null;
+    }
+
+    private static bool JsonArrayCountContains(JsonElement array, string value) =>
+        array.ValueKind == JsonValueKind.Array &&
+        array.EnumerateArray().Any(item =>
+            string.Equals(item.GetProperty("name").GetString(), value, StringComparison.OrdinalIgnoreCase) &&
+            item.GetProperty("count").GetInt32() > 0);
+
+    private static SortedDictionary<string, string> SnapshotLocalFiles(string root)
+    {
+        var snapshot = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        if (!Directory.Exists(root))
+            return snapshot;
+
+        foreach (var path in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+            snapshot[$"{relative}/"] = "<dir>";
+        }
+
+        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+            snapshot[relative] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
+        }
+
+        return snapshot;
+    }
+
+    private static bool JsonArrayContains(JsonElement array, string value) =>
+        array.ValueKind == JsonValueKind.Array &&
+        array.EnumerateArray().Any(item =>
+            string.Equals(item.GetString(), value, StringComparison.OrdinalIgnoreCase));
+
+    private static string? FindSourceSmokeRoot()
+    {
+        var starts = new[]
+        {
+            Directory.GetCurrentDirectory(),
+            AppContext.BaseDirectory
+        }.Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var start in starts)
+        {
+            var dir = new DirectoryInfo(Path.GetFullPath(start));
+            while (dir != null)
+            {
+                var smokeRoot = Path.Combine(dir.FullName, "docs", "smoke", "v5.0");
+                if (HasV5SmokeDisclosureArtifacts(smokeRoot))
+                    return smokeRoot;
+                dir = dir.Parent;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? GetProjectDocsRootForReleaseClaims(string projectDirectory)
+    {
+        var docsRoot = Path.Combine(projectDirectory, "docs");
+        return HasSourceDocsArtifacts(docsRoot)
+            ? docsRoot
+            : null;
+    }
+
+    private static string? FindSourceDocsRoot()
+    {
+        var starts = new[]
+        {
+            Directory.GetCurrentDirectory(),
+            AppContext.BaseDirectory
+        }.Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var start in starts)
+        {
+            var dir = new DirectoryInfo(Path.GetFullPath(start));
+            while (dir != null)
+            {
+                var docsRoot = Path.Combine(dir.FullName, "docs");
+                if (HasSourceDocsArtifacts(docsRoot))
+                    return docsRoot;
+                dir = dir.Parent;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool HasSourceDocsArtifacts(string docsRoot)
+    {
+        if (!Directory.Exists(docsRoot))
+            return false;
+
+        return File.Exists(Path.Combine(docsRoot, "roadmap-v5-v6.md")) ||
+               File.Exists(Path.Combine(docsRoot, "release-checklist.md")) ||
+               HasV5SmokeDisclosureArtifacts(Path.Combine(docsRoot, "smoke", "v5.0"));
+    }
+
+    private static bool HasV5SmokeDisclosureArtifacts(string smokeRoot)
+    {
+        if (!Directory.Exists(smokeRoot))
+            return false;
+
+        return File.Exists(Path.Combine(smokeRoot, "gap-report.md")) ||
+               Directory.EnumerateFiles(smokeRoot, "revit-*-issue-closure.md", SearchOption.TopDirectoryOnly).Any();
+    }
+
+    private static string TryReadText(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : "";
+        }
+        catch (IOException)
+        {
+            return "";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return "";
+        }
+    }
+
+    private static string? ValidateV60OfficeRolloutStatus(string path)
+    {
+        if (!File.Exists(path))
+            return "docs/smoke/v6.0/office-rollout-status.json is missing; v6.0 office rollout completion status is not machine-readable.";
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            var root = document.RootElement;
+            var minimumCount = ReadJsonInt(root, "minimumOfficePilotCount");
+            var completedCount = ReadJsonInt(root, "completedOfficePilotCount");
+            var completionClaim = ReadJsonBool(root, "officeRolloutCompletion");
+            var supportClaim = ReadJsonBool(root, "productionSupportClaim");
+            var completedPilotsComplete = completedCount.HasValue &&
+                CompletedOfficePilotEvidenceComplete(root, completedCount.Value);
+            var requiredEvidenceComplete =
+                JsonPathBoolEquals(root, "requiredEvidence.doctor", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.status", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.workbench", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.release", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.ledgerQuery", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.ledgerValidate", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.ledgerStatsAnalyticsSnapshot", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.ledgerTimelineAnalyticsSnapshot", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.journalVerify", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.rollbackResult", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.userReview", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.bimManagerSignoff", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.projectCopyOwnerSignoff", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.supportTicketReview", true) &&
+                JsonPathBoolEquals(root, "requiredEvidence.multiUserRolloutPostmortem", true);
+
+            if (!JsonPathStringEquals(root, "schemaVersion", "v6-office-rollout-status.v1") ||
+                minimumCount.GetValueOrDefault() < 2 ||
+                completedCount.GetValueOrDefault(-1) < 0 ||
+                !JsonArrayLengthEquals(root, "completedPilotIds", completedCount.GetValueOrDefault()) ||
+                !JsonArrayLengthEquals(root, "completedPilots", completedCount.GetValueOrDefault()))
+            {
+                return "docs/smoke/v6.0/office-rollout-status.json must use v6-office-rollout-status.v1, minimumOfficePilotCount>=2, completedOfficePilotCount>=0, and matching completedPilotIds/completedPilots.";
+            }
+
+            if (!requiredEvidenceComplete)
+                return "docs/smoke/v6.0/office-rollout-status.json must require all command, review, signoff, support-review, and postmortem evidence fields.";
+
+            if (!completedPilotsComplete)
+                return "docs/smoke/v6.0/office-rollout-status.json completedPilots entries must include complete per-pilot evidence flags.";
+
+            var belowMinimum = completedCount.GetValueOrDefault() < minimumCount.GetValueOrDefault();
+            var reachedMinimum = completedCount.GetValueOrDefault() >= minimumCount.GetValueOrDefault();
+            if (!((belowMinimum && completionClaim is false && supportClaim is false) ||
+                  (reachedMinimum && completionClaim.HasValue && supportClaim.HasValue && completedPilotsComplete)))
+            {
+                return "docs/smoke/v6.0/office-rollout-status.json must keep completion/support false below the pilot threshold, or provide a consistent threshold-reached status with complete per-pilot evidence.";
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return $"docs/smoke/v6.0/office-rollout-status.json is not readable valid JSON: {ex.Message}";
+        }
+    }
+
+    private static bool TryGetJsonPath(JsonElement element, string path, out JsonElement property)
+    {
+        var current = element;
+        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (current.ValueKind != JsonValueKind.Object ||
+                !current.TryGetProperty(segment, out current))
+            {
+                property = default;
+                return false;
+            }
+        }
+
+        property = current;
+        return true;
+    }
+
+    private static bool JsonPathStringEquals(JsonElement element, string path, string expected) =>
+        TryGetJsonPath(element, path, out var property) &&
+        property.ValueKind == JsonValueKind.String &&
+        string.Equals(property.GetString(), expected, StringComparison.Ordinal);
+
+    private static bool JsonPathBoolEquals(JsonElement element, string path, bool expected) =>
+        TryGetJsonPath(element, path, out var property) &&
+        (expected ? property.ValueKind == JsonValueKind.True : property.ValueKind == JsonValueKind.False);
+
+    private static bool JsonPathStringNonEmpty(JsonElement element, string path) =>
+        TryGetJsonPath(element, path, out var property) &&
+        property.ValueKind == JsonValueKind.String &&
+        !string.IsNullOrWhiteSpace(property.GetString());
+
+    private static bool CompletedOfficePilotEvidenceComplete(JsonElement status, int expectedCount)
+    {
+        if (!TryReadUniqueStringArray(status, "completedPilotIds", expectedCount, out var completedPilotIds))
+            return false;
+
+        if (!TryGetJsonPath(status, "completedPilots", out var completedPilots) ||
+            completedPilots.ValueKind != JsonValueKind.Array ||
+            completedPilots.GetArrayLength() != expectedCount)
+        {
+            return false;
+        }
+
+        var evidencePilotIds = new HashSet<string>(StringComparer.Ordinal);
+        return completedPilots.EnumerateArray().All(pilot =>
+            TryReadNonEmptyJsonString(pilot, "pilotId", out var pilotId) &&
+            completedPilotIds.Contains(pilotId) &&
+            evidencePilotIds.Add(pilotId) &&
+            JsonPathStringNonEmpty(pilot, "evidencePacketPath") &&
+            JsonPathBoolEquals(pilot, "doctor", true) &&
+            JsonPathBoolEquals(pilot, "status", true) &&
+            JsonPathBoolEquals(pilot, "workbench", true) &&
+            JsonPathBoolEquals(pilot, "release", true) &&
+            JsonPathBoolEquals(pilot, "ledgerQuery", true) &&
+            JsonPathBoolEquals(pilot, "ledgerValidate", true) &&
+            JsonPathBoolEquals(pilot, "ledgerStatsAnalyticsSnapshot", true) &&
+            JsonPathBoolEquals(pilot, "ledgerTimelineAnalyticsSnapshot", true) &&
+            JsonPathBoolEquals(pilot, "journalVerify", true) &&
+            JsonPathBoolEquals(pilot, "rollbackResult", true) &&
+            JsonPathBoolEquals(pilot, "userReview", true) &&
+            JsonPathBoolEquals(pilot, "bimManagerSignoff", true) &&
+            JsonPathBoolEquals(pilot, "projectCopyOwnerSignoff", true) &&
+            JsonPathBoolEquals(pilot, "supportTicketReview", true) &&
+            JsonPathBoolEquals(pilot, "multiUserRolloutPostmortem", true));
+    }
+
+    private static bool TryReadUniqueStringArray(
+        JsonElement element,
+        string path,
+        int expectedCount,
+        out HashSet<string> values)
+    {
+        values = new HashSet<string>(StringComparer.Ordinal);
+        if (!TryGetJsonPath(element, path, out var property) ||
+            property.ValueKind != JsonValueKind.Array ||
+            property.GetArrayLength() != expectedCount)
+        {
+            return false;
+        }
+
+        foreach (var item in property.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(item.GetString()) ||
+                !values.Add(item.GetString()!))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryReadNonEmptyJsonString(JsonElement element, string path, out string value)
+    {
+        value = "";
+        if (!TryGetJsonPath(element, path, out var property) ||
+            property.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = property.GetString() ?? "";
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
+    private static bool? ReadJsonBool(JsonElement element, string path) =>
+        TryGetJsonPath(element, path, out var property)
+            ? property.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                _ => null,
+            }
+            : null;
+
+    private static int? ReadJsonInt(JsonElement element, string path) =>
+        TryGetJsonPath(element, path, out var property) &&
+        property.ValueKind == JsonValueKind.Number &&
+        property.TryGetInt32(out var value)
+            ? value
+            : null;
+
+    private static bool JsonArrayLengthEquals(JsonElement element, string path, int expected) =>
+        TryGetJsonPath(element, path, out var property) &&
+        property.ValueKind == JsonValueKind.Array &&
+        property.GetArrayLength() == expected;
+
+    private static bool GapReportDisclosesMissingSmoke(string gapReportText, string year) =>
+        gapReportText
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Any(line =>
+                line.Contains($"Revit {year}", StringComparison.OrdinalIgnoreCase) &&
+                line.Contains("not live verified", StringComparison.OrdinalIgnoreCase));
 
     private static IReadOnlyList<string> GetBuiltInWorkflowTemplateIssues(IReadOnlyList<string> requiredTemplates)
     {
@@ -2992,6 +8229,599 @@ public static class WorkbenchCommand
         return issues;
     }
 
+    private static TraceabilityRuntimeCheck BuildTraceabilityRuntimeCheck()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-trace-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.SetCurrentDirectory(root);
+
+            var scheduleExportReady = RunScheduleExportTraceCheck(root);
+            var scheduleDiffReady = RunScheduleDiffTraceCheck(root);
+            var deliveryReady = RunDeliveryBundleTraceCheck(root, out var bundleDryRunClean);
+            var issuePackageReady = RunIssuePackageTraceCheck(root, out var issueDryRunClean);
+            var dryRunClean = bundleDryRunClean && issueDryRunClean;
+            var evidence = dryRunClean
+                ? "runtime self-check produced non-empty SHA256 evidence and kept package dry-runs no-write"
+                : "runtime self-check detected dry-run package writes";
+
+            return new TraceabilityRuntimeCheck(
+                scheduleExportReady,
+                scheduleDiffReady,
+                deliveryReady,
+                issuePackageReady,
+                evidence);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            return new TraceabilityRuntimeCheck(false, false, false, false, $"runtime self-check failed: {ex.Message}");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            TryDeleteDirectory(root);
+        }
+    }
+
+    private static bool RunScheduleExportTraceCheck(string root)
+    {
+        var schedulesDirectory = Path.Combine(root, ".revitcli", "schedules");
+        Directory.CreateDirectory(schedulesDirectory);
+        File.WriteAllText(Path.Combine(schedulesDirectory, "issue.yml"), """
+schemaVersion: schedule-spec.v1
+set: issue
+schedules:
+  - name: Door Schedule
+    category: Doors
+    fields: [Mark, Level]
+    keyColumns: [Mark]
+""");
+        using var client = new RevitClient(new HttpClient(new TraceabilityScheduleHandler())
+        {
+            BaseAddress = new Uri("http://localhost:17839")
+        });
+        var outputDirectory = Path.Combine(root, "exports", "schedules", "current");
+        var manifestPath = Path.Combine(outputDirectory, "manifest.json");
+        var output = new StringWriter();
+        var exitCode = SchedulesCommand.ExecuteBatchExportAsync(
+                client,
+                "issue",
+                outputDirectory,
+                "csv",
+                manifestPath,
+                "json",
+                output)
+            .GetAwaiter()
+            .GetResult();
+        if (exitCode != 0 || !File.Exists(manifestPath))
+            return false;
+
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        return document.RootElement.TryGetProperty("profile", out var profile) &&
+               profile.GetString() == "issue" &&
+               document.RootElement.TryGetProperty("command", out var command) &&
+               command.GetString()?.Contains("schedules batch-export", StringComparison.OrdinalIgnoreCase) == true &&
+               document.RootElement.TryGetProperty("manifestPath", out var manifest) &&
+               !string.IsNullOrWhiteSpace(manifest.GetString()) &&
+               document.RootElement.TryGetProperty("modelPath", out var modelPath) &&
+               !string.IsNullOrWhiteSpace(modelPath.GetString()) &&
+               document.RootElement.TryGetProperty("documentName", out var documentName) &&
+               !string.IsNullOrWhiteSpace(documentName.GetString()) &&
+               document.RootElement.TryGetProperty("documentVersion", out var documentVersion) &&
+               !string.IsNullOrWhiteSpace(documentVersion.GetString()) &&
+               document.RootElement.TryGetProperty("entries", out var entries) &&
+               entries.ValueKind == JsonValueKind.Array &&
+               entries.EnumerateArray().Any(entry =>
+                   entry.GetProperty("success").GetBoolean() &&
+                   entry.GetProperty("bytes").GetInt64() > 0 &&
+                   HasSha256(entry, "sha256"));
+    }
+
+    private static bool RunScheduleDiffTraceCheck(string root)
+    {
+        var baseline = Path.Combine(root, "exports", "schedules", "baseline");
+        var current = Path.Combine(root, "exports", "schedules", "diff-current");
+        Directory.CreateDirectory(baseline);
+        Directory.CreateDirectory(current);
+        File.WriteAllText(Path.Combine(baseline, "Door Schedule.csv"), "Mark,Level\nD-001,L1\n");
+        File.WriteAllText(Path.Combine(current, "Door Schedule.csv"), "Mark,Level\nD-001,L2\n");
+        var output = new StringWriter();
+        var exitCode = SchedulesCommand.ExecuteCompareAsync(
+                baseline,
+                current,
+                "Mark",
+                "json",
+                output)
+            .GetAwaiter()
+            .GetResult();
+        if (exitCode != 2)
+            return false;
+
+        using var document = JsonDocument.Parse(output.ToString());
+        var file = document.RootElement.GetProperty("files").EnumerateArray().FirstOrDefault();
+        return file.ValueKind == JsonValueKind.Object &&
+               file.GetProperty("beforeBytes").GetInt64() > 0 &&
+               file.GetProperty("afterBytes").GetInt64() > 0 &&
+               HasSha256(file, "beforeSha256") &&
+               HasSha256(file, "afterSha256");
+    }
+
+    private static bool RunDeliveryBundleTraceCheck(string root, out bool dryRunClean)
+    {
+        WriteTraceabilityDeliveryEvidence(root);
+        var bundlePath = Path.Combine(root, "deliverables", "issue-package.zip");
+        var output = new StringWriter();
+        var exitCode = DeliverablesCommand.ExecuteBundleAsync(
+                root,
+                bundlePath,
+                dryRun: true,
+                force: false,
+                outputFormat: "json",
+                output)
+            .GetAwaiter()
+            .GetResult();
+        dryRunClean = !File.Exists(bundlePath) && !File.Exists(bundlePath + ".receipt.json");
+        if (exitCode != 0 || !dryRunClean)
+            return false;
+
+        using var document = JsonDocument.Parse(output.ToString());
+        return document.RootElement.TryGetProperty("files", out var files) &&
+               document.RootElement.TryGetProperty("command", out var command) &&
+               command.GetString()?.Contains("deliverables bundle", StringComparison.OrdinalIgnoreCase) == true &&
+               files.ValueKind == JsonValueKind.Array &&
+               files.EnumerateArray().Any() &&
+               files.EnumerateArray().All(file =>
+                   file.GetProperty("bytes").GetInt64() > 0 &&
+                   HasSha256(file, "sha256"));
+    }
+
+    private static bool RunIssuePackageTraceCheck(string root, out bool dryRunClean)
+    {
+        WriteTraceabilityDeliveryEvidence(root);
+        var profilePath = Path.Combine(root, ".revitcli", "issue.yml");
+        Directory.CreateDirectory(Path.GetDirectoryName(profilePath)!);
+        File.WriteAllText(profilePath, "schemaVersion: issue-profile.v1\n");
+        var bundlePath = Path.Combine(root, "deliverables", "issue-package.zip");
+        var output = new StringWriter();
+        var exitCode = IssueCommand.ExecutePackageAsync(
+                profilePath,
+                bundlePath,
+                dryRun: true,
+                signJournal: false,
+                includeReceipts: true,
+                outputFormat: "json",
+                output)
+            .GetAwaiter()
+            .GetResult();
+        using var document = JsonDocument.Parse(output.ToString());
+        var receiptPath = document.RootElement.GetProperty("receiptPath").GetString();
+        dryRunClean = !File.Exists(bundlePath) &&
+                      (string.IsNullOrWhiteSpace(receiptPath) || !File.Exists(receiptPath));
+        if (exitCode != 0 || !dryRunClean)
+            return false;
+
+        return document.RootElement.TryGetProperty("files", out var files) &&
+               files.ValueKind == JsonValueKind.Array &&
+               files.EnumerateArray().Any() &&
+               files.EnumerateArray().All(file =>
+                   file.GetProperty("bytes").GetInt64() > 0 &&
+                   HasSha256(file, "sha256"));
+    }
+
+    private static void WriteTraceabilityDeliveryEvidence(string root)
+    {
+        var outputDirectory = Path.Combine(root, "deliverables", "pdf");
+        Directory.CreateDirectory(outputDirectory);
+        File.WriteAllText(Path.Combine(outputDirectory, "A101.pdf"), "pdf-bytes");
+
+        var receiptPath = Path.Combine(root, ".revitcli", "receipts", "export.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(receiptPath)!);
+        File.WriteAllText(receiptPath, JsonSerializer.Serialize(new
+        {
+            schemaVersion = "export-receipt.v1",
+            action = "export",
+            success = true,
+            dryRun = false,
+            outputDir = outputDirectory,
+            timestamp = "2026-05-22T00:00:00Z"
+        }));
+
+        var manifestPath = Path.Combine(root, ".revitcli", "deliveries", "manifest.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(new
+        {
+            schemaVersion = "delivery-manifest.v1",
+            kind = "export",
+            success = true,
+            dryRun = false,
+            format = "pdf",
+            receiptPath,
+            timestamp = "2026-05-22T00:00:00Z"
+        }) + Environment.NewLine);
+    }
+
+    private static bool HasSha256(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var property) &&
+        property.ValueKind == JsonValueKind.String &&
+        property.GetString() is { Length: 64 } value &&
+        value.All(Uri.IsHexDigit);
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    private sealed record TraceabilityRuntimeCheck(
+        bool ScheduleExport,
+        bool ScheduleDiff,
+        bool DeliverablesBundle,
+        bool IssuePackage,
+        string Evidence);
+
+    private static FaultInjectionRuntimeCheck BuildFaultInjectionRuntimeCheck()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-faults-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.SetCurrentDirectory(root);
+
+            var missingProfileReady = RunMissingProfileFaultCheck(root);
+            var scheduleFaultsReady = RunScheduleFaultInjectionCheck(root);
+            var deliveryFaultsReady = RunDeliveryManifestFaultCheck(root);
+            var bundlePathFaultReady = RunDeliverablesBundlePathFaultCheck(root);
+            var packageCleanupReady = RunIssuePackageWriteFaultCheck(root);
+            var evidence = "runtime self-check exercised missing profile, missing schedule export, stale schedule compare paths, missing manifest fields, missing receipt, tampered receipt, malformed manifest/receipt, bundle path write failure, and package write cleanup";
+            return new FaultInjectionRuntimeCheck(missingProfileReady, scheduleFaultsReady, deliveryFaultsReady, bundlePathFaultReady, packageCleanupReady, evidence);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            return new FaultInjectionRuntimeCheck(false, false, false, false, false, $"runtime self-check failed: {ex.Message}");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            TryDeleteDirectory(root);
+        }
+    }
+
+    private static bool RunMissingProfileFaultCheck(string root)
+    {
+        var output = new StringWriter();
+        var exitCode = IssueCommand.ExecutePreflightAsync(
+                Path.Combine(root, ".revitcli", "missing-issue.yml"),
+                "json",
+                "error",
+                output)
+            .GetAwaiter()
+            .GetResult();
+        return exitCode == 1 &&
+               output.ToString().Contains("Issue profile not found", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool RunScheduleFaultInjectionCheck(string root)
+    {
+        var scheduleRoot = Path.Combine(root, "schedule-faults");
+        var scheduleDir = Path.Combine(scheduleRoot, ".revitcli", "schedules");
+        Directory.CreateDirectory(scheduleDir);
+        File.WriteAllText(Path.Combine(scheduleDir, "issue.yml"), """
+schemaVersion: schedule-spec.v1
+set: issue
+schedules:
+  - name: Missing Schedule
+    category: Doors
+    fields: [Mark]
+""");
+
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(scheduleRoot);
+            using var client = new RevitClient(new HttpClient(new FaultInjectionScheduleHandler())
+            {
+                BaseAddress = new Uri("http://localhost:17839")
+            });
+            var exportOutput = new StringWriter();
+            var manifestPath = Path.Combine(scheduleRoot, "exports", "manifest.json");
+            var exportExit = SchedulesCommand.ExecuteBatchExportAsync(
+                    client,
+                    "issue",
+                    Path.Combine(scheduleRoot, "exports"),
+                    "csv",
+                    manifestPath,
+                    "json",
+                    exportOutput)
+                .GetAwaiter()
+                .GetResult();
+            var exportReady = exportExit == 2 &&
+                              JsonContainsIssueCode(File.ReadAllText(manifestPath), "export-failed");
+
+            var compareOutput = new StringWriter();
+            var compareExit = SchedulesCommand.ExecuteCompareAsync(
+                    Path.Combine(scheduleRoot, "missing-baseline"),
+                    Path.Combine(scheduleRoot, "missing-current"),
+                    "Mark",
+                    "table",
+                    compareOutput)
+                .GetAwaiter()
+                .GetResult();
+            var compareReady = compareExit == 1 &&
+                               compareOutput.ToString().Contains("Baseline directory not found", StringComparison.OrdinalIgnoreCase);
+
+            return exportReady && compareReady;
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+        }
+    }
+
+    private static bool RunDeliveryManifestFaultCheck(string root)
+    {
+        var malformedManifestRoot = Path.Combine(root, "malformed-manifest");
+        var manifestDir = Path.Combine(malformedManifestRoot, ".revitcli", "deliveries");
+        Directory.CreateDirectory(manifestDir);
+        File.WriteAllText(Path.Combine(manifestDir, "manifest.jsonl"), "{bad-json" + Environment.NewLine);
+        var manifestOutput = new StringWriter();
+        var manifestExit = DeliverablesCommand.ExecuteVerifyAsync(malformedManifestRoot, "json", manifestOutput)
+            .GetAwaiter()
+            .GetResult();
+        var manifestReady = manifestExit == 1 && JsonContainsIssueCode(manifestOutput.ToString(), "manifest-json-invalid");
+
+        var malformedReceiptRoot = Path.Combine(root, "malformed-receipt");
+        var receiptDir = Path.Combine(malformedReceiptRoot, ".revitcli", "receipts");
+        Directory.CreateDirectory(receiptDir);
+        var receiptPath = Path.Combine(receiptDir, "bad.json");
+        File.WriteAllText(receiptPath, "{bad-json");
+        var receiptManifestDir = Path.Combine(malformedReceiptRoot, ".revitcli", "deliveries");
+        Directory.CreateDirectory(receiptManifestDir);
+        File.WriteAllText(Path.Combine(receiptManifestDir, "manifest.jsonl"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = "delivery-manifest.v1",
+            kind = "export",
+            success = true,
+            dryRun = false,
+            receiptPath
+        }) + Environment.NewLine);
+        var receiptOutput = new StringWriter();
+        var receiptExit = DeliverablesCommand.ExecuteVerifyAsync(malformedReceiptRoot, "json", receiptOutput)
+            .GetAwaiter()
+            .GetResult();
+        var receiptReady = receiptExit == 1 && JsonContainsIssueCode(receiptOutput.ToString(), "receipt-json-invalid");
+
+        var missingReceiptRoot = Path.Combine(root, "missing-receipt");
+        var missingReceiptManifestDir = Path.Combine(missingReceiptRoot, ".revitcli", "deliveries");
+        Directory.CreateDirectory(missingReceiptManifestDir);
+        File.WriteAllText(Path.Combine(missingReceiptManifestDir, "manifest.jsonl"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = "delivery-manifest.v1",
+            kind = "export",
+            success = true,
+            dryRun = false,
+            receiptPath = Path.Combine(missingReceiptRoot, ".revitcli", "receipts", "missing.json")
+        }) + Environment.NewLine);
+        var missingReceiptOutput = new StringWriter();
+        var missingReceiptExit = DeliverablesCommand.ExecuteVerifyAsync(missingReceiptRoot, "json", missingReceiptOutput)
+            .GetAwaiter()
+            .GetResult();
+        var missingReceiptReady = missingReceiptExit == 1 &&
+                                  JsonContainsIssueCode(missingReceiptOutput.ToString(), "receipt-missing");
+
+        var missingFieldsRoot = Path.Combine(root, "missing-manifest-fields");
+        var missingFieldsManifestDir = Path.Combine(missingFieldsRoot, ".revitcli", "deliveries");
+        Directory.CreateDirectory(missingFieldsManifestDir);
+        File.WriteAllText(Path.Combine(missingFieldsManifestDir, "manifest.jsonl"), JsonSerializer.Serialize(new
+        {
+            success = true,
+            dryRun = false
+        }) + Environment.NewLine);
+        var missingFieldsOutput = new StringWriter();
+        var missingFieldsExit = DeliverablesCommand.ExecuteVerifyAsync(missingFieldsRoot, "json", missingFieldsOutput)
+            .GetAwaiter()
+            .GetResult();
+        var missingFieldsReady = missingFieldsExit == 1 &&
+                                 JsonContainsIssueCode(missingFieldsOutput.ToString(), "manifest-schema-invalid") &&
+                                 JsonContainsIssueCode(missingFieldsOutput.ToString(), "manifest-kind-invalid") &&
+                                 JsonContainsIssueCode(missingFieldsOutput.ToString(), "receipt-path-missing");
+
+        var tamperedReceiptRoot = Path.Combine(root, "tampered-receipt");
+        var tamperedReceiptDir = Path.Combine(tamperedReceiptRoot, ".revitcli", "receipts");
+        Directory.CreateDirectory(tamperedReceiptDir);
+        var tamperedReceiptPath = Path.Combine(tamperedReceiptDir, "receipt.json");
+        File.WriteAllText(tamperedReceiptPath, JsonSerializer.Serialize(new
+        {
+            schemaVersion = "publish-receipt.v1",
+            action = "publish",
+            success = true,
+            dryRun = false
+        }));
+        var tamperedManifestDir = Path.Combine(tamperedReceiptRoot, ".revitcli", "deliveries");
+        Directory.CreateDirectory(tamperedManifestDir);
+        File.WriteAllText(Path.Combine(tamperedManifestDir, "manifest.jsonl"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = "delivery-manifest.v1",
+            kind = "export",
+            success = true,
+            dryRun = false,
+            receiptPath = tamperedReceiptPath
+        }) + Environment.NewLine);
+        var tamperedOutput = new StringWriter();
+        var tamperedExit = DeliverablesCommand.ExecuteVerifyAsync(tamperedReceiptRoot, "json", tamperedOutput)
+            .GetAwaiter()
+            .GetResult();
+        var tamperedReady = tamperedExit == 1 &&
+                            JsonContainsIssueCode(tamperedOutput.ToString(), "receipt-schema-invalid") &&
+                            JsonContainsIssueCode(tamperedOutput.ToString(), "receipt-action-mismatch");
+
+        return manifestReady && receiptReady && missingReceiptReady && missingFieldsReady && tamperedReady;
+    }
+
+    private static bool RunDeliverablesBundlePathFaultCheck(string root)
+    {
+        var bundleRoot = Path.Combine(root, "bundle-path-write");
+        Directory.CreateDirectory(bundleRoot);
+        WriteTraceabilityDeliveryEvidence(bundleRoot);
+        var parentAsFile = Path.Combine(bundleRoot, "review-as-file");
+        File.WriteAllText(parentAsFile, "not a directory");
+        var bundlePath = Path.Combine(parentAsFile, "package.zip");
+        var output = new StringWriter();
+        var exitCode = DeliverablesCommand.ExecuteBundleAsync(
+                bundleRoot,
+                bundlePath,
+                dryRun: false,
+                force: false,
+                outputFormat: "json",
+                output)
+            .GetAwaiter()
+            .GetResult();
+        if (exitCode != 1)
+            return false;
+
+        using var document = JsonDocument.Parse(output.ToString());
+        var rootElement = document.RootElement;
+        return !rootElement.GetProperty("bundleWritten").GetBoolean() &&
+               !rootElement.GetProperty("receiptWritten").GetBoolean() &&
+               JsonContainsIssueCode(output.ToString(), "bundle-write-failed");
+    }
+
+    private static bool RunIssuePackageWriteFaultCheck(string root)
+    {
+        var packageRoot = Path.Combine(root, "package-write");
+        Directory.CreateDirectory(packageRoot);
+        WriteTraceabilityDeliveryEvidence(packageRoot);
+        var profilePath = Path.Combine(packageRoot, ".revitcli", "issue.yml");
+        Directory.CreateDirectory(Path.GetDirectoryName(profilePath)!);
+        File.WriteAllText(profilePath, "schemaVersion: issue-profile.v1\n");
+        var bundlePath = Path.Combine(packageRoot, "deliverables", "issue-package.zip");
+        Directory.CreateDirectory(bundlePath);
+        var output = new StringWriter();
+        var exitCode = IssueCommand.ExecutePackageAsync(
+                profilePath,
+                bundlePath,
+                dryRun: false,
+                signJournal: false,
+                includeReceipts: true,
+                outputFormat: "json",
+                output)
+            .GetAwaiter()
+            .GetResult();
+        if (exitCode != 1)
+            return false;
+
+        using var document = JsonDocument.Parse(output.ToString());
+        var rootElement = document.RootElement;
+        return !rootElement.GetProperty("bundleWritten").GetBoolean() &&
+               !rootElement.GetProperty("receiptWritten").GetBoolean() &&
+               !File.Exists(rootElement.GetProperty("receiptPath").GetString()!) &&
+               JsonContainsIssueCode(output.ToString(), "bundle-write-failed");
+    }
+
+    private static bool JsonContainsIssueCode(string json, string code)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.TryGetProperty("issues", out var issues) &&
+               issues.ValueKind == JsonValueKind.Array &&
+               issues.EnumerateArray().Any(issue =>
+                   issue.TryGetProperty("code", out var issueCode) &&
+                   string.Equals(issueCode.GetString(), code, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record FaultInjectionRuntimeCheck(
+        bool MissingProfile,
+        bool ScheduleFaults,
+        bool DeliveryFaults,
+        bool BundlePathFault,
+        bool PackageCleanup,
+        string Evidence);
+
+    private sealed class FaultInjectionScheduleHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            object payload;
+            if (request.Method == HttpMethod.Get && request.RequestUri?.AbsolutePath == "/api/schedules")
+            {
+                payload = ApiResponse<ScheduleInfo[]>.Ok(Array.Empty<ScheduleInfo>());
+            }
+            else if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/api/schedules/export")
+            {
+                payload = ApiResponse<ScheduleData>.Fail("schedule not found");
+            }
+            else
+            {
+                payload = ApiResponse<object>.Fail($"unexpected self-check request: {request.Method} {request.RequestUri?.AbsolutePath}");
+            }
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class TraceabilityScheduleHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            object payload;
+            if (request.Method == HttpMethod.Get && request.RequestUri?.AbsolutePath == "/api/schedules")
+            {
+                payload = ApiResponse<ScheduleInfo[]>.Ok(new[]
+                {
+                    new ScheduleInfo
+                    {
+                        Id = 100,
+                        Name = "Door Schedule",
+                        Category = "Doors",
+                        FieldCount = 2,
+                        RowCount = 1
+                    }
+                });
+            }
+            else if (request.Method == HttpMethod.Get && request.RequestUri?.AbsolutePath == "/api/status")
+            {
+                payload = ApiResponse<StatusInfo>.Ok(new StatusInfo
+                {
+                    RevitVersion = "2026",
+                    DocumentName = "Traceability.rvt",
+                    DocumentPath = "D:/models/Traceability.rvt"
+                });
+            }
+            else if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/api/schedules/export")
+            {
+                payload = ApiResponse<ScheduleData>.Ok(new ScheduleData
+                {
+                    Columns = new List<string> { "Mark", "Level" },
+                    Rows = new List<Dictionary<string, string>>
+                    {
+                        new() { ["Mark"] = "D-001", ["Level"] = "L1" }
+                    },
+                    TotalRows = 1
+                });
+            }
+            else
+            {
+                payload = ApiResponse<object>.Fail($"unexpected self-check request: {request.Method} {request.RequestUri?.AbsolutePath}");
+            }
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        }
+    }
+
     private static bool IsLegacyMcpHiddenAndDeprecated(out string evidence)
     {
         using var client = new RevitClient();
@@ -3059,8 +8889,12 @@ public static class WorkbenchCommand
         }
     }
 
-    private static WorkbenchCheckResult Check(string id, bool passed, string evidence) =>
-        new(id, passed ? "pass" : "fail", evidence);
+    private static WorkbenchCheckResult Check(
+        string id,
+        bool passed,
+        string evidence,
+        WorkbenchRuntimeEvidence? runtimeEvidence = null) =>
+        new(id, passed ? "pass" : "fail", evidence, runtimeEvidence);
 
     private static async Task WriteTableAsync(TextWriter output, WorkbenchContract contract)
     {
@@ -3340,22 +9174,22 @@ public static class WorkbenchCommand
         }
         else
         {
-            await output.WriteLineAsync("Phase             Artifact            Status   Command");
-            await output.WriteLineAsync("----------------  ------------------  -------  ----------------------------------------------------------------");
+            await output.WriteLineAsync("Phase             Artifact            Status   Working directory                    Command");
+            await output.WriteLineAsync("----------------  ------------------  -------  -----------------------------------  ----------------------------------------------------------------");
             foreach (var action in handoff.ReadinessActions)
             {
                 await output.WriteLineAsync(
-                    $"{TrimCell(action.Phase, 16),-16}  {TrimCell(action.Artifact, 18),-18}  {action.Status,-7}  {TrimCell(action.CommandLine, 64)}");
+                    $"{TrimCell(action.Phase, 16),-16}  {TrimCell(action.Artifact, 18),-18}  {action.Status,-7}  {TrimCell(action.WorkingDirectory, 35),-35}  {TrimCell(action.CommandLine, 64)}");
             }
         }
 
         await output.WriteLineAsync();
-        await output.WriteLineAsync("Phase             Command");
-        await output.WriteLineAsync("----------------  ----------------------------------------------------------------");
+        await output.WriteLineAsync("Phase             Working directory                    Command");
+        await output.WriteLineAsync("----------------  -----------------------------------  ----------------------------------------------------------------");
         foreach (var command in handoff.Commands)
         {
             await output.WriteLineAsync(
-                $"{TrimCell(command.Phase, 16),-16}  {TrimCell(command.CommandLine, 64)}");
+                $"{TrimCell(command.Phase, 16),-16}  {TrimCell(command.WorkingDirectory, 35),-35}  {TrimCell(command.CommandLine, 64)}");
         }
 
         await output.WriteLineAsync();
@@ -3405,12 +9239,12 @@ public static class WorkbenchCommand
         await output.WriteLineAsync();
         await output.WriteLineAsync("## Commands");
         await output.WriteLineAsync();
-        await output.WriteLineAsync("| Phase | Command | Purpose |");
-        await output.WriteLineAsync("|---|---|---|");
+        await output.WriteLineAsync("| Phase | Command | Working directory | Purpose |");
+        await output.WriteLineAsync("|---|---|---|---|");
         foreach (var command in handoff.Commands)
         {
             await output.WriteLineAsync(
-                $"| `{command.Phase}` | `{command.CommandLine}` | {command.Purpose} |");
+                $"| `{command.Phase}` | `{command.CommandLine}` | `{command.WorkingDirectory}` | {command.Purpose} |");
         }
 
         await output.WriteLineAsync();
@@ -3490,6 +9324,7 @@ public static class WorkbenchCommand
                 "workbench project",
                 "workbench handoff"
             },
+            "release" => new[] { "release verify", "release verify --strict" },
             "check" => new[] { "check" },
             "score" => new[] { "score", "score --history" },
             "sheets" => new[] { "sheets verify", "sheets issue-meta", "sheets renumber", "sheets index init", "sheets index show" },
@@ -3512,6 +9347,7 @@ public static class WorkbenchCommand
                 "workflow validate",
                 "workflow simulate",
                 "workflow review",
+                "workflow registry",
                 "workflow run",
                 "workflow suggest",
                 "workflow examples",
@@ -3524,6 +9360,7 @@ public static class WorkbenchCommand
             "history" => new[] { "history capture", "history list", "history prune", "history diff", "history trend" },
             "journal" => new[] { "journal show", "journal stats", "journal review", "journal sign", "journal verify" },
             "report" => new[] { "report weekly", "report knowledge" },
+            "ledger" => new[] { "ledger append", "ledger replay", "ledger query", "ledger validate", "ledger stats", "ledger timeline" },
             _ => new[] { name }
         };
 
@@ -3566,21 +9403,20 @@ public static class WorkbenchCommand
     private static string ProjectDirOption(string projectDirectory)
     {
         var currentDirectory = Path.GetFullPath(Directory.GetCurrentDirectory());
-        return string.Equals(projectDirectory, currentDirectory, StringComparison.OrdinalIgnoreCase)
-            ? string.Empty
-            : $" --dir {QuoteArgument(projectDirectory)}";
+        if (string.Equals(projectDirectory, currentDirectory, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        // A single commandLine must stay safe in both PowerShell and POSIX shells.
+        // Paths containing apostrophes cannot be represented portably; use workingDirectory instead.
+        if (projectDirectory.Contains('\''))
+            return string.Empty;
+
+        return $" --dir {QuoteArgument(projectDirectory)}";
     }
 
     private static string QuoteArgument(string value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return "\"\"";
-        }
-
-        return value.Any(char.IsWhiteSpace)
-            ? "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\""
-            : value;
+        return $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
     }
 
     public sealed record WorkbenchContract(
@@ -3754,6 +9590,7 @@ public static class WorkbenchCommand
     public sealed record WorkbenchHandoffCommand(
         string Phase,
         string CommandLine,
+        string WorkingDirectory,
         string Purpose);
 
     public sealed record WorkbenchCallablePath(
@@ -3798,5 +9635,32 @@ public static class WorkbenchCommand
     public sealed record WorkbenchCheckResult(
         string Id,
         string Status,
-        string Evidence);
+        string Evidence,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        WorkbenchRuntimeEvidence? RuntimeEvidence = null);
+
+    public sealed record WorkbenchRuntimeEvidence(
+        bool CommandSpine,
+        bool CommandSpineOutputParity,
+        bool CommandSpineNoWrites,
+        bool WorkflowRegistry,
+        bool LedgerAppend,
+        bool LedgerQueryValidate,
+        bool LedgerStats,
+        bool LedgerTimeline,
+        bool LedgerReplay,
+        bool StandardsValidate,
+        bool IssuePreflight,
+        bool IssuePackageDryRun,
+        bool DeliverablesVerify,
+        bool JournalVerify,
+        bool HistoryList,
+        bool HistoryListCountConsistency,
+        bool HistoryListRowOrder,
+        bool RollbackDryRun,
+        bool RollbackDryRunPreview,
+        bool RollbackNoMutatingSetRequest,
+        WorkbenchHistoryListEvidence HistoryListEvidence,
+        WorkbenchRollbackDryRunEvidence RollbackDryRunEvidence,
+        bool AllRuntimeChecksPass);
 }

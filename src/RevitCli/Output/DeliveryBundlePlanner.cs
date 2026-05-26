@@ -93,6 +93,7 @@ public static class DeliveryBundlePlanner
             }
 
             report.BundleWritten = true;
+            report.BundleHash = ComputeSha256Hex(report.BundlePath);
             report.WrittenAt = DateTime.UtcNow.ToString("o");
 
             var receipt = DeliveryBundleReceipt.From(report);
@@ -104,17 +105,25 @@ public static class DeliveryBundlePlanner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
+            var failureCode = report.BundleWritten && !report.ReceiptWritten
+                ? "bundle-receipt-write-failed"
+                : "bundle-write-failed";
             report.Issues.Add(new DeliveryManifestIssue(
                 null,
                 "error",
-                "bundle-write-failed",
+                failureCode,
                 $"failed to write delivery bundle: {ex.Message}"));
 
             try
             {
                 if (File.Exists(report.BundlePath))
                     File.Delete(report.BundlePath);
+                if (File.Exists(report.ReceiptPath))
+                    File.Delete(report.ReceiptPath);
                 report.BundleWritten = false;
+                report.BundleHash = null;
+                report.WrittenAt = null;
+                report.ReceiptWritten = false;
             }
             catch (Exception cleanupEx) when (cleanupEx is IOException or UnauthorizedAccessException)
             {
@@ -249,6 +258,7 @@ public static class DeliveryBundlePlanner
             SourcePath = fullPath,
             ArchivePath = archivePath,
             Bytes = info.Length,
+            Sha256 = ComputeSha256Hex(fullPath),
             LineNumber = lineNumber
         });
     }
@@ -349,6 +359,12 @@ public static class DeliveryBundlePlanner
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(path));
         return Convert.ToHexString(bytes, 0, 6).ToLowerInvariant();
     }
+
+    private static string ComputeSha256Hex(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
 }
 
 public sealed class DeliveryBundleReport
@@ -389,8 +405,14 @@ public sealed class DeliveryBundleReport
     [JsonPropertyName("bundlePath")]
     public string BundlePath { get; set; } = "";
 
+    [JsonPropertyName("bundleHash")]
+    public string? BundleHash { get; set; }
+
     [JsonPropertyName("receiptPath")]
     public string ReceiptPath { get; set; } = "";
+
+    [JsonPropertyName("command")]
+    public string Command { get; set; } = "";
 
     [JsonPropertyName("bundleWritten")]
     public bool BundleWritten { get; set; }
@@ -437,6 +459,9 @@ public sealed class DeliveryBundleFile
     [JsonPropertyName("bytes")]
     public long Bytes { get; set; }
 
+    [JsonPropertyName("sha256")]
+    public string Sha256 { get; set; } = "";
+
     [JsonPropertyName("lineNumber")]
     public int? LineNumber { get; set; }
 }
@@ -449,7 +474,9 @@ public sealed record DeliveryBundleReceipt(
     [property: JsonPropertyName("projectDirectory")] string ProjectDirectory,
     [property: JsonPropertyName("manifestPath")] string ManifestPath,
     [property: JsonPropertyName("bundlePath")] string BundlePath,
+    [property: JsonPropertyName("bundleHash")] string? BundleHash,
     [property: JsonPropertyName("receiptPath")] string ReceiptPath,
+    [property: JsonPropertyName("command")] string Command,
     [property: JsonPropertyName("entryCount")] int EntryCount,
     [property: JsonPropertyName("fileCount")] int FileCount,
     [property: JsonPropertyName("receiptCount")] int ReceiptCount,
@@ -470,7 +497,9 @@ public sealed record DeliveryBundleReceipt(
             report.ProjectDirectory,
             report.ManifestPath,
             report.BundlePath,
+            report.BundleHash,
             report.ReceiptPath,
+            report.Command,
             report.EntryCount,
             report.FileCount,
             report.ReceiptCount,

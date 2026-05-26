@@ -17,19 +17,26 @@ public static class WorkflowValidator
             ["ci"] = Values("doctor"),
             ["config"] = Values("show", "set"),
             ["dashboard"] = Values("serve", "build"),
-            ["deliverables"] = Values("list", "stats", "verify", "bundle"),
+            ["deliverables"] = Values("list", "stats", "verify", "plan", "bundle"),
             ["family"] = Values("ls", "validate", "purge", "export"),
             ["history"] = Values("init", "capture", "list", "prune", "diff", "trend"),
             ["inspect"] = Values("categories", "params", "schedules", "sheets", "workflows", "plans"),
             ["issue"] = Values("preflight", "diff", "package"),
             ["journal"] = Values("show", "stats", "review", "sign", "verify"),
+            ["ledger"] = Values("append", "replay", "query", "validate", "stats", "timeline"),
+            ["links"] = Values("audit", "repair"),
+            ["marks"] = Values("assign", "verify"),
+            ["model"] = Values("map-check", "map-fix"),
             ["plan"] = Values("show", "apply"),
             ["profile"] = Values("validate", "show", "diff", "install", "simulate"),
             ["release"] = Values("verify"),
             ["report"] = Values("weekly", "knowledge"),
+            ["rooms"] = Values("renumber"),
             ["schedule"] = Values("list", "export", "create"),
             ["sheets"] = Values("verify", "issue-meta", "renumber", "index"),
             ["standards"] = Values("install", "validate"),
+            ["schedules"] = Values("ensure", "batch-export", "compare"),
+            ["views"] = Values("audit", "template-apply", "clone-set"),
             ["workbench"] = Values(
                 "contract",
                 "verify",
@@ -41,7 +48,7 @@ public static class WorkflowValidator
                 "safeguards",
                 "project",
                 "handoff"),
-            ["workflow"] = Values("init", "validate", "simulate", "review", "run", "suggest", "examples", "receipts"),
+            ["workflow"] = Values("init", "validate", "simulate", "review", "registry", "run", "suggest", "examples", "receipts"),
         };
 
     private static readonly IReadOnlyDictionary<string, HashSet<string>> KnownNestedSubcommands =
@@ -168,7 +175,7 @@ public static class WorkflowValidator
                 $"{prefix}.run",
                 "workflow steps may only call existing RevitCli commands and must start with 'revitcli'."));
         }
-        else if (WorkflowCommandLine.ContainsShellOperator(words))
+        else if (WorkflowCommandLine.ContainsShellOperator(step.Run))
         {
             issues.Add(new WorkflowValidationIssue(
                 WorkflowValidationSeverity.Error,
@@ -304,6 +311,17 @@ public static class WorkflowValidator
     private static HashSet<string> Values(params string[] values) =>
         new(values, StringComparer.OrdinalIgnoreCase);
 
+    internal static bool CommandLooksWriteCapable(string run)
+    {
+        if (string.IsNullOrWhiteSpace(run))
+            return false;
+
+        if (!TryTokenize(run, "run", new List<WorkflowValidationIssue>(), out var words))
+            return false;
+
+        return StartsWithRevitCli(words) && LooksWritable(words);
+    }
+
     private static bool TryTokenize(
         string run,
         string path,
@@ -336,17 +354,22 @@ public static class WorkflowValidator
         var command = words[1];
         if (IsAny(command, "set", "import", "export", "publish", "fix", "rollback"))
         {
-            return !words.Contains("--dry-run", StringComparer.OrdinalIgnoreCase);
+            return true;
         }
 
-        if (IsAny(command, "schedule") && words.Count >= 3 && IsAny(words[2], "create"))
+        if (IsAny(command, "config") && words.Count >= 3 && IsAny(words[2], "set"))
         {
             return true;
         }
 
-        if (IsAny(command, "history") && words.Count >= 3 && IsAny(words[2], "capture", "prune"))
+        if (IsAny(command, "schedule") && words.Count >= 3 && IsAny(words[2], "export", "create"))
         {
-            return !words.Contains("--dry-run", StringComparer.OrdinalIgnoreCase);
+            return true;
+        }
+
+        if (IsAny(command, "history") && words.Count >= 3 && IsAny(words[2], "init", "capture", "prune"))
+        {
+            return true;
         }
 
         if (IsAny(command, "journal") && words.Count >= 3 && IsAny(words[2], "sign"))
@@ -354,19 +377,42 @@ public static class WorkflowValidator
             return true;
         }
 
+        if (IsAny(command, "ledger") && words.Count >= 3 && IsAny(words[2], "append"))
+        {
+            return true;
+        }
+
+        if (IsAny(command, "ledger") &&
+            words.Count >= 3 &&
+            IsAny(words[2], "replay") &&
+            words.Contains("--apply", StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         if (IsAny(command, "plan") && words.Count >= 3 && IsAny(words[2], "apply"))
         {
-            return !words.Contains("--dry-run", StringComparer.OrdinalIgnoreCase);
+            return true;
         }
 
         if (IsAny(command, "deliverables") && words.Count >= 3 && IsAny(words[2], "bundle"))
         {
-            return !words.Contains("--dry-run", StringComparer.OrdinalIgnoreCase);
+            return true;
+        }
+
+        if (IsAny(command, "profile") && words.Count >= 3 && IsAny(words[2], "install"))
+        {
+            return true;
         }
 
         if (IsAny(command, "standards") && words.Count >= 3 && IsAny(words[2], "install"))
         {
-            return !words.Contains("--dry-run", StringComparer.OrdinalIgnoreCase);
+            return true;
+        }
+
+        if (IsAny(command, "sheets") && words.Count >= 3 && IsAny(words[2], "issue-meta", "renumber"))
+        {
+            return true;
         }
 
         if (IsAny(command, "sheets") && words.Count >= 4 && IsAny(words[2], "index") && IsAny(words[3], "init"))
@@ -374,10 +420,44 @@ public static class WorkflowValidator
             return true;
         }
 
+        if (IsAny(command, "rooms") && words.Count >= 3 && IsAny(words[2], "renumber"))
+        {
+            return true;
+        }
+
+        if (IsAny(command, "marks") && words.Count >= 3 && IsAny(words[2], "assign"))
+        {
+            return true;
+        }
+
+        if (IsAny(command, "schedules") && words.Count >= 3 && IsAny(words[2], "ensure", "batch-export"))
+        {
+            return true;
+        }
+
+        if (IsAny(command, "views") && words.Count >= 3 && IsAny(words[2], "template-apply", "clone-set"))
+        {
+            return true;
+        }
+
+        if (IsAny(command, "links") && words.Count >= 3 && IsAny(words[2], "repair"))
+        {
+            return true;
+        }
+
+        if (IsAny(command, "model") && words.Count >= 3 && IsAny(words[2], "map-fix"))
+        {
+            return true;
+        }
+
         if (IsAny(command, "family") && words.Count >= 3 && IsAny(words[2], "purge"))
         {
-            return words.Contains("--apply", StringComparer.OrdinalIgnoreCase) &&
-                !words.Contains("--dry-run", StringComparer.OrdinalIgnoreCase);
+            return true;
+        }
+
+        if (IsAny(command, "family") && words.Count >= 3 && IsAny(words[2], "export"))
+        {
+            return true;
         }
 
         if (IsAny(command, "workflow") && words.Count >= 3 && IsAny(words[2], "init"))
@@ -387,7 +467,7 @@ public static class WorkflowValidator
 
         if (IsAny(command, "workflow") && words.Count >= 3 && IsAny(words[2], "run"))
         {
-            return !words.Contains("--dry-run", StringComparer.OrdinalIgnoreCase);
+            return true;
         }
 
         return false;
@@ -414,21 +494,31 @@ public static class WorkflowValidator
                 "snapshot",
                 "diff",
                 "ci",
-                "workflow",
-                "deliverables",
                 "report",
                 "release",
-                "sheets",
-                "standards"))
+                "ledger"))
         {
             return true;
         }
 
-        if (IsAny(command, "check", "config", "family", "profile") ||
-            (IsAny(command, "schedule") && words.Count >= 3 && IsAny(words[2], "list", "export")) ||
+        if (IsAny(command, "check") ||
+            (IsAny(command, "config") && words.Count >= 3 && IsAny(words[2], "show")) ||
+            (IsAny(command, "deliverables") && words.Count >= 3 && IsAny(words[2], "list", "stats", "verify", "plan")) ||
+            (IsAny(command, "family") && words.Count >= 3 && IsAny(words[2], "ls", "validate")) ||
+            (IsAny(command, "profile") && words.Count >= 3 && IsAny(words[2], "validate", "show", "diff", "simulate")) ||
+            (IsAny(command, "schedule") && words.Count >= 3 && IsAny(words[2], "list")) ||
             (IsAny(command, "history") && words.Count >= 3 && IsAny(words[2], "list", "diff", "trend")) ||
             (IsAny(command, "journal") && words.Count >= 3 && IsAny(words[2], "show", "stats", "review", "verify")) ||
-            (IsAny(command, "plan") && words.Count >= 3 && IsAny(words[2], "show")))
+            (IsAny(command, "links") && words.Count >= 3 && IsAny(words[2], "audit")) ||
+            (IsAny(command, "marks") && words.Count >= 3 && IsAny(words[2], "verify")) ||
+            (IsAny(command, "model") && words.Count >= 3 && IsAny(words[2], "map-check")) ||
+            (IsAny(command, "plan") && words.Count >= 3 && IsAny(words[2], "show")) ||
+            (IsAny(command, "schedules") && words.Count >= 3 && IsAny(words[2], "compare")) ||
+            (IsAny(command, "sheets") && words.Count >= 3 && IsAny(words[2], "verify")) ||
+            (IsAny(command, "sheets") && words.Count >= 4 && IsAny(words[2], "index") && IsAny(words[3], "show")) ||
+            (IsAny(command, "standards") && words.Count >= 3 && IsAny(words[2], "validate")) ||
+            (IsAny(command, "views") && words.Count >= 3 && IsAny(words[2], "audit")) ||
+            (IsAny(command, "workflow") && words.Count >= 3 && IsAny(words[2], "validate", "simulate", "review", "registry", "suggest", "examples", "receipts")))
         {
             return true;
         }

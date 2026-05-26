@@ -3,7 +3,7 @@
 This is the internal acceptance gate for the Revit 2026 vertical slice:
 
 ```text
-doctor -> status -> query --id -> query <category> --filter -> set --dry-run -> set -> query confirm -> restore
+doctor -> status -> query --id -> query <category> --filter -> set --dry-run -> set --yes -> query confirm -> restore
 ```
 
 For releases that touch the v1.5 auto-fix path (`fix` / `rollback` commands or
@@ -42,7 +42,7 @@ Record these before running the smoke:
 | Element ID | Stable element ID returned by `query --id` |
 | Filter | Must match exactly one element and must not depend on the parameter being written |
 | Safe parameter | Writable text parameter, preferably `Comments` or another project-safe text parameter |
-| Old value | Non-null value so `set` can restore it exactly |
+| Old value | Existing parameter property; empty strings are restorable with `--clear-value`, but null values are rejected |
 | Test value | Non-empty unique value, for example `revitcli-smoke-20260426` |
 
 Do not run the apply step if the dry-run preview does not show the target element ID and the exact old-value to new-value transition.
@@ -148,9 +148,137 @@ Expected result:
 
 - Exit code `0`.
 - `applied` is `true`.
-- The script writes the test value, confirms it with `query --id`, restores the old value with `set --id`, then confirms the restore with `query --id`.
+- The script writes the test value with `set --yes`, confirms it with `query --id`, restores the old value with `set --id ... --yes`, then confirms the restore with `query --id`.
 
 If the apply step fails after the write attempt, the script still tries to restore the original value. Treat any restore failure as blocking.
+
+## v5.0 Issue Closure Addendum
+
+Run this only when validating the v5.0 issue-closure workbench. This addendum is
+separate from the legacy `set` apply/restore smoke above. Older v4 workbench
+or `set` evidence does not prove v5.0 issue closure.
+
+### Controlled Model Contract
+
+Use a disposable copy of a real project or a dedicated smoke RVT. Do not run the
+apply leg against a central production model.
+
+Record these extra fields:
+
+| Field | Requirement |
+|---|---|
+| Issue profile | `issue-profile.v1` YAML with local paths and explicit mutation plans |
+| Sheet selector | Must resolve to known disposable sheets before apply |
+| Issue code/date | Values chosen only for the smoke run |
+| Sheet plan path | Under `.revitcli/plans/`, committed only as sanitized evidence if needed |
+| Receipt path | `<sheet-plan>.receipt.json` after approved apply |
+| Package path | Under `.revitcli/smoke/` or another disposable output directory |
+| Journal state | `journal verify` must pass after rollback |
+
+### Dry-Run Issue Closure
+
+This proves the issue-closure contract without writing the model:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-revit2026.ps1 `
+  -RevitInstallDir "D:\revit2026\Revit 2026" `
+  -ElementId 12345 `
+  -Category walls `
+  -Filter "Mark = W-01" `
+  -Param Comments `
+  -Value "revitcli-smoke-20260522" `
+  -V4Workbench `
+  -V4ProjectDir . `
+  -V5IssueClosure `
+  -V5ProjectDir . `
+  -V5IssueProfile .\profiles\v5-issue.yml `
+  -V5IssueBundlePath .\.revitcli\smoke\v5-issue-closure.zip `
+  -V5SheetSelector all `
+  -V5IssueCode R03 `
+  -V5IssueDate 2026-05-22 `
+  -V5SheetParamMap .\.revitcli\smoke\sheet-issue-param-map.yml `
+  -OutputPath ".\revitcli-smoke-2026-v5-dry-run.json"
+```
+
+Expected v5 dry-run evidence:
+
+- `workbench verify --contract workbench-contract.v2` returns `success=true`.
+- `sheets issue-meta --dry-run` writes a reviewed sheet issue plan.
+- `-V5SheetParamMap` can map `issueCode` / `issueDate` to local or localized
+  sheet/titleblock parameters when the default English candidates are not
+  present.
+- `plan show` can render that plan as JSON.
+- `plan apply --dry-run` previews the plan without writing.
+- `issue preflight` returns `issue-preflight-report.v1`.
+- `issue package --dry-run --sign-journal --include-receipts` returns
+  `issue-package-receipt.v1` and does not write the bundle.
+- The report contains `v5IssueClosure=true`, `v5IssueProfile`,
+  `v5IssueBundlePath`, and `v5SheetIssuePlanPath`.
+- The script refuses to continue if CLI, installed add-in, and live add-in
+  versions do not match.
+- `-V5WriteIssuePackage` is not part of the dry-run lane and fails unless an
+  explicit disposable `-V5IssueBundlePath` is provided.
+
+### Apply, Receipt, Rollback
+
+Add `-V5ApplySheetIssue` only after the dry-run plan has been reviewed and the
+model copy is disposable. Add `-V5WriteIssuePackage` only with a disposable
+non-existing bundle path when approved package zip/receipt writing is also part
+of the smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-revit2026.ps1 `
+  -RevitInstallDir "D:\revit2026\Revit 2026" `
+  -ElementId 12345 `
+  -Category walls `
+  -Filter "Mark = W-01" `
+  -Param Comments `
+  -Value "revitcli-smoke-20260522" `
+  -V5IssueClosure `
+  -V5ProjectDir . `
+  -V5IssueProfile .\profiles\v5-issue.yml `
+  -V5IssueBundlePath .\.revitcli\smoke\v5-issue-closure-2026.zip `
+  -V5SheetSelector all `
+  -V5IssueCode R03 `
+  -V5IssueDate 2026-05-22 `
+  -V5SheetParamMap .\.revitcli\smoke\sheet-issue-param-map.yml `
+  -V5ApplySheetIssue `
+  -V5WriteIssuePackage `
+  -OutputPath ".\revitcli-smoke-2026-v5-apply-rollback.json"
+```
+
+Expected apply evidence:
+
+- `issue preflight` ran before any `plan apply --yes`.
+- `plan apply --yes` creates `<sheet-plan>.receipt.json`.
+- `rollback <receipt> --dry-run` reports a safe apply command or explains
+  conflicts/errors.
+- `rollback <receipt> --yes` restores the sheet issue metadata.
+- `journal sign --dir <project>` creates the local journal signature.
+- `journal verify` passes after rollback.
+- `issue package` without `--dry-run` writes the disposable bundle and package
+  receipt when `-V5WriteIssuePackage` is set.
+- The report includes all apply, rollback, package, and journal command output.
+
+### Fault Injection
+
+Before claiming v5.0 production readiness, capture at least these failure cases
+on the controlled model or adjacent disposable files:
+
+- Missing issue profile: script fails before any sheet issue apply.
+- Read-only package directory or permission-denied output path: package dry-run
+  remains safe, approved package write reports the path failure.
+- Stale plan old values: `plan apply --yes` refuses to write when the live
+  sheet value no longer matches the plan baseline.
+- Tampered receipt or plan hash mismatch: rollback refuses the artifact.
+- Live add-in mismatch: the script blocks when CLI, installed add-in, and live
+  add-in versions differ.
+- Rollback conflict: rollback dry-run withholds the safe apply command until the
+  conflict is resolved.
+
+Write live evidence to `docs/smoke/v5.0/revit-2026-issue-closure.md`. Until
+that file exists, keep `docs/smoke/v5.0/gap-report.md` as the source of truth
+and describe Revit 2026 v5.0 issue closure as not live verified.
 
 ## Evidence Packet
 

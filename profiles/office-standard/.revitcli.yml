@@ -1,0 +1,49 @@
+version: 1
+
+defaults:
+  outputDir: ./deliverables
+  planMaxChanges: 500
+  highImpactChanges: 100
+
+checks:
+  issue:
+    failOn: error
+    auditRules:
+      - rule: room-bounds
+      - rule: unplaced-rooms
+      - rule: duplicate-room-numbers
+      - rule: views-not-on-sheets
+      - rule: sheets-missing-info
+      - rule: imported-dwg
+      - rule: in-place-families
+    requiredParameters:
+      - category: rooms
+        parameter: Number
+        requireNonEmpty: true
+        severity: error
+      - category: rooms
+        parameter: Name
+        requireNonEmpty: true
+        severity: error
+      - category: doors
+        parameter: Mark
+        requireNonEmpty: true
+        severity: error
+
+schedules:
+  doors:
+    category: doors
+    fields: [Mark, Level, Fire Rating]
+    name: Door Schedule
+
+exports:
+  issue-pdf:
+    format: pdf
+    sheets: [all]
+    outputDir: ./deliverables/pdf
+
+publish:
+  issue:
+    precheck: issue
+    presets:
+      - issue-pdf

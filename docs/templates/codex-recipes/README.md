@@ -8,8 +8,10 @@ non-dry-run write/export command.
 
 | Recipe | Use When |
 |---|---|
+| [issue-day.md](issue-day.md) | Run v5 issue closure with preflight, diff, package dry-run, approved apply/rollback, and package traceability |
 | [pre-issue.md](pre-issue.md) | Check whether a model is ready for issue without writing first |
 | [standards-bootstrap.md](standards-bootstrap.md) | Install or validate local office standards |
+| [team-pilot.md](team-pilot.md) | Prepare local pilot evidence for BIM managers and IT, including the v6.0 office rollout evidence packet, without SaaS, MCP, dashboard-central, or built-in LLM runtime |
 | [weekly-review.md](weekly-review.md) | Prepare a weekly history/diff/journal summary |
 | [parameter-change-plan.md](parameter-change-plan.md) | Plan a risky parameter update without applying it |
 | [publish-failure.md](publish-failure.md) | Diagnose a failed publish using journal and check outputs |

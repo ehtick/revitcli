@@ -3,6 +3,7 @@ using RevitCli.Commands;
 
 namespace RevitCli.Tests.Commands;
 
+[Collection("Sequential")]
 public sealed class WorkbenchCommandTests
 {
     [Fact]
@@ -45,6 +46,10 @@ public sealed class WorkbenchCommandTests
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench project") &&
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "workbench handoff"));
         Assert.Contains(commands, command =>
+            command.GetProperty("name").GetString() == "release" &&
+            command.GetProperty("supportsJson").GetBoolean() &&
+            command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "release verify --strict"));
+        Assert.Contains(commands, command =>
             command.GetProperty("name").GetString() == "inspect" &&
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "inspect plans"));
         Assert.Contains(commands, command =>
@@ -60,6 +65,24 @@ public sealed class WorkbenchCommandTests
             command.GetProperty("supportsMarkdown").GetBoolean() &&
             command.GetProperty("recommendedFirstCommand").GetString() == "revitcli score --history 30d --output json" &&
             command.GetProperty("commandPaths").EnumerateArray().Any(path => path.GetString() == "score --history"));
+        var ledger = commands.Single(command => command.GetProperty("name").GetString() == "ledger");
+        Assert.Equal("local-write", ledger.GetProperty("risk").GetString());
+        Assert.Contains(
+            ledger.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "ledger append");
+        Assert.Contains(
+            ledger.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "ledger query");
+        Assert.Contains(
+            ledger.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "ledger validate");
+        Assert.Contains(
+            ledger.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "ledger stats");
+        Assert.Contains(
+            ledger.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "ledger timeline");
+        Assert.Contains("operations.jsonl", ledger.GetProperty("receipt").GetString()!);
         var schedule = commands.Single(command => command.GetProperty("name").GetString() == "schedule");
         Assert.Equal("mixed", schedule.GetProperty("risk").GetString());
         Assert.Contains(
@@ -172,7 +195,7 @@ public sealed class WorkbenchCommandTests
         Assert.Contains("Schema: `workbench-contract.v1`", text);
         Assert.Contains("| Command | Risk | JSON | Markdown | Dry-run | Receipt | First command |", text);
         Assert.Contains("| `deliverables` | local-write | yes | yes | available for bundles | delivery-bundle-receipt.v1 sidecars |", text);
-        Assert.Contains("`revitcli workflow review .revitcli/workflows/pre-issue.yml --output json`", text);
+        Assert.Contains("`revitcli workflow registry --output json`", text);
         Assert.Contains("## Callable Command Paths", text);
         Assert.Contains("- `revitcli workbench verify`", text);
         Assert.Contains("- `revitcli workbench receipts`", text);
@@ -213,7 +236,7 @@ public sealed class WorkbenchCommandTests
     {
         var output = new StringWriter();
 
-        var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(output, "json");
+        var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(output, "json", FindRepositoryRoot());
 
         Assert.Equal(0, exitCode);
         using var document = JsonDocument.Parse(output.ToString());
@@ -284,7 +307,14 @@ public sealed class WorkbenchCommandTests
             check.GetProperty("status").GetString() == "pass");
         Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "schedule-export-traceable" &&
-            check.GetProperty("status").GetString() == "pass");
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("SHA256", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("profile", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("model/document identity", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "schedule-diff-traceable" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("before/after", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "schedule-ensure-rollback" &&
             check.GetProperty("status").GetString() == "pass");
@@ -314,13 +344,64 @@ public sealed class WorkbenchCommandTests
             check.GetProperty("status").GetString() == "pass");
         Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "issuePackageTraceability" &&
-            check.GetProperty("status").GetString() == "pass");
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("file hashes", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v5FaultInjectionCoverage" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("missing profiles", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("missing receipts", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("tampered receipts", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v5RealSmokeDisclosure" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("not-live-verified", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("read-only dry-run", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v5RcBoundaryDisclosure" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("claimed live Revit years", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("experimental", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v51SheetReleasePilotGate" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("production pilot gated", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("100/300/1000", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v52SchedulePackagePilotGate" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("schedule/package closure", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("live smoke gaps", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v53NumberingControlledApplyPilotGate" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("reserved/hold", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("live Revit smoke gaps", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v54StandardsRuntimePackGate" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("standards runtime pack", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("standards install dry-run", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("populated-target final file-tree snapshot evidence unchanged", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("sheet map", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("numbering rule", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "v55ViewCoordinationHygieneGate" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("audit-first", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("no coordinate moves", StringComparison.OrdinalIgnoreCase) &&
+            check.GetProperty("evidence").GetString()!.Contains("worksharing gaps", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "dashboardOptional" &&
             check.GetProperty("status").GetString() == "pass");
         Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "sheet-receipt-rollback-shape" &&
             check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("rollback actions", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(checks, check =>
+            check.GetProperty("id").GetString() == "numbering-receipt-rollback-shape" &&
+            check.GetProperty("status").GetString() == "pass" &&
+            check.GetProperty("evidence").GetString()!.Contains("rule provenance", StringComparison.OrdinalIgnoreCase) &&
             check.GetProperty("evidence").GetString()!.Contains("rollback actions", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(checks, check =>
             check.GetProperty("id").GetString() == "project-inventory-surface" &&
@@ -383,7 +464,7 @@ public sealed class WorkbenchCommandTests
         var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
             output,
             "json",
-            projectDirectory: null,
+            projectDirectory: FindRepositoryRoot(),
             contractSchema: "workbench-contract.v2");
 
         Assert.Equal(0, exitCode);
@@ -396,6 +477,1555 @@ public sealed class WorkbenchCommandTests
             root.GetProperty("checks").EnumerateArray(),
             check => check.GetProperty("id").GetString() == "issuePackageTraceability" &&
                 check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "schedule-diff-traceable" &&
+                check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "v5FaultInjectionCoverage" &&
+                check.GetProperty("status").GetString() == "pass");
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "v5RealSmokeDisclosure" &&
+                check.GetProperty("status").GetString() == "pass" &&
+                check.GetProperty("evidence").GetString()!.Contains("not-live-verified", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("read-only dry-run", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "v5RcBoundaryDisclosure" &&
+                check.GetProperty("status").GetString() == "pass" &&
+                check.GetProperty("evidence").GetString()!.Contains("strict release gate", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "v54StandardsRuntimePackGate" &&
+                check.GetProperty("status").GetString() == "pass" &&
+                check.GetProperty("evidence").GetString()!.Contains("office-standard", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("approved install", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "v55ViewCoordinationHygieneGate" &&
+                check.GetProperty("status").GetString() == "pass" &&
+                check.GetProperty("evidence").GetString()!.Contains("writable probe", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "v56TeamPilotPackGate" &&
+                check.GetProperty("status").GetString() == "pass" &&
+                check.GetProperty("evidence").GetString()!.Contains("receipt retention", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("without SaaS", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            root.GetProperty("checks").EnumerateArray(),
+            check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                check.GetProperty("status").GetString() == "pass" &&
+                check.GetProperty("evidence").GetString()!.Contains("deterministic receipts", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("workflow registry runtime emits workflow-registry.v1", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("JSON/table/Markdown output semantic parity", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("final file-tree snapshot evidence", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("event-level no-write evidence", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("journal verify", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("history list JSON/table outputs", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("journal verify JSON/table validity/root-hash parity", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("history-list.v1 JSON count consistency and table row-order parity", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("table summary and Markdown detail parity for supported command-spine paths", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("rollback dry-run", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("history-list.v1 execution", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("rollback safe preview execution", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("rollback dry-run request enforcement", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("event-level no-write evidence", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("ledger query/validate runtime emits ledger-query.v1 and ledger-validate.v1", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("deterministic timestamp/source/path/line ordering", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("JSON/table/Markdown output semantic parity", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("source readability", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("artifact link", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("query invalid-timestamp filtering, final file-tree snapshot evidence, and event-level no-write evidence", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("ledger stats runtime emits ledger-stats.v1", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("exact counters operationCount=3 issueCount=3 errorIssueCount=3 unreadableReceiptCount=2", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("exact source/action/category/operator/receipt-status/issue-source/issue-severity sets", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("malformed journal, delivery, and workflow artifacts, final file-tree snapshot evidence, and event-level no-write evidence", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("ledger timeline runtime emits ledger-timeline.v1", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("ledger replay preview emits ledger-replay.v1", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("exact day-bucket source/action/category/operator/receipt-status counts", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("explicit UTC offset warning preservation under since/until/window time filters, final file-tree snapshot evidence, and event-level no-write evidence", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("category", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("operator", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("without SaaS", StringComparison.OrdinalIgnoreCase));
+        var v60Check = root.GetProperty("checks").EnumerateArray()
+            .Single(check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate");
+        var runtimeEvidence = v60Check.GetProperty("runtimeEvidence");
+        var runtimeEvidenceFields = runtimeEvidence.EnumerateObject()
+            .Select(property => property.Name)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+        [
+            "allRuntimeChecksPass",
+            "commandSpine",
+            "commandSpineNoWrites",
+            "commandSpineOutputParity",
+            "deliverablesVerify",
+            "historyList",
+            "historyListCountConsistency",
+            "historyListEvidence",
+            "historyListRowOrder",
+            "issuePackageDryRun",
+            "issuePreflight",
+            "journalVerify",
+            "ledgerAppend",
+            "ledgerQueryValidate",
+            "ledgerReplay",
+            "ledgerStats",
+            "ledgerTimeline",
+            "rollbackDryRun",
+            "rollbackDryRunEvidence",
+            "rollbackDryRunPreview",
+            "rollbackNoMutatingSetRequest",
+            "standardsValidate",
+            "workflowRegistry",
+        ], runtimeEvidenceFields);
+        Assert.True(runtimeEvidence.GetProperty("commandSpine").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("commandSpineOutputParity").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("commandSpineNoWrites").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("standardsValidate").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("issuePreflight").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("issuePackageDryRun").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("deliverablesVerify").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("journalVerify").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("historyList").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("historyListCountConsistency").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("historyListRowOrder").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("rollbackDryRun").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("rollbackDryRunPreview").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("rollbackNoMutatingSetRequest").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("workflowRegistry").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("ledgerAppend").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("ledgerQueryValidate").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("ledgerReplay").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("ledgerStats").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("ledgerTimeline").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("allRuntimeChecksPass").GetBoolean());
+        var historyEvidence = runtimeEvidence.GetProperty("historyListEvidence");
+        Assert.Equal(1, historyEvidence.GetProperty("jsonEntryCount").GetInt32());
+        Assert.Equal(0, historyEvidence.GetProperty("jsonHiddenCount").GetInt32());
+        Assert.Equal(1, historyEvidence.GetProperty("jsonReturnedCount").GetInt32());
+        Assert.Equal(1, historyEvidence.GetProperty("tableRowCount").GetInt32());
+        Assert.True(historyEvidence.GetProperty("countConsistency").GetBoolean());
+        Assert.True(historyEvidence.GetProperty("idOrderMatch").GetBoolean());
+        Assert.True(historyEvidence.GetProperty("headerMatched").GetBoolean());
+        var rollbackEvidence = runtimeEvidence.GetProperty("rollbackDryRunEvidence");
+        Assert.Equal(1, rollbackEvidence.GetProperty("actionCount").GetInt32());
+        Assert.Equal(0, rollbackEvidence.GetProperty("conflictCount").GetInt32());
+        Assert.Equal(0, rollbackEvidence.GetProperty("errorCount").GetInt32());
+        Assert.Contains("rollback", rollbackEvidence.GetProperty("safeApplyCommand").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.True(rollbackEvidence.GetProperty("safeApplyEmitted").GetBoolean());
+        Assert.True(rollbackEvidence.GetProperty("dryRunPreviewOnly").GetBoolean());
+        Assert.True(rollbackEvidence.GetProperty("sawDryRunSetPreview").GetBoolean());
+        Assert.False(rollbackEvidence.GetProperty("sawMutatingSetRequest").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_IgnoresUnrelatedEmptyDocsDirectory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-unrelated-docs-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "docs"));
+            Directory.SetCurrentDirectory(root);
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: null,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(0, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v5RealSmokeDisclosure" &&
+                    check.GetProperty("status").GetString() == "pass" &&
+                    !check.GetProperty("evidence").GetString()!.Contains("missing and not disclosed", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v5RcBoundaryDisclosure" &&
+                    check.GetProperty("status").GetString() == "pass" &&
+                    !check.GetProperty("evidence").GetString()!.Contains("missing or unreadable", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_UsesProvidedProjectDirectoryForV55GapReport()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v55-dir-gap-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(Path.Combine(root, "docs"));
+            File.WriteAllText(Path.Combine(root, "docs", "release-checklist.md"), "# Release Checklist\n");
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v55ViewCoordinationHygieneGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("docs/smoke/v5.5/gap-report.md is missing", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_UsesProvidedProjectDirectoryForV52ToV54GapReports()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v52-v54-dir-gap-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            var docsRoot = Path.Combine(root, "docs");
+            Directory.CreateDirectory(docsRoot);
+            File.WriteAllText(Path.Combine(docsRoot, "roadmap-v5-v6.md"), "# v5-v6\n");
+            File.WriteAllText(
+                Path.Combine(docsRoot, "v5-rc-readiness.md"),
+                """
+Current status:
+Claimed live Revit years
+Stable P0 Commands
+Experimental / Deferred Commands
+not live verified
+v5RealSmokeDisclosure
+issuePackageTraceability
+v5FaultInjectionCoverage
+release verify --strict
+MCP, SaaS, or built-in LLM parser
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.0"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.0", "gap-report.md"),
+                """
+| Revit 2024 | not live verified |
+| Revit 2025 | not live verified |
+| Revit 2026 | not live verified |
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.1"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.1", "gap-report.md"),
+                """
+v5.1 sheet release control
+production pilot gated
+100 sheet
+300 sheet
+1000 sheet
+not live verified
+Revit 2026
+dry-run/plan/receipt/rollback
+journal verify
+Post-rollback evidence
+""");
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+            var checks = document.RootElement.GetProperty("checks").EnumerateArray().ToArray();
+            Assert.Contains(checks, check =>
+                check.GetProperty("id").GetString() == "v52SchedulePackagePilotGate" &&
+                check.GetProperty("status").GetString() == "fail" &&
+                check.GetProperty("evidence").GetString()!.Contains("docs/smoke/v5.2/gap-report.md is missing", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(checks, check =>
+                check.GetProperty("id").GetString() == "v53NumberingControlledApplyPilotGate" &&
+                check.GetProperty("status").GetString() == "fail" &&
+                check.GetProperty("evidence").GetString()!.Contains("docs/smoke/v5.3/gap-report.md is missing", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(checks, check =>
+                check.GetProperty("id").GetString() == "v54StandardsRuntimePackGate" &&
+                check.GetProperty("status").GetString() == "fail" &&
+                check.GetProperty("evidence").GetString()!.Contains("docs/smoke/v5.4/gap-report.md is missing", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV56GapReportIsMissingForReleaseRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v56-missing-gap-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            File.Delete(Path.Combine(root, "docs", "smoke", "v5.6", "gap-report.md"));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v56TeamPilotPackGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("docs/smoke/v5.6/gap-report.md is missing", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV56SupportTemplateIsMissingForReleaseRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v56-missing-template-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            File.Delete(Path.Combine(root, "docs", "smoke", "v5.6", "support-error-report-template.md"));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v56TeamPilotPackGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("support-error-report", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60ContractIsMissingForReleaseRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-contract-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            File.Delete(Path.Combine(root, "docs", "v6-local-bimops-contract.md"));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("docs/v6-local-bimops-contract.md is missing", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60OfficePilotGapIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-office-pilot-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var gapPath = Path.Combine(root, "docs", "smoke", "v6.0", "gap-report.md");
+            File.WriteAllText(
+                gapPath,
+                File.ReadAllText(gapPath).Replace("office rollout pilots", "rollout pilots", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("office rollout pilots", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60PilotEvidenceTemplateIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-pilot-template-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            File.Delete(Path.Combine(root, "docs", "smoke", "v6.0", "pilot-evidence-template.md"));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("pilot-evidence-template.md", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60PilotEvidenceSignoffIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-pilot-signoff-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var templatePath = Path.Combine(root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+            File.WriteAllText(
+                templatePath,
+                File.ReadAllText(templatePath).Replace("BIM manager signoff", "manager approval", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("BIM manager signoff", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60PilotEvidenceStatusCommandIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-pilot-status-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var templatePath = Path.Combine(root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+            File.WriteAllText(
+                templatePath,
+                File.ReadAllText(templatePath).Replace("status --output json", "status proof", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("status --output json", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60OfficeRolloutStatusOverclaims()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-office-rollout-overclaim-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var statusPath = Path.Combine(root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+            File.WriteAllText(
+                statusPath,
+                File.ReadAllText(statusPath).Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("office-rollout-status.json", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_AllowsV60OfficeRolloutThresholdWithPerPilotEvidence()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-office-rollout-complete-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var statusPath = Path.Combine(root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+            File.WriteAllText(
+                statusPath,
+                File.ReadAllText(statusPath)
+                    .Replace("\"completedOfficePilotCount\": 0", "\"completedOfficePilotCount\": 2", StringComparison.Ordinal)
+                    .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
+                    .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
+                    .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
+                    .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(0, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "pass");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60OfficeRolloutPilotIdsMismatchEvidence()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-office-rollout-id-mismatch-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var statusPath = Path.Combine(root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+            File.WriteAllText(
+                statusPath,
+                File.ReadAllText(statusPath)
+                    .Replace("\"completedOfficePilotCount\": 0", "\"completedOfficePilotCount\": 2", StringComparison.Ordinal)
+                    .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
+                    .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-03") + "]", StringComparison.Ordinal)
+                    .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
+                    .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("completedPilots", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60AuditSpineParityDetailsAreMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-audit-spine-parity-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var gapPath = Path.Combine(root, "docs", "smoke", "v6.0", "gap-report.md");
+            File.WriteAllText(
+                gapPath,
+                File.ReadAllText(gapPath)
+                    .Replace("journal verify JSON/table validity/root-hash parity", "journal verify JSON/table parity", StringComparison.Ordinal)
+                    .Replace("history-list.v1 JSON count consistency and table row-order parity", "history list JSON/table outputs", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("journal verify JSON/table validity/root-hash parity", StringComparison.OrdinalIgnoreCase) &&
+                    check.GetProperty("evidence").GetString()!.Contains("history-list.v1 JSON count consistency and table row-order parity", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_AcceptsSemanticV60AuditSpineParityWording()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-semantic-audit-spine-parity-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var gapPath = Path.Combine(root, "docs", "smoke", "v6.0", "gap-report.md");
+            File.WriteAllText(
+                gapPath,
+                File.ReadAllText(gapPath)
+                    .Replace("journal verify JSON/table validity/root-hash parity", "journal verify JSON/table parity with validity and root-hash evidence", StringComparison.Ordinal)
+                    .Replace("history-list.v1 JSON count consistency and table row-order parity", "history-list.v1 uses JSON count consistency with table row-order parity", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(0, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.True(document.RootElement.GetProperty("success").GetBoolean());
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("docs/smoke/v5.5/gap-report.md", "MCP orchestration", "MCP orchestration and requires MCP")]
+    [InlineData("docs/smoke/v5.6/gap-report.md", "no MCP", "no MCP but requires MCP")]
+    [InlineData("docs/v6-local-bimops-contract.md", "no MCP", "no MCP but requires MCP")]
+    [InlineData("docs/smoke/v6.0/gap-report.md", "no database", "no database but uses database-backed storage")]
+    public async Task Verify_Json_WithContractV2_FailsWhenBoundaryContradictsNonGoals(
+        string relativePath,
+        string requiredPhrase,
+        string replacement)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-boundary-contradiction-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var path = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            var text = File.ReadAllText(path);
+            Assert.Contains(requiredPhrase, text, StringComparison.Ordinal);
+            File.WriteAllText(path, text.Replace(requiredPhrase, replacement, StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("contradictory", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerQueryOrderingDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-query-ordering-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-query.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("timestamp/source/path/line ordering", "deterministic sorting", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("timestamp/source/path/line ordering", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("docs/smoke/v6.0/ledger-query.md")]
+    [InlineData("docs/smoke/v6.0/ledger-validate.md")]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerFinalSnapshotDocIsMissing(string relativeSmokePath)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"revitcli-workbench-v60-missing-ledger-final-snapshot-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, relativeSmokePath.Replace('/', Path.DirectorySeparatorChar));
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("final file-tree snapshot evidence", "final snapshot evidence", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("final file-tree snapshot evidence", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerQueryOutputParityDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-query-output-parity-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-query.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("JSON/table/Markdown output semantic parity", "output-format coverage", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("JSON/table/Markdown output semantic parity", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("JSON/table/Markdown output semantic parity", "output-format coverage")]
+    [InlineData("final file-tree snapshot evidence", "final snapshot evidence")]
+    [InlineData("event-level no-write evidence", "no-write evidence")]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60WorkflowRegistryRuntimeEvidenceDocIsMissing(
+        string requiredPhrase,
+        string replacement)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-workflow-registry-evidence-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "workflow-registry.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace(requiredPhrase, replacement, StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains(requiredPhrase, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerValidateSourceReadabilityDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-validate-source-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-validate.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("source readability", "source checks", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("source readability", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerStatsOperationCountsDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-stats-counts-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-stats.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("operation counts", "operation summaries", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("operation counts", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerStatsSourceCountsDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-stats-source-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-stats.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("source counts", "source summaries", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("source counts", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerStatsIssueSeverityDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-stats-issues-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-stats.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("issue severity", "issue type", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("issue severity", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerStatsMalformedDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-stats-malformed-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-stats.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("malformed journal, delivery manifest, and workflow receipt artifacts", "malformed local artifacts", StringComparison.OrdinalIgnoreCase));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("malformed", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerTimelineUnbucketedDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-timeline-unbucketed-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-timeline.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("unbucketed timestamp", "timestamp warning", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("unbucketed timestamp", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60LedgerTimelineCategoryDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-ledger-timeline-category-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "ledger-timeline.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath).Replace("category counts per bucket", "category filter support", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("category counts per bucket", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60DeliverablesOutputParityDocIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-deliverables-parity-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            var smokePath = Path.Combine(root, "docs", "smoke", "v6.0", "deliverables-verify.md");
+            File.WriteAllText(
+                smokePath,
+                File.ReadAllText(smokePath)
+                    .Replace("Kinds and Outcomes counts", "summary counts", StringComparison.Ordinal)
+                    .Replace("table and Markdown", "human output", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(root);
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: null,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("Kinds", StringComparison.OrdinalIgnoreCase) &&
+                    check.GetProperty("evidence").GetString()!.Contains("Outcomes", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV52GapReportIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v52-missing-gap-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            var docsRoot = Path.Combine(root, "docs");
+            Directory.CreateDirectory(docsRoot);
+            File.WriteAllText(Path.Combine(docsRoot, "roadmap-v5-v6.md"), "# v5-v6\n");
+            File.WriteAllText(
+                Path.Combine(docsRoot, "v5-rc-readiness.md"),
+                """
+Current status:
+Claimed live Revit years
+Stable P0 Commands
+Experimental / Deferred Commands
+not live verified
+v5RealSmokeDisclosure
+issuePackageTraceability
+v5FaultInjectionCoverage
+release verify --strict
+MCP, SaaS, or built-in LLM parser
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.0"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.0", "gap-report.md"),
+                """
+| Revit 2024 | not live verified |
+| Revit 2025 | not live verified |
+| Revit 2026 | not live verified |
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.1"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.1", "gap-report.md"),
+                """
+v5.1 sheet release control
+production pilot gated
+100 sheet
+300 sheet
+1000 sheet
+not live verified
+Revit 2026
+dry-run/plan/receipt/rollback
+journal verify
+Post-rollback evidence
+""");
+            Directory.SetCurrentDirectory(root);
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: null,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v52SchedulePackagePilotGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("missing or unreadable", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV53GapReportIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v53-missing-gap-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            var docsRoot = Path.Combine(root, "docs");
+            Directory.CreateDirectory(docsRoot);
+            File.WriteAllText(Path.Combine(docsRoot, "roadmap-v5-v6.md"), "# v5-v6\n");
+            File.WriteAllText(
+                Path.Combine(docsRoot, "v5-rc-readiness.md"),
+                """
+Current status:
+Claimed live Revit years
+Stable P0 Commands
+Experimental / Deferred Commands
+not live verified
+v5RealSmokeDisclosure
+issuePackageTraceability
+v5FaultInjectionCoverage
+release verify --strict
+MCP, SaaS, or built-in LLM parser
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.0"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.0", "gap-report.md"),
+                """
+| Revit 2024 | not live verified |
+| Revit 2025 | not live verified |
+| Revit 2026 | not live verified |
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.1"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.1", "gap-report.md"),
+                """
+v5.1 sheet release control
+production pilot gated
+100 sheet
+300 sheet
+1000 sheet
+not live verified
+Revit 2026
+dry-run/plan/receipt/rollback
+journal verify
+Post-rollback evidence
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.2"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.2", "gap-report.md"),
+                """
+v5.2 schedule deliverable closure
+schedule/package-only
+explicit go-forward decision
+not live verified
+schedules batch-export
+schedules compare
+deliverables bundle
+issue package
+journal verify
+""");
+            Directory.SetCurrentDirectory(root);
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: null,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v53NumberingControlledApplyPilotGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("missing or unreadable", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV54GapReportIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v54-missing-gap-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            var docsRoot = Path.Combine(root, "docs");
+            Directory.CreateDirectory(docsRoot);
+            File.WriteAllText(Path.Combine(docsRoot, "roadmap-v5-v6.md"), "# v5-v6\n");
+            File.WriteAllText(
+                Path.Combine(docsRoot, "v5-rc-readiness.md"),
+                """
+Current status:
+Claimed live Revit years
+Stable P0 Commands
+Experimental / Deferred Commands
+not live verified
+v5RealSmokeDisclosure
+issuePackageTraceability
+v5FaultInjectionCoverage
+release verify --strict
+MCP, SaaS, or built-in LLM parser
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.0"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.0", "gap-report.md"),
+                """
+| Revit 2024 | not live verified |
+| Revit 2025 | not live verified |
+| Revit 2026 | not live verified |
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.1"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.1", "gap-report.md"),
+                """
+v5.1 sheet release control
+production pilot gated
+100 sheet
+300 sheet
+1000 sheet
+not live verified
+Revit 2026
+dry-run/plan/receipt/rollback
+journal verify
+Post-rollback evidence
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.2"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.2", "gap-report.md"),
+                """
+v5.2 schedule deliverable closure
+schedule/package-only
+explicit go-forward decision
+not live verified
+schedules batch-export
+schedules compare
+deliverables bundle
+issue package
+journal verify
+""");
+            Directory.CreateDirectory(Path.Combine(docsRoot, "smoke", "v5.3"));
+            File.WriteAllText(
+                Path.Combine(docsRoot, "smoke", "v5.3", "gap-report.md"),
+                """
+v5.3 numbering controlled apply
+explicit go-forward decision
+reserved numbers
+hold numbers
+duplicate-target failure
+not live verified
+plan apply
+rollback
+journal verify
+""");
+            Directory.SetCurrentDirectory(root);
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: null,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v54StandardsRuntimePackGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("missing or unreadable", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -781,6 +2411,9 @@ public sealed class WorkbenchCommandTests
             extension.GetProperty("dryRunCommand").GetString()!.Contains("workflow simulate", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(extensions, extension =>
             extension.GetProperty("name").GetString() == "standards-pack" &&
+            extension.GetProperty("validationCommand").GetString()!.Contains("--manifest .revitcli/standards.yml", StringComparison.OrdinalIgnoreCase) &&
+            extension.GetProperty("validationCommand").GetString()!.Contains("--dir profiles/office-standard", StringComparison.OrdinalIgnoreCase) &&
+            extension.GetProperty("dryRunCommand").GetString()!.Contains("profiles/office-standard", StringComparison.OrdinalIgnoreCase) &&
             extension.GetProperty("dryRunCommand").GetString()!.Contains("--dry-run", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -893,6 +2526,30 @@ public sealed class WorkbenchCommandTests
             contract.GetProperty("commandPath").GetString() == "model map-fix" &&
             contract.GetProperty("jsonSchema").GetString() == "model-map-fix-plan.v1" &&
             contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "ledger query" &&
+            contract.GetProperty("jsonSchema").GetString() == "ledger-query.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "ledger replay" &&
+            contract.GetProperty("jsonSchema").GetString() == "ledger-replay.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "ledger append" &&
+            contract.GetProperty("jsonSchema").GetString() == "ledger-append.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "ledger validate" &&
+            contract.GetProperty("jsonSchema").GetString() == "ledger-validate.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "ledger stats" &&
+            contract.GetProperty("jsonSchema").GetString() == "ledger-stats.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "ledger timeline" &&
+            contract.GetProperty("jsonSchema").GetString() == "ledger-timeline.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
     }
 
     [Fact]
@@ -960,6 +2617,13 @@ public sealed class WorkbenchCommandTests
             safeguard.GetProperty("name").GetString() == "schedule-create" &&
             safeguard.GetProperty("dryRunCommand").GetString()!.Contains("schedule create", StringComparison.OrdinalIgnoreCase) &&
             safeguard.GetProperty("receipt").GetString()!.Contains("schedule-create", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(safeguards, safeguard =>
+            safeguard.GetProperty("name").GetString() == "sheet-issue-meta" &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("sheets issue-meta", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("dryRunCommand").GetString()!.Contains("--plan-output", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("receipt").GetString()!.Contains("sheet-issue-plan.v1", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("receipt").GetString()!.Contains("plan-receipt.v1", StringComparison.OrdinalIgnoreCase) &&
+            safeguard.GetProperty("reviewCommand").GetString()!.Contains("plan show", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(safeguards, safeguard =>
             safeguard.GetProperty("name").GetString() == "sheet-renumber" &&
             safeguard.GetProperty("dryRunCommand").GetString()!.Contains("--plan-output", StringComparison.OrdinalIgnoreCase) &&
@@ -1029,7 +2693,7 @@ public sealed class WorkbenchCommandTests
     [Fact]
     public async Task Project_Json_PrintsLocalArtifactInventory()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-{Guid.NewGuid():N}");
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-{Guid.NewGuid():N} $(touch hacked)'");
         try
         {
             Directory.CreateDirectory(root);
@@ -1167,7 +2831,7 @@ public sealed class WorkbenchCommandTests
     [Fact]
     public async Task Handoff_Json_PrintsTerminalHandoffSummary()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-{Guid.NewGuid():N}");
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-{Guid.NewGuid():N} $(touch hacked)'");
         try
         {
             Directory.CreateDirectory(root);
@@ -1206,7 +2870,6 @@ public sealed class WorkbenchCommandTests
                 action.GetProperty("artifact").GetString() == "workflows" &&
                 action.GetProperty("status").GetString() == "missing" &&
                 action.GetProperty("commandLine").GetString()!.Contains("revitcli workflow init all", StringComparison.OrdinalIgnoreCase) &&
-                action.GetProperty("commandLine").GetString()!.Contains($"--dir {Path.GetFullPath(root)}", StringComparison.OrdinalIgnoreCase) &&
                 action.GetProperty("workingDirectory").GetString() == Path.GetFullPath(root));
             Assert.Contains(readinessActions, action =>
                 action.GetProperty("phase").GetString() == "draft-knowledge-report" &&
@@ -1214,29 +2877,39 @@ public sealed class WorkbenchCommandTests
             Assert.Contains(readinessActions, action =>
                 action.GetProperty("phase").GetString() == "review-saved-plans" &&
                 action.GetProperty("artifact").GetString() == "plans" &&
-                action.GetProperty("commandLine").GetString()!.Contains("revitcli inspect plans", StringComparison.OrdinalIgnoreCase) &&
-                action.GetProperty("commandLine").GetString()!.Contains($"--dir {Path.GetFullPath(root)}", StringComparison.OrdinalIgnoreCase));
+                action.GetProperty("commandLine").GetString()!.Contains("revitcli inspect plans", StringComparison.OrdinalIgnoreCase));
 
             var commands = rootElement.GetProperty("commands").EnumerateArray().ToArray();
             Assert.Contains(commands, command =>
                 command.GetProperty("phase").GetString() == "verify" &&
                 command.GetProperty("commandLine").GetString()!.Contains("revitcli workbench verify", StringComparison.OrdinalIgnoreCase) &&
-                command.GetProperty("commandLine").GetString()!.Contains($"--dir {Path.GetFullPath(root)}", StringComparison.OrdinalIgnoreCase));
+                command.GetProperty("workingDirectory").GetString() == Path.GetFullPath(root));
             Assert.Contains(commands, command =>
                 command.GetProperty("phase").GetString() == "project" &&
                 command.GetProperty("commandLine").GetString()!.Contains("revitcli workbench project", StringComparison.OrdinalIgnoreCase) &&
-                command.GetProperty("commandLine").GetString()!.Contains($"--dir {Path.GetFullPath(root)}", StringComparison.OrdinalIgnoreCase));
+                command.GetProperty("workingDirectory").GetString() == Path.GetFullPath(root));
             Assert.Contains(commands, command =>
                 command.GetProperty("phase").GetString() == "workflow-review" &&
-                command.GetProperty("commandLine").GetString()!.Contains("workflow review", StringComparison.OrdinalIgnoreCase));
+                command.GetProperty("commandLine").GetString()!.Contains("workflow review", StringComparison.OrdinalIgnoreCase) &&
+                command.GetProperty("workingDirectory").GetString() == Path.GetFullPath(root));
             Assert.Contains(commands, command =>
                 command.GetProperty("phase").GetString() == "workflow-discovery" &&
                 command.GetProperty("commandLine").GetString()!.Contains("revitcli inspect workflows", StringComparison.OrdinalIgnoreCase) &&
-                command.GetProperty("commandLine").GetString()!.Contains($"--dir {Path.GetFullPath(root)}", StringComparison.OrdinalIgnoreCase));
+                command.GetProperty("workingDirectory").GetString() == Path.GetFullPath(root));
             Assert.Contains(commands, command =>
                 command.GetProperty("phase").GetString() == "plan-discovery" &&
                 command.GetProperty("commandLine").GetString()!.Contains("revitcli inspect plans", StringComparison.OrdinalIgnoreCase) &&
-                command.GetProperty("commandLine").GetString()!.Contains($"--dir {Path.GetFullPath(root)}", StringComparison.OrdinalIgnoreCase));
+                command.GetProperty("workingDirectory").GetString() == Path.GetFullPath(root));
+            Assert.All(commands, command =>
+                Assert.Equal(Path.GetFullPath(root), command.GetProperty("workingDirectory").GetString()));
+            Assert.All(
+                readinessActions.Select(action => action.GetProperty("commandLine").GetString()!)
+                    .Concat(commands.Select(command => command.GetProperty("commandLine").GetString()!)),
+                line =>
+                {
+                    Assert.DoesNotContain(Path.GetFullPath(root), line, StringComparison.Ordinal);
+                    Assert.DoesNotContain("$(touch hacked)", line, StringComparison.Ordinal);
+                });
             Assert.Contains(commands, command =>
                 command.GetProperty("phase").GetString() == "schedule-create" &&
                 command.GetProperty("commandLine").GetString()!.Contains("--dry-run", StringComparison.OrdinalIgnoreCase) &&
@@ -1270,6 +2943,7 @@ public sealed class WorkbenchCommandTests
             Assert.Contains("Verification: yes", text);
             Assert.Contains("Readiness checks:", text);
             Assert.Contains("Readiness actions:", text);
+            Assert.Contains("Working directory", text);
             Assert.Contains("workflow init all", text);
             Assert.Contains("completion-surface", text);
             Assert.Contains("handoff-command-surface", text);
@@ -1306,10 +2980,11 @@ public sealed class WorkbenchCommandTests
             Assert.Contains("## Readiness Actions", text);
             Assert.Contains("| `bootstrap-workflows` | `workflows` | `missing` | `revitcli workflow init all --dir", text);
             Assert.Contains("## Commands", text);
-            Assert.Contains("| Phase | Command | Purpose |", text);
+            Assert.Contains("| Phase | Command | Working directory | Purpose |", text);
             Assert.Contains("| `project` | `revitcli workbench project --dir", text);
             Assert.Contains("| `workflow-discovery` | `revitcli inspect workflows --dir", text);
             Assert.Contains("| `plan-discovery` | `revitcli inspect plans --dir", text);
+            Assert.Contains($"`{Path.GetFullPath(root)}`", text);
             Assert.Contains("| `schedule-create` | `revitcli schedule create --category Doors --fields \"Mark,Level\" --name \"Door Review\" --dry-run --output json` |", text);
             Assert.Contains("## Notes", text);
         }
@@ -1354,4 +3029,60 @@ public sealed class WorkbenchCommandTests
         Assert.Equal(1, exitCode);
         Assert.Equal("Error: --output must be 'table', 'json', or 'markdown'." + Environment.NewLine, output.ToString());
     }
+
+    private static string FindRepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "src", "RevitCli", "RevitCli.csproj")) &&
+                Directory.Exists(Path.Combine(dir.FullName, "docs")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return Directory.GetCurrentDirectory();
+    }
+
+    private static void CopyDirectory(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
+        }
+
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var destination = Path.Combine(target, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(file, destination, overwrite: true);
+        }
+    }
+
+    private static string CompletedPilotEvidenceJson(string pilotId) =>
+        $$"""
+        {
+          "pilotId": "{{pilotId}}",
+          "evidencePacketPath": "docs/smoke/v6.0/{{pilotId}}.md",
+          "doctor": true,
+          "status": true,
+          "workbench": true,
+          "release": true,
+          "ledgerQuery": true,
+          "ledgerValidate": true,
+          "ledgerStatsAnalyticsSnapshot": true,
+          "ledgerTimelineAnalyticsSnapshot": true,
+          "journalVerify": true,
+          "rollbackResult": true,
+          "userReview": true,
+          "bimManagerSignoff": true,
+          "projectCopyOwnerSignoff": true,
+          "supportTicketReview": true,
+          "multiUserRolloutPostmortem": true
+        }
+        """;
 }

@@ -32,10 +32,12 @@ The tick script provides four guarantees that direct project-agent
 invocations do not provide:
 
 1. **Scope enforcement** — workers can only edit paths declared in the
-   active feature md's `scope-paths`. Out-of-scope edits are physically
-   reverted (`git checkout --`) before commit. The active feature md
-   itself is the control-record exception so workers can declare honest
-   blockers in `status:` / Notes.
+   active feature md's `scope-paths`. Out-of-scope worker-created edits
+   from the current tick are physically reverted (`git checkout --` or
+   `git clean -fd --`) before commit. Pre-existing dirty worktree paths
+   are preserved instead of reverted. The active feature md itself is the
+   control-record exception so workers can declare honest blockers in
+   `status:` / Notes.
 2. **Rescue caps** — a failing build/test gets at most 2 rescue
    attempts per checkbox before the feature is marked `blocked` and
    flagged for human review. Interactive Codex has no such cap → loops

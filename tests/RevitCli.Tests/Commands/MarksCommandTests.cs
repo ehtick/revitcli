@@ -110,6 +110,185 @@ sort: [name]
     }
 
     [Fact]
+    public async Task Assign_RejectsDuplicateTargetsGeneratedInsidePlan()
+    {
+        var rulePath = WriteRule("""
+schemaVersion: 1
+category: doors
+scheme: "D-CONSTANT"
+sort: [name]
+""");
+        var planPath = Path.Combine(_root, "door-marks-duplicates.json");
+        var client = MakeClient(
+            Door(10, "Alpha", "L1", "A", "101", "OLD-A"),
+            Door(11, "Beta", "L1", "A", "102", "OLD-B"));
+        var output = new StringWriter();
+
+        var exitCode = await MarksCommand.ExecuteAssignAsync(
+            client,
+            "doors",
+            rulePath,
+            planPath,
+            "name",
+            dryRun: true,
+            maxChanges: null,
+            outputFormat: "table",
+            output);
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains("target Mark D-CONSTANT appears more than once in the plan", output.ToString());
+        Assert.False(File.Exists(planPath));
+    }
+
+    [Fact]
+    public async Task Assign_ReservedAndHoldMarksProduceDeterministicGaps()
+    {
+        var rulePath = WriteRule("""
+schemaVersion: 1
+category: doors
+scheme: "D-{seq:03}"
+start: 1
+reservedMarks:
+  - D-002
+holdMarks:
+  - D-003
+sort: [name]
+""");
+        var firstPlanPath = Path.Combine(_root, "door-marks-first.json");
+        var secondPlanPath = Path.Combine(_root, "door-marks-second.json");
+        var client = MakeClient(
+            Door(10, "Alpha", "L1", "A", "101", "OLD-A"),
+            Door(11, "Beta", "L1", "A", "102", "D-003"),
+            Door(12, "Gamma", "L1", "A", "103", "OLD-C"));
+        var output = new StringWriter();
+
+        var firstExitCode = await MarksCommand.ExecuteAssignAsync(
+            client,
+            "doors",
+            rulePath,
+            firstPlanPath,
+            "name",
+            dryRun: true,
+            maxChanges: null,
+            outputFormat: "json",
+            output);
+        var secondExitCode = await MarksCommand.ExecuteAssignAsync(
+            client,
+            "doors",
+            rulePath,
+            secondPlanPath,
+            "name",
+            dryRun: true,
+            maxChanges: null,
+            outputFormat: "json",
+            new StringWriter());
+
+        Assert.Equal(0, firstExitCode);
+        Assert.Equal(0, secondExitCode);
+        using var first = JsonDocument.Parse(File.ReadAllText(firstPlanPath));
+        using var second = JsonDocument.Parse(File.ReadAllText(secondPlanPath));
+        var firstTargets = first.RootElement.GetProperty("actions").EnumerateArray()
+            .Select(action => action.GetProperty("newMark").GetString())
+            .ToArray();
+        var secondTargets = second.RootElement.GetProperty("actions").EnumerateArray()
+            .Select(action => action.GetProperty("newMark").GetString())
+            .ToArray();
+
+        Assert.Equal(new[] { "D-001", "D-004" }, firstTargets);
+        Assert.Equal(firstTargets, secondTargets);
+        Assert.Contains(first.RootElement.GetProperty("skipped").EnumerateArray(), skipped =>
+            skipped.GetProperty("elementId").GetInt64() == 11 &&
+            skipped.GetProperty("reason").GetString() == "hold-mark");
+    }
+
+    [Fact]
+    public async Task Assign_MultiBuildingFixturesProduceDeterministicTargets()
+    {
+        await AssertMarkFixtureAsync(
+            "residential",
+            """
+schemaVersion: 1
+category: doors
+scheme: "D-{building}-{level}-{seq:02}"
+start: 1
+sort: [building, level, unit, location]
+reservedMarks:
+  - D-A-L01-02
+holdMarks:
+  - D-A-L01-03
+tokens:
+  building: Building
+  unit: Unit Type
+  location: Room
+""",
+            new[]
+            {
+                Door(30, "A Studio Entry", "L01", "Residential", "101", "OLD-1", ("Building", "A"), ("Unit Type", "Studio")),
+                Door(31, "A One Bed Entry", "L01", "Residential", "102", "D-A-L01-03", ("Building", "A"), ("Unit Type", "One Bed")),
+                Door(32, "A Two Bed Entry", "L01", "Residential", "103", "OLD-3", ("Building", "A"), ("Unit Type", "Two Bed")),
+                Door(33, "B Studio Entry", "L02", "Residential", "201", "OLD-4", ("Building", "B"), ("Unit Type", "Studio")),
+            },
+            "building,level,unit,location",
+            new[] { "D-A-L01-01", "D-A-L01-04", "D-B-L02-05" },
+            expectedSkippedReason: "hold-mark");
+
+        await AssertMarkFixtureAsync(
+            "office",
+            """
+schemaVersion: 1
+category: doors
+scheme: "D-{level}-{zone}-{seq:02}"
+start: 1
+sort: [level, zone, location]
+reservedMarks:
+  - D-05-FIN-02
+holdMarks:
+  - D-05-FIN-03
+tokens:
+  zone: Department
+  location: Room
+""",
+            new[]
+            {
+                Door(40, "Finance Open Door", "05", "FIN", "501", "OLD-1"),
+                Door(41, "Finance Office Door", "05", "FIN", "502", "D-05-FIN-03"),
+                Door(42, "Finance Storage Door", "05", "FIN", "503", "OLD-3"),
+                Door(43, "Legal Office Door", "05", "LEG", "504", "OLD-4"),
+            },
+            "level,zone,location",
+            new[] { "D-05-FIN-01", "D-05-FIN-04", "D-05-LEG-05" },
+            expectedSkippedReason: "hold-mark");
+
+        await AssertMarkFixtureAsync(
+            "healthcare",
+            """
+schemaVersion: 1
+category: doors
+scheme: "D-{dept}-{level}-{seq:03}"
+start: 10
+sort: [dept, level, acuity, location]
+reservedMarks:
+  - D-ED-02-011
+holdMarks:
+  - D-ED-02-012
+tokens:
+  dept: Department
+  acuity: Acuity
+  location: Room
+""",
+            new[]
+            {
+                Door(50, "ED Trauma Door", "02", "ED", "T-1", "OLD-1", ("Acuity", "1")),
+                Door(51, "ED Exam Door", "02", "ED", "E-2", "D-ED-02-012", ("Acuity", "2")),
+                Door(52, "ED Consult Door", "02", "ED", "C-3", "OLD-3", ("Acuity", "3")),
+                Door(53, "Imaging CT Door", "02", "IMG", "CT", "OLD-4", ("Acuity", "2")),
+            },
+            "dept,level,acuity,location",
+            new[] { "D-ED-02-010", "D-ED-02-013", "D-IMG-02-014" },
+            expectedSkippedReason: "hold-mark");
+    }
+
+    [Fact]
     public async Task Verify_ReportsDuplicateAndMissingMarks()
     {
         var client = MakeClient(
@@ -162,9 +341,66 @@ sort: [name]
         return path;
     }
 
-    private static ElementInfo Door(long id, string name, string level, string zone, string room, string mark)
+    private async Task AssertMarkFixtureAsync(
+        string name,
+        string rule,
+        ElementInfo[] doors,
+        string sort,
+        string[] expectedTargets,
+        string expectedSkippedReason)
     {
-        return new ElementInfo
+        var rulePath = Path.Combine(_root, $"{name}-marks.yml");
+        File.WriteAllText(rulePath, rule);
+        var firstPlanPath = Path.Combine(_root, $"{name}-marks-first.json");
+        var secondPlanPath = Path.Combine(_root, $"{name}-marks-second.json");
+        var client = MakeClient(doors);
+
+        var firstExitCode = await MarksCommand.ExecuteAssignAsync(
+            client,
+            "doors",
+            rulePath,
+            firstPlanPath,
+            sort,
+            dryRun: true,
+            maxChanges: null,
+            outputFormat: "json",
+            new StringWriter());
+        var secondExitCode = await MarksCommand.ExecuteAssignAsync(
+            client,
+            "doors",
+            rulePath,
+            secondPlanPath,
+            sort,
+            dryRun: true,
+            maxChanges: null,
+            outputFormat: "json",
+            new StringWriter());
+
+        Assert.Equal(0, firstExitCode);
+        Assert.Equal(0, secondExitCode);
+        using var first = JsonDocument.Parse(File.ReadAllText(firstPlanPath));
+        using var second = JsonDocument.Parse(File.ReadAllText(secondPlanPath));
+        Assert.Equal(expectedTargets, ReadMarkTargets(first));
+        Assert.Equal(expectedTargets, ReadMarkTargets(second));
+        Assert.Contains(first.RootElement.GetProperty("skipped").EnumerateArray(), skipped =>
+            skipped.GetProperty("reason").GetString() == expectedSkippedReason);
+    }
+
+    private static string?[] ReadMarkTargets(JsonDocument document) =>
+        document.RootElement.GetProperty("actions").EnumerateArray()
+            .Select(action => action.GetProperty("newMark").GetString())
+            .ToArray();
+
+    private static ElementInfo Door(
+        long id,
+        string name,
+        string level,
+        string zone,
+        string room,
+        string mark,
+        params (string Key, string Value)[] parameters)
+    {
+        var door = new ElementInfo
         {
             Id = id,
             Name = name,
@@ -178,6 +414,9 @@ sort: [name]
                 ["Mark"] = mark
             }
         };
+        foreach (var (key, value) in parameters)
+            door.Parameters[key] = value;
+        return door;
     }
 
     private static RevitClient MakeClient(params ElementInfo[] doors)

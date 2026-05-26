@@ -1,0 +1,30 @@
+# Team Pilot
+
+Use this recipe to prepare a local team pilot pack without uploading models or
+delegating decisions to hidden automation.
+
+```powershell
+revitcli doctor --check-version 2026 --output json
+revitcli status --output json
+revitcli standards validate --output markdown
+revitcli workbench verify --contract workbench-contract.v2 --dir . --output json
+revitcli workbench handoff --dir . --output markdown
+revitcli ledger query --source ledger --output json
+revitcli ledger validate --source ledger --output json
+revitcli ledger stats --source ledger --analytics-snapshot .revitcli/analytics/ledger-stats.json --output json
+revitcli ledger timeline --source ledger --analytics-snapshot .revitcli/analytics/ledger-timeline.json --output json
+revitcli journal verify --output json
+revitcli release verify --strict --output json
+```
+
+Keep the pilot evidence local. Attach the `doctor` JSON, workbench handoff,
+standards validation, receipt/journal paths, Revit year, installer notes, and
+any supportable error reports to the pilot postmortem.
+
+For v6.0 office rollout pilots, also fill
+`docs/smoke/v6.0/pilot-evidence-template.md`. That packet adds ledger query,
+ledger validation, analytics snapshot, rollback, and user-review evidence for
+controlled project-copy pilots without making a production support claim. Do
+not claim office rollout completion until 2-3 completed office pilots have BIM
+manager signoff, project-copy owner signoff, support ticket review, and
+multi-user rollout postmortems.

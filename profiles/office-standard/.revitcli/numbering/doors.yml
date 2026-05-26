@@ -1,0 +1,13 @@
+schemaVersion: 1
+category: doors
+parameter: Mark
+scheme: "D-{level}-{seq:03}"
+start: 1
+reservedMarks:
+  - D-L1-000
+holdMarks: []
+sort: [level, zone, type, location]
+tokens:
+  level: Level
+  zone: Department
+  location: Room

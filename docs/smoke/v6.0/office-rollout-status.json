@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "v6-office-rollout-status.v1",
+  "minimumOfficePilotCount": 2,
+  "completedOfficePilotCount": 0,
+  "completedPilotIds": [],
+  "completedPilots": [],
+  "officeRolloutCompletion": false,
+  "productionSupportClaim": false,
+  "requiredEvidence": {
+    "doctor": true,
+    "status": true,
+    "workbench": true,
+    "release": true,
+    "ledgerQuery": true,
+    "ledgerValidate": true,
+    "ledgerStatsAnalyticsSnapshot": true,
+    "ledgerTimelineAnalyticsSnapshot": true,
+    "journalVerify": true,
+    "rollbackResult": true,
+    "userReview": true,
+    "bimManagerSignoff": true,
+    "projectCopyOwnerSignoff": true,
+    "supportTicketReview": true,
+    "multiUserRolloutPostmortem": true
+  }
+}

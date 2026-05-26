@@ -2,6 +2,7 @@ using System;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -230,9 +231,12 @@ public static class ExportCommand
         if (progress.Status == "completed")
         {
             await output.WriteLineAsync($"Export completed. Task ID: {progress.TaskId}");
-            var receiptPath = TrySaveExportReceipt(request, progress);
-            if (receiptPath != null)
-                await output.WriteLineAsync($"Receipt saved to {receiptPath}");
+            var receipt = TrySaveExportReceipt(request, progress);
+            if (receipt != null)
+            {
+                await output.WriteLineAsync($"Receipt saved to {receipt.Path}");
+                await TryLogExportLedgerOperationAsync(client, request, progress, receipt);
+            }
             return 0;
         }
 
@@ -252,9 +256,12 @@ public static class ExportCommand
         if (progress.Status == "completed")
         {
             await output.WriteLineAsync("Export completed.");
-            var receiptPath = TrySaveExportReceipt(request, progress);
-            if (receiptPath != null)
-                await output.WriteLineAsync($"Receipt saved to {receiptPath}");
+            var receipt = TrySaveExportReceipt(request, progress);
+            if (receipt != null)
+            {
+                await output.WriteLineAsync($"Receipt saved to {receipt.Path}");
+                await TryLogExportLedgerOperationAsync(client, request, progress, receipt);
+            }
             return 0;
         }
 
@@ -276,7 +283,7 @@ public static class ExportCommand
         return Path.GetFullPath(outputDir);
     }
 
-    private static string? TrySaveExportReceipt(ExportRequest request, ExportProgress progress)
+    private static ExportReceiptWrite? TrySaveExportReceipt(ExportRequest request, ExportProgress progress)
     {
         if (request.DryRun || string.IsNullOrWhiteSpace(request.OutputDir))
             return null;
@@ -288,11 +295,13 @@ public static class ExportCommand
             var receiptPath = Path.Combine(receiptDir, $"export-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json");
             var receipt = ExportReceipt.From(request, progress);
             File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt, TerminalJsonOptions.PrettyIgnoreNull));
+            var receiptHash = DeliveryManifestWriter.ComputeSha256Hex(receiptPath);
             DeliveryManifestWriter.Append(request.OutputDir, new
             {
                 schemaVersion = "delivery-manifest.v1",
                 kind = "export",
                 receiptPath = Path.GetFullPath(receiptPath),
+                receiptHash,
                 success = receipt.Success,
                 dryRun = receipt.DryRun,
                 format = receipt.Format,
@@ -301,7 +310,7 @@ public static class ExportCommand
                 command = receipt.Command,
                 timestamp = receipt.Timestamp
             });
-            return receiptPath;
+            return new ExportReceiptWrite(Path.GetFullPath(receiptPath), receiptHash);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -309,6 +318,80 @@ public static class ExportCommand
             return null;
         }
     }
+
+    private static async Task TryLogExportLedgerOperationAsync(
+        RevitClient client,
+        ExportRequest request,
+        ExportProgress progress,
+        ExportReceiptWrite receipt)
+    {
+        try
+        {
+            var status = await TryGetStatusForLedgerAsync(client);
+            var output = new StringWriter();
+            var exitCode = await LedgerCommand.ExecuteAppendAsync(
+                request.OutputDir,
+                action: "export",
+                category: request.Format,
+                operatorName: null,
+                status: "succeeded",
+                summary: $"Export {request.Format} completed for task {progress.TaskId}",
+                timestamp: null,
+                model: NormalizeLedgerText(status?.DocumentName),
+                modelPath: NormalizeLedgerText(status?.DocumentPath),
+                planHash: null,
+                artifactPath: request.OutputDir,
+                receiptPath: receipt.Path,
+                receiptHash: receipt.Hash,
+                rollbackPointer: null,
+                evidenceLinks: new[] { receipt.Path },
+                yes: true,
+                outputFormat: "json",
+                output,
+                commandName: "export",
+                commandArgs: BuildExportLedgerArgs(request),
+                affectedElementCount: null,
+                affectedElementIds: Array.Empty<long>(),
+                revitVersion: NormalizeLedgerText(status?.RevitVersion));
+            if (exitCode != 0)
+                Console.Error.WriteLine($"[RevitCli] Export ledger write failed (operation ledger incomplete): {output.ToString().Trim()}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or JsonException)
+        {
+            Console.Error.WriteLine($"[RevitCli] Export ledger write failed (operation ledger incomplete): {ex.Message}");
+        }
+    }
+
+    private static async Task<StatusInfo?> TryGetStatusForLedgerAsync(RevitClient client)
+    {
+        try
+        {
+            var status = await client.GetStatusAsync();
+            return status.Success ? status.Data : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            Console.Error.WriteLine($"[RevitCli] Export status read failed (operation ledger model identity incomplete): {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string[] BuildExportLedgerArgs(ExportRequest request)
+    {
+        var args = new List<string> { "export", "--format", request.Format };
+        foreach (var sheet in request.Sheets)
+            args.AddRange(new[] { "--sheets", sheet });
+        foreach (var view in request.Views)
+            args.AddRange(new[] { "--views", view });
+        if (!string.IsNullOrWhiteSpace(request.OutputDir))
+            args.AddRange(new[] { "--output-dir", request.OutputDir });
+        if (request.DryRun)
+            args.Add("--dry-run");
+        return args.ToArray();
+    }
+
+    private static string? NormalizeLedgerText(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static async Task<int> WriteJsonAwareError(
         TextWriter output,
@@ -370,6 +453,8 @@ public static class ExportCommand
             string? taskId = null) =>
             new("export.v1", false, dryRun, format, sheets, views, outputDir, status, null, taskId, error);
     }
+
+    private sealed record ExportReceiptWrite(string Path, string Hash);
 
     private sealed record ExportReceipt(
         [property: JsonPropertyName("schemaVersion")] string SchemaVersion,

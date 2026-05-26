@@ -285,7 +285,13 @@ public class ExportCommandTests
             Message = "Exported 1 sheet"
         };
         var response = ApiResponse<ExportProgress>.Ok(progress);
-        var handler = new FakeHttpHandler(JsonSerializer.Serialize(response));
+        var status = ApiResponse<StatusInfo>.Ok(new StatusInfo
+        {
+            RevitVersion = "2026",
+            DocumentName = "tower.rvt",
+            DocumentPath = "/models/tower.rvt"
+        });
+        var handler = new QueuedHttpHandler(JsonSerializer.Serialize(response), JsonSerializer.Serialize(status));
         var client = new RevitClient(new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:17839") });
         var writer = new StringWriter();
 
@@ -319,6 +325,25 @@ public class ExportCommandTests
             Assert.False(manifestRoot.GetProperty("dryRun").GetBoolean());
             Assert.Equal("pdf", manifestRoot.GetProperty("format").GetString());
             Assert.Equal("task-receipt", manifestRoot.GetProperty("taskId").GetString());
+
+            var ledgerPath = Path.Combine(outputDir, ".revitcli", "ledger", "operations.jsonl");
+            var ledgerLine = Assert.Single(File.ReadAllLines(ledgerPath));
+            using var ledger = JsonDocument.Parse(ledgerLine);
+            var operation = ledger.RootElement;
+            Assert.Equal("ledger-operation.v1", operation.GetProperty("schemaVersion").GetString());
+            Assert.Equal("export", operation.GetProperty("command").GetString());
+            Assert.Equal("export", operation.GetProperty("action").GetString());
+            Assert.Equal("pdf", operation.GetProperty("category").GetString());
+            Assert.Equal("succeeded", operation.GetProperty("status").GetString());
+            Assert.Equal("tower.rvt", operation.GetProperty("modelIdentity").GetString());
+            Assert.Equal("/models/tower.rvt", operation.GetProperty("modelPath").GetString());
+            Assert.Equal("2026", operation.GetProperty("revitVersion").GetString());
+            Assert.Equal(Path.GetFullPath(receiptPath), operation.GetProperty("receiptPath").GetString());
+            Assert.Equal(manifestRoot.GetProperty("receiptHash").GetString(), operation.GetProperty("receiptHash").GetString());
+            Assert.Equal(outputDir, operation.GetProperty("artifactPath").GetString());
+            Assert.Contains(operation.GetProperty("args").EnumerateArray(), arg => arg.GetString() == "--format");
+            Assert.Contains(operation.GetProperty("args").EnumerateArray(), arg => arg.GetString() == "pdf");
+            Assert.Contains(handler.RequestPaths, path => path.EndsWith("/api/status", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {

@@ -73,6 +73,7 @@ public static class DeliveryManifestReader
             SchemaVersion = schemaVersion,
             Kind = kind,
             ReceiptPath = receiptPath,
+            ReceiptHash = GetString(root, "receiptHash"),
             Success = GetBool(root, "success"),
             DryRun = GetBool(root, "dryRun"),
             Format = GetString(root, "format"),
@@ -137,7 +138,49 @@ public static class DeliveryManifestReader
 
         entry.ReceiptExists = true;
         ReadReceipt(entry, issues);
+        VerifyReceiptHash(entry, issues);
         return entry;
+    }
+
+    private static void VerifyReceiptHash(DeliveryManifestEntry entry, IList<DeliveryManifestIssue> issues)
+    {
+        if (!entry.ReceiptReadable || string.IsNullOrWhiteSpace(entry.ReceiptHash))
+            return;
+
+        if (!IsSha256Hex(entry.ReceiptHash!))
+        {
+            issues.Add(new DeliveryManifestIssue(
+                entry.LineNumber,
+                "error",
+                "receipt-hash-invalid",
+                "receiptHash must be a 64-character SHA256 hex digest."));
+            return;
+        }
+
+        string actualHash;
+        try
+        {
+            actualHash = DeliveryManifestWriter.ComputeSha256Hex(entry.ResolvedReceiptPath!);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            issues.Add(new DeliveryManifestIssue(
+                entry.LineNumber,
+                "error",
+                "receipt-hash-unreadable",
+                $"receipt file could not be hashed: {ex.Message}"));
+            return;
+        }
+
+        entry.ActualReceiptHash = actualHash;
+        if (!string.Equals(entry.ReceiptHash, actualHash, StringComparison.OrdinalIgnoreCase))
+        {
+            issues.Add(new DeliveryManifestIssue(
+                entry.LineNumber,
+                "error",
+                "receipt-hash-mismatch",
+                $"receiptHash does not match receipt file: expected {entry.ReceiptHash}, got {actualHash}."));
+        }
     }
 
     private static void ReadReceipt(DeliveryManifestEntry entry, IList<DeliveryManifestIssue> issues)
@@ -210,6 +253,13 @@ public static class DeliveryManifestReader
             ? property.GetBoolean()
             : null;
     }
+
+    private static bool IsSha256Hex(string value) =>
+        value.Length == 64 &&
+        value.All(ch =>
+            ch is >= '0' and <= '9' ||
+            ch is >= 'a' and <= 'f' ||
+            ch is >= 'A' and <= 'F');
 }
 
 public sealed class DeliveryManifestReport
@@ -270,6 +320,12 @@ public sealed class DeliveryManifestEntry
 
     [JsonPropertyName("receiptPath")]
     public string? ReceiptPath { get; set; }
+
+    [JsonPropertyName("receiptHash")]
+    public string? ReceiptHash { get; set; }
+
+    [JsonPropertyName("actualReceiptHash")]
+    public string? ActualReceiptHash { get; set; }
 
     [JsonPropertyName("resolvedReceiptPath")]
     public string? ResolvedReceiptPath { get; set; }

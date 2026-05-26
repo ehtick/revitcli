@@ -186,6 +186,88 @@ public class HistoryCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task List_Json_RendersStableHistoryListContract()
+    {
+        var store = new HistoryStore(HistoryDir);
+        await store.InitAsync();
+        await store.AppendAsync(MakeSnapshot(), "manual",
+            new DateTimeOffset(2026, 4, 27, 0, 0, 0, TimeSpan.Zero));
+
+        var writer = new StringWriter();
+        var exit = await HistoryCommand.ExecuteListAsync(false, 20, HistoryDir, "json", writer);
+
+        Assert.Equal(0, exit);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var root = document.RootElement;
+        Assert.Equal("history-list.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.True(root.GetProperty("initialized").GetBoolean());
+        Assert.Equal(1, root.GetProperty("entryCount").GetInt32());
+        Assert.Equal(1, root.GetProperty("returnedCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("hiddenCount").GetInt32());
+        var entry = Assert.Single(root.GetProperty("entries").EnumerateArray());
+        Assert.Equal("manual", entry.GetProperty("source").GetString());
+        Assert.Equal(4, entry.GetProperty("elementCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task List_Json_WhenStoreMissing_RendersUninitializedContract()
+    {
+        var writer = new StringWriter();
+        var exit = await HistoryCommand.ExecuteListAsync(false, 20, HistoryDir, "json", writer);
+
+        Assert.Equal(0, exit);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var root = document.RootElement;
+        Assert.Equal("history-list.v1", root.GetProperty("schemaVersion").GetString());
+        Assert.False(root.GetProperty("initialized").GetBoolean());
+        Assert.Equal(0, root.GetProperty("entryCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("returnedCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("hiddenCount").GetInt32());
+        Assert.Empty(root.GetProperty("entries").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task List_Json_ReportsLimitAndIncludeFixesState()
+    {
+        var store = new HistoryStore(HistoryDir);
+        await store.InitAsync();
+        await store.AppendAsync(MakeSnapshot(), "fix-baseline",
+            new DateTimeOffset(2026, 4, 28, 0, 0, 0, TimeSpan.Zero));
+        await store.AppendAsync(MakeSnapshot(), "manual",
+            new DateTimeOffset(2026, 4, 27, 0, 0, 0, TimeSpan.Zero));
+        await store.AppendAsync(MakeSnapshot(), "cron",
+            new DateTimeOffset(2026, 4, 26, 0, 0, 0, TimeSpan.Zero));
+
+        var limitedWriter = new StringWriter();
+        var limitedExit = await HistoryCommand.ExecuteListAsync(false, 1, HistoryDir, "json", limitedWriter);
+
+        Assert.Equal(0, limitedExit);
+        using var limitedDocument = JsonDocument.Parse(limitedWriter.ToString());
+        var limited = limitedDocument.RootElement;
+        Assert.False(limited.GetProperty("includeFixes").GetBoolean());
+        Assert.Equal(2, limited.GetProperty("entryCount").GetInt32());
+        Assert.Equal(1, limited.GetProperty("returnedCount").GetInt32());
+        Assert.Equal(1, limited.GetProperty("hiddenCount").GetInt32());
+        Assert.DoesNotContain(
+            limited.GetProperty("entries").EnumerateArray(),
+            entry => entry.GetProperty("source").GetString() == "fix-baseline");
+
+        var includeWriter = new StringWriter();
+        var includeExit = await HistoryCommand.ExecuteListAsync(true, 5, HistoryDir, "json", includeWriter);
+
+        Assert.Equal(0, includeExit);
+        using var includeDocument = JsonDocument.Parse(includeWriter.ToString());
+        var include = includeDocument.RootElement;
+        Assert.True(include.GetProperty("includeFixes").GetBoolean());
+        Assert.Equal(3, include.GetProperty("entryCount").GetInt32());
+        Assert.Equal(3, include.GetProperty("returnedCount").GetInt32());
+        Assert.Equal(0, include.GetProperty("hiddenCount").GetInt32());
+        Assert.Contains(
+            include.GetProperty("entries").EnumerateArray(),
+            entry => entry.GetProperty("source").GetString() == "fix-baseline");
+    }
+
+    [Fact]
     public async Task List_LimitTruncatesAndAnnouncesHidden()
     {
         var store = new HistoryStore(HistoryDir);
@@ -210,6 +292,15 @@ public class HistoryCommandTests : IDisposable
         var exit = await HistoryCommand.ExecuteListAsync(false, 0, HistoryDir, writer);
         Assert.Equal(1, exit);
         Assert.Contains("limit", writer.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task List_InvalidOutput_ReturnsOne()
+    {
+        var writer = new StringWriter();
+        var exit = await HistoryCommand.ExecuteListAsync(false, 20, HistoryDir, "xml", writer);
+        Assert.Equal(1, exit);
+        Assert.Contains("--output", writer.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

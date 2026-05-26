@@ -493,6 +493,7 @@ public static class IssueCommand
             SourcePath = file.SourcePath,
             ArchivePath = file.ArchivePath,
             Bytes = file.Bytes,
+            Sha256 = file.Sha256,
             LineNumber = file.LineNumber
         }));
 
@@ -547,7 +548,8 @@ public static class IssueCommand
                 Kind = "journal-signature",
                 SourcePath = signaturePath,
                 ArchivePath = ".revitcli/journal.jsonl.sig",
-                Bytes = info.Length
+                Bytes = info.Length,
+                Sha256 = ComputeSha256Hex(signaturePath)
             });
         }
     }
@@ -583,16 +585,23 @@ public static class IssueCommand
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or NotSupportedException)
         {
+            var failureCode = report.BundleWritten && !report.ReceiptWritten
+                ? "receipt-write-failed"
+                : "bundle-write-failed";
+            var failurePath = string.Equals(failureCode, "receipt-write-failed", StringComparison.Ordinal)
+                ? report.ReceiptPath
+                : report.BundlePath;
             TryDeleteFile(report.BundlePath);
+            TryDeleteFile(report.ReceiptPath);
             report.BundleWritten = false;
             report.BundleHash = null;
             report.WrittenAtUtc = null;
             report.ReceiptWritten = false;
             AddIssueOnce(report.Issues, new IssueContractIssue(
                 "error",
-                "bundle-write-failed",
+                failureCode,
                 $"Failed to write issue package: {ex.Message}",
-                report.BundlePath,
+                failurePath,
                 "revitcli issue package"));
         }
     }
@@ -641,7 +650,7 @@ public static class IssueCommand
     }
 
     private static bool ShouldCarryPreflightIssueIntoPackage(IssueContractIssue issue) =>
-        issue.Code is "profile-schema-invalid" or "artifact-missing" or "hidden-model-mutation" or "mutation-plan-missing";
+        issue.Code is "profile-schema-invalid" or "artifact-missing" or "command-parse-failed" or "command-shell-operator" or "hidden-model-mutation" or "mutation-plan-missing";
 
     private static void AddIssueOnce(List<IssueContractIssue> issues, IssueContractIssue issue)
     {
@@ -717,9 +726,31 @@ public static class IssueCommand
         if (string.IsNullOrWhiteSpace(command))
             return false;
 
-        if (IsPlanApplyCommand(command, out var planPath))
+        if (WorkflowCommandLine.ContainsShellOperator(command))
         {
-            if (CommandBoolOptionIsTrue(command, "--dry-run"))
+            issue = new IssueContractIssue(
+                "error",
+                "command-shell-operator",
+                $"{context} must be a single revitcli command without shell operators: {command}",
+                null,
+                command);
+            return true;
+        }
+
+        if (!TryTokenizeCommand(command, out var tokens, out var parseError))
+        {
+            issue = new IssueContractIssue(
+                "error",
+                "command-parse-failed",
+                $"{context} could not be parsed: {parseError}",
+                null,
+                command);
+            return true;
+        }
+
+        if (IsPlanApplyCommand(tokens, out var planPath))
+        {
+            if (CommandBoolOptionIsTrue(tokens, "--dry-run"))
                 return false;
 
             if (ReferencesReviewedPlan(profilePath, planPath, reviewedPlanPaths))
@@ -734,7 +765,7 @@ public static class IssueCommand
             return true;
         }
 
-        if (!IsHiddenModelMutation(command))
+        if (!IsHiddenModelMutation(tokens))
             return false;
 
         issue = new IssueContractIssue(
@@ -746,46 +777,63 @@ public static class IssueCommand
         return true;
     }
 
-    private static bool IsHiddenModelMutation(string? command)
+    private static bool TryTokenizeCommand(string command, out IReadOnlyList<string> tokens, out string error)
     {
-        if (string.IsNullOrWhiteSpace(command))
+        try
+        {
+            tokens = WorkflowCommandLine.Tokenize(command);
+            error = "";
+            return true;
+        }
+        catch (FormatException ex)
+        {
+            tokens = Array.Empty<string>();
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool IsHiddenModelMutation(IReadOnlyList<string> tokens)
+    {
+        if (tokens.Count == 0)
             return false;
 
-        var normalized = " " + command.Trim().ToLowerInvariant() + " ";
-        if (normalized.Contains(" --dry-run ", StringComparison.Ordinal) ||
-            normalized.Contains(" --plan-output ", StringComparison.Ordinal))
+        if (CommandBoolOptionIsTrue(tokens, "--dry-run") ||
+            CommandHasOption(tokens, "--plan-output"))
         {
             return false;
         }
 
-        if (StartsWithCommand(normalized, "revitcli rollback") ||
-            StartsWithCommand(normalized, "rollback"))
+        var offset = tokens.Count > 0 && string.Equals(tokens[0], "revitcli", StringComparison.OrdinalIgnoreCase)
+            ? 1
+            : 0;
+        if (offset >= tokens.Count)
+            return false;
+
+        if (CommandStartsWith(tokens, offset, "rollback"))
         {
             return false;
         }
 
-        if (StartsWithCommand(normalized, "revitcli set") ||
-            StartsWithCommand(normalized, "set") ||
-            StartsWithCommand(normalized, "revitcli import") ||
-            StartsWithCommand(normalized, "import"))
+        if (CommandStartsWith(tokens, offset, "set") ||
+            CommandStartsWith(tokens, offset, "import"))
         {
             return true;
         }
 
-        if ((StartsWithCommand(normalized, "revitcli fix") || StartsWithCommand(normalized, "fix")) &&
-            normalized.Contains(" --apply ", StringComparison.Ordinal))
+        if (CommandStartsWith(tokens, offset, "fix") &&
+            CommandBoolOptionIsTrue(tokens, "--apply"))
         {
             return true;
         }
 
-        if (StartsWithCommand(normalized, "revitcli schedule create") ||
-            StartsWithCommand(normalized, "schedule create"))
+        if (CommandStartsWith(tokens, offset, "schedule", "create"))
         {
             return true;
         }
 
-        if ((StartsWithCommand(normalized, "revitcli family purge") || StartsWithCommand(normalized, "family purge")) &&
-            normalized.Contains(" --apply ", StringComparison.Ordinal))
+        if (CommandStartsWith(tokens, offset, "family", "purge") &&
+            CommandBoolOptionIsTrue(tokens, "--apply"))
         {
             return true;
         }
@@ -793,19 +841,9 @@ public static class IssueCommand
         return false;
     }
 
-    private static bool IsPlanApplyCommand(string command, out string? planPath)
+    private static bool IsPlanApplyCommand(IReadOnlyList<string> tokens, out string? planPath)
     {
         planPath = null;
-        IReadOnlyList<string> tokens;
-        try
-        {
-            tokens = WorkflowCommandLine.Tokenize(command);
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-
         var offset = tokens.Count > 0 && string.Equals(tokens[0], "revitcli", StringComparison.OrdinalIgnoreCase)
             ? 1
             : 0;
@@ -875,18 +913,8 @@ public static class IssueCommand
         string.Equals(token, "true", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(token, "false", StringComparison.OrdinalIgnoreCase);
 
-    private static bool CommandBoolOptionIsTrue(string command, string option)
+    private static bool CommandBoolOptionIsTrue(IReadOnlyList<string> tokens, string option)
     {
-        IReadOnlyList<string> tokens;
-        try
-        {
-            tokens = WorkflowCommandLine.Tokenize(command);
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-
         for (var i = 0; i < tokens.Count; i++)
         {
             var token = tokens[i];
@@ -907,15 +935,29 @@ public static class IssueCommand
         return false;
     }
 
+    private static bool CommandHasOption(IReadOnlyList<string> tokens, string option) =>
+        tokens.Any(token => IsOptionToken(token, option));
+
+    private static bool CommandStartsWith(IReadOnlyList<string> tokens, int offset, params string[] commandTokens)
+    {
+        if (tokens.Count < offset + commandTokens.Length)
+            return false;
+
+        for (var i = 0; i < commandTokens.Length; i++)
+        {
+            if (!string.Equals(tokens[offset + i], commandTokens[i], StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        return true;
+    }
+
     private static bool ReferencesReviewedPlan(
         string profilePath,
         string? planPath,
         IReadOnlySet<string> reviewedPlanPaths) =>
         !string.IsNullOrWhiteSpace(planPath) &&
         reviewedPlanPaths.Contains(ResolveProfileRelativePath(profilePath, planPath));
-
-    private static bool StartsWithCommand(string normalizedPaddedCommand, string command) =>
-        normalizedPaddedCommand.StartsWith(" " + command + " ", StringComparison.Ordinal);
 
     private static string NormalizeSeverity(string? severity, string fallback)
     {
@@ -1029,10 +1071,10 @@ public static class IssueCommand
         lines.Add("");
         lines.Add("## Issues");
         lines.Add("");
-        lines.Add("| Severity | Code | Message |");
-        lines.Add("|---|---|---|");
+        lines.Add("| Severity | Category | Code | Safe retry | Message | Remediation |");
+        lines.Add("|---|---|---|---|---|---|");
         foreach (var issue in issues)
-            lines.Add($"| `{issue.Severity}` | `{issue.Code}` | {EscapeCell(issue.Message)} |");
+            lines.Add($"| `{issue.Severity}` | `{issue.Category}` | `{issue.Code}` | `{issue.SafeRetry.ToString().ToLowerInvariant()}` | {EscapeCell(issue.Message)} | {EscapeCell(issue.Remediation)} |");
     }
 
     private static void AppendCommandsMarkdown(List<string> lines, IReadOnlyList<string> commands)
@@ -1150,7 +1192,10 @@ public static class IssueCommand
         public int WarningCount => Issues.Count(issue => string.Equals(issue.Severity, "warning", StringComparison.OrdinalIgnoreCase));
 
         [JsonPropertyName("noHiddenMutation")]
-        public bool NoHiddenMutation => Issues.All(issue => !string.Equals(issue.Code, "hidden-model-mutation", StringComparison.OrdinalIgnoreCase));
+        public bool NoHiddenMutation => Issues.All(issue =>
+            !string.Equals(issue.Code, "hidden-model-mutation", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(issue.Code, "command-shell-operator", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(issue.Code, "command-parse-failed", StringComparison.OrdinalIgnoreCase));
 
         [JsonPropertyName("checks")]
         public List<IssuePreflightCheck> Checks { get; } = new();
@@ -1351,6 +1396,9 @@ public static class IssueCommand
         [JsonPropertyName("bytes")]
         public long Bytes { get; set; }
 
+        [JsonPropertyName("sha256")]
+        public string Sha256 { get; set; } = "";
+
         [JsonPropertyName("lineNumber")]
         public int? LineNumber { get; set; }
     }
@@ -1360,5 +1408,63 @@ public static class IssueCommand
         [property: JsonPropertyName("code")] string Code,
         [property: JsonPropertyName("message")] string Message,
         [property: JsonPropertyName("path")] string? Path,
-        [property: JsonPropertyName("command")] string? Command);
+        [property: JsonPropertyName("command")] string? Command)
+    {
+        [JsonPropertyName("category")]
+        public string Category => ResolveCategory(Code);
+
+        [JsonPropertyName("remediation")]
+        public string Remediation => ResolveRemediation(Code);
+
+        [JsonPropertyName("safeRetry")]
+        public bool SafeRetry => ResolveSafeRetry(Code);
+
+        private static string ResolveCategory(string code) =>
+            code.ToLowerInvariant() switch
+            {
+                "profile-schema-invalid" => "profile",
+                "artifact-missing" => "artifact",
+                "command-parse-failed" => "command",
+                "command-shell-operator" => "command",
+                "hidden-model-mutation" => "safety",
+                "mutation-plan-missing" => "mutation-plan",
+                "bundle-plan-failed" => "package",
+                "bundle-exists" => "package",
+                "bundle-write-failed" => "package",
+                "journal-sign-failed" => "journal",
+                var value when value.Contains("receipt", StringComparison.Ordinal) => "receipt",
+                var value when value.Contains("manifest", StringComparison.Ordinal) => "deliverables",
+                _ => "issue-contract"
+            };
+
+        private static string ResolveRemediation(string code) =>
+            code.ToLowerInvariant() switch
+            {
+                "profile-schema-invalid" => "Use schemaVersion: issue-profile.v1.",
+                "artifact-missing" => "Create the artifact or lower its profile severity to info if it is optional.",
+                "command-parse-failed" => "Fix command quoting so issue preflight can parse and classify the command.",
+                "command-shell-operator" => "Split chained shell commands into explicit issue profile checks so each command can be classified before execution.",
+                "hidden-model-mutation" => "Generate an explicit mutation plan, review it, and reference it under mutationPlans before package/apply.",
+                "mutation-plan-missing" => "Create the referenced plan file before issue preflight or package.",
+                "bundle-plan-failed" => "Fix deliverables manifest or package path issues, then rerun the dry-run.",
+                "bundle-exists" => "Choose a new bundle path or remove the existing bundle intentionally.",
+                "bundle-write-failed" => "Fix package output permissions or path problems, then rerun package.",
+                "journal-sign-failed" => "Fix local journal/signature inputs and rerun journal sign or package.",
+                var value when value.Contains("receipt", StringComparison.Ordinal) => "Regenerate or restore the referenced receipt before packaging.",
+                var value when value.Contains("manifest", StringComparison.Ordinal) => "Regenerate or verify the delivery manifest before packaging.",
+                _ => "Review the issue details and rerun the command after correcting the local artifact."
+            };
+
+        private static bool ResolveSafeRetry(string code) =>
+            code.ToLowerInvariant() switch
+            {
+                "artifact-missing" => true,
+                "bundle-plan-failed" => true,
+                "bundle-write-failed" => true,
+                "journal-sign-failed" => true,
+                var value when value.Contains("receipt", StringComparison.Ordinal) => true,
+                var value when value.Contains("manifest", StringComparison.Ordinal) => true,
+                _ => false
+            };
+    }
 }

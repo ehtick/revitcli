@@ -2,6 +2,7 @@ using System;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -176,6 +177,7 @@ public static class SchedulesCommand
         {
             spec = LoadSpecSet(specPath);
             ValidateSpecSet(spec);
+            ValidateUniqueExportNames(spec);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -192,12 +194,21 @@ public static class SchedulesCommand
 
         var fullOutputDir = Path.GetFullPath(outputDirectory);
         Directory.CreateDirectory(fullOutputDir);
+        var finalManifestPath = Path.GetFullPath(manifestPath ?? Path.Combine(fullOutputDir, "schedule-export-manifest.json"));
+        var status = await TryGetStatusAsync(client);
         var manifest = new ScheduleExportManifest(
             "schedule-export-manifest.v1",
             DateTime.UtcNow.ToString("o"),
             set,
+            set,
             Path.GetFullPath(specPath),
             fullOutputDir,
+            finalManifestPath,
+            format.ToLowerInvariant(),
+            BuildBatchExportCommand(set, outputDirectory, format, finalManifestPath),
+            status?.DocumentPath,
+            status?.DocumentName,
+            status?.RevitVersion,
             new List<ScheduleExportManifestEntry>(),
             new List<ScheduleExportManifestIssue>());
 
@@ -221,19 +232,88 @@ public static class SchedulesCommand
             if (!export.Success)
             {
                 manifest.Issues.Add(new ScheduleExportManifestIssue("error", "export-failed", schedule.NameOrKey(), export.Error ?? "unknown"));
-                manifest.Entries.Add(new ScheduleExportManifestEntry(schedule.NameOrKey(), match?.Id, schedule.Category, fullPath, false, 0, export.Error ?? "unknown"));
+                manifest.Entries.Add(new ScheduleExportManifestEntry(schedule.NameOrKey(), match?.Id, schedule.Category, fullPath, false, 0, 0, null, export.Error ?? "unknown"));
                 continue;
             }
 
             var data = export.Data ?? new ScheduleData();
             File.WriteAllText(fullPath, FormatCsv(data));
-            manifest.Entries.Add(new ScheduleExportManifestEntry(schedule.NameOrKey(), match?.Id, schedule.Category, fullPath, true, data.TotalRows, null));
+            var fileInfo = new FileInfo(fullPath);
+            manifest.Entries.Add(new ScheduleExportManifestEntry(
+                schedule.NameOrKey(),
+                match?.Id,
+                schedule.Category,
+                fullPath,
+                true,
+                data.TotalRows,
+                fileInfo.Length,
+                ComputeSha256Hex(fullPath),
+                null));
         }
 
-        var finalManifestPath = Path.GetFullPath(manifestPath ?? Path.Combine(fullOutputDir, "schedule-export-manifest.json"));
         SaveJson(finalManifestPath, manifest);
+        await TryLogBatchExportLedgerOperationAsync(fullOutputDir, finalManifestPath, manifest);
         await output.WriteLineAsync(Render(manifest, normalizedOutput));
         return manifest.Issues.Any(issue => issue.Severity == "error") ? 2 : 0;
+    }
+
+    private static async Task TryLogBatchExportLedgerOperationAsync(
+        string outputDirectory,
+        string manifestPath,
+        ScheduleExportManifest manifest)
+    {
+        try
+        {
+            var ledgerOutput = new StringWriter();
+            var evidenceLinks = new List<string> { manifestPath };
+            evidenceLinks.AddRange(manifest.Entries
+                .Where(entry => entry.Success)
+                .Select(entry => entry.OutputPath));
+
+            var exitCode = await LedgerCommand.ExecuteAppendAsync(
+                outputDirectory,
+                action: "schedules.batch-export",
+                category: manifest.Format,
+                operatorName: null,
+                status: manifest.Issues.Any(issue => issue.Severity == "error") ? "failed" : "succeeded",
+                summary: $"Batch-exported {manifest.Entries.Count(entry => entry.Success)} schedule file(s) for set {manifest.Set}",
+                timestamp: null,
+                model: NormalizeLedgerText(manifest.DocumentName),
+                modelPath: NormalizeLedgerText(manifest.ModelPath),
+                planHash: null,
+                artifactPath: manifestPath,
+                receiptPath: null,
+                receiptHash: null,
+                rollbackPointer: null,
+                evidenceLinks: evidenceLinks,
+                yes: true,
+                outputFormat: "json",
+                output: ledgerOutput,
+                commandName: "schedules",
+                commandArgs: BuildBatchExportLedgerArgs(manifest.Set, manifest.OutputDirectory, manifest.Format, manifestPath),
+                affectedElementCount: null,
+                affectedElementIds: Array.Empty<long>(),
+                revitVersion: NormalizeLedgerText(manifest.DocumentVersion));
+            if (exitCode != 0)
+                Console.Error.WriteLine($"[RevitCli] Schedule export ledger write failed (operation ledger incomplete): {ledgerOutput.ToString().Trim()}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or JsonException)
+        {
+            Console.Error.WriteLine($"[RevitCli] Schedule export ledger write failed (operation ledger incomplete): {ex.Message}");
+        }
+    }
+
+    private static async Task<StatusInfo?> TryGetStatusAsync(RevitClient client)
+    {
+        try
+        {
+            var status = await client.GetStatusAsync();
+            return status.Success ? status.Data : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return null;
+        }
     }
 
     public static async Task<int> ExecuteCompareAsync(
@@ -326,6 +406,17 @@ public static class SchedulesCommand
         }
     }
 
+    private static void ValidateUniqueExportNames(ScheduleSpecSet spec)
+    {
+        var exportNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var schedule in spec.Schedules)
+        {
+            var exportName = SafeFileName(schedule.NameOrKey()) + ".csv";
+            if (!exportNames.Add(exportName))
+                throw new InvalidOperationException($"Schedule specs generate duplicate export file name '{exportName}'. Rename one schedule before batch export.");
+        }
+    }
+
     private static ScheduleEnsurePlan CreateEnsurePlan(
         ScheduleSpecSet spec,
         IReadOnlyList<ScheduleInfo> existing,
@@ -398,14 +489,40 @@ public static class SchedulesCommand
             if (!fromFiles.TryGetValue(file, out var beforePath))
             {
                 var current = ReadCsvRows(toFiles[file], keys);
-                diffs.Add(new ScheduleFileDiff(file, 0, current.Count, 0, current.Count, 0));
+                var currentEvidence = CreateFileEvidence(toFiles[file]);
+                diffs.Add(new ScheduleFileDiff(
+                    file,
+                    null,
+                    currentEvidence.Path,
+                    null,
+                    currentEvidence.Sha256,
+                    null,
+                    currentEvidence.Bytes,
+                    0,
+                    current.Count,
+                    0,
+                    current.Count,
+                    0));
                 continue;
             }
 
             if (!toFiles.TryGetValue(file, out var afterPath))
             {
                 var before = ReadCsvRows(beforePath, keys);
-                diffs.Add(new ScheduleFileDiff(file, before.Count, 0, 0, 0, before.Count));
+                var beforeEvidence = CreateFileEvidence(beforePath);
+                diffs.Add(new ScheduleFileDiff(
+                    file,
+                    beforeEvidence.Path,
+                    null,
+                    beforeEvidence.Sha256,
+                    null,
+                    beforeEvidence.Bytes,
+                    null,
+                    before.Count,
+                    0,
+                    0,
+                    0,
+                    before.Count));
                 continue;
             }
 
@@ -415,7 +532,21 @@ public static class SchedulesCommand
                 .Count(key => !RowsEqual(beforeRows[key], afterRows[key]));
             var added = afterRows.Keys.Except(beforeRows.Keys, StringComparer.OrdinalIgnoreCase).Count();
             var removed = beforeRows.Keys.Except(afterRows.Keys, StringComparer.OrdinalIgnoreCase).Count();
-            diffs.Add(new ScheduleFileDiff(file, beforeRows.Count, afterRows.Count, changed, added, removed));
+            var fromEvidence = CreateFileEvidence(beforePath);
+            var toEvidence = CreateFileEvidence(afterPath);
+            diffs.Add(new ScheduleFileDiff(
+                file,
+                fromEvidence.Path,
+                toEvidence.Path,
+                fromEvidence.Sha256,
+                toEvidence.Sha256,
+                fromEvidence.Bytes,
+                toEvidence.Bytes,
+                beforeRows.Count,
+                afterRows.Count,
+                changed,
+                added,
+                removed));
         }
 
         return new ScheduleDiffReport(
@@ -502,10 +633,10 @@ public static class SchedulesCommand
                 writer.WriteLine($"- Entries: `{manifest.Entries.Count}`");
                 writer.WriteLine($"- Issues: `{manifest.Issues.Count}`");
                 writer.WriteLine();
-                writer.WriteLine("| Schedule | Rows | Success | Path |");
-                writer.WriteLine("| --- | ---: | --- | --- |");
+                writer.WriteLine("| Schedule | Rows | Bytes | SHA256 | Success | Path |");
+                writer.WriteLine("| --- | ---: | ---: | --- | --- | --- |");
                 foreach (var entry in manifest.Entries)
-                    writer.WriteLine($"| {EscapeTable(entry.ScheduleName)} | {entry.RowCount} | `{entry.Success.ToString().ToLowerInvariant()}` | `{EscapeInline(entry.OutputPath)}` |");
+                    writer.WriteLine($"| {EscapeTable(entry.ScheduleName)} | {entry.RowCount} | {entry.Bytes} | `{EscapeInline(ShortHash(entry.Sha256))}` | `{entry.Success.ToString().ToLowerInvariant()}` | `{EscapeInline(entry.OutputPath)}` |");
                 break;
             case ScheduleDiffReport report:
                 writer.WriteLine("# Schedule Diff Report");
@@ -515,10 +646,10 @@ public static class SchedulesCommand
                 writer.WriteLine($"- Added rows: `{report.Summary.AddedRows}`");
                 writer.WriteLine($"- Removed rows: `{report.Summary.RemovedRows}`");
                 writer.WriteLine();
-                writer.WriteLine("| File | Before | After | Changed | Added | Removed |");
-                writer.WriteLine("| --- | ---: | ---: | ---: | ---: | ---: |");
+                writer.WriteLine("| File | Before | After | Changed | Added | Removed | Before SHA256 | After SHA256 |");
+                writer.WriteLine("| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |");
                 foreach (var diff in report.Files)
-                    writer.WriteLine($"| {EscapeTable(diff.File)} | {diff.BeforeRows} | {diff.AfterRows} | {diff.ChangedRows} | {diff.AddedRows} | {diff.RemovedRows} |");
+                    writer.WriteLine($"| {EscapeTable(diff.File)} | {diff.BeforeRows} | {diff.AfterRows} | {diff.ChangedRows} | {diff.AddedRows} | {diff.RemovedRows} | `{EscapeInline(ShortHash(diff.BeforeSha256))}` | `{EscapeInline(ShortHash(diff.AfterSha256))}` |");
                 break;
         }
 
@@ -570,6 +701,59 @@ public static class SchedulesCommand
         File.WriteAllText(full, JsonSerializer.Serialize(value, TerminalJsonOptions.PrettyCamel));
     }
 
+    private static ScheduleFileEvidence CreateFileEvidence(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var info = new FileInfo(fullPath);
+        return new ScheduleFileEvidence(fullPath, info.Length, ComputeSha256Hex(fullPath));
+    }
+
+    private static string BuildBatchExportCommand(string set, string outputDirectory, string format, string manifestPath)
+    {
+        return string.Join(
+            " ",
+            "revitcli",
+            "schedules",
+            "batch-export",
+            "--set",
+            QuoteArgument(set),
+            "--output-dir",
+            QuoteArgument(Path.GetFullPath(outputDirectory)),
+            "--format",
+            QuoteArgument(format.ToLowerInvariant()),
+            "--manifest",
+            QuoteArgument(Path.GetFullPath(manifestPath)));
+    }
+
+    private static string[] BuildBatchExportLedgerArgs(string set, string outputDirectory, string format, string manifestPath) =>
+        new[]
+        {
+            "schedules",
+            "batch-export",
+            "--set",
+            set,
+            "--output-dir",
+            outputDirectory,
+            "--format",
+            format.ToLowerInvariant(),
+            "--manifest",
+            Path.GetFullPath(manifestPath)
+        };
+
+    private static string? NormalizeLedgerText(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string QuoteArgument(string value)
+    {
+        return $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
+    }
+
+    private static string ComputeSha256Hex(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
     private static string SafeFileName(string value)
     {
         var invalid = Path.GetInvalidFileNameChars().ToHashSet();
@@ -582,6 +766,11 @@ public static class SchedulesCommand
 
     private static string EscapeTable(string? value) =>
         EscapeInline(value).Replace("|", "\\|", StringComparison.Ordinal);
+
+    private static string ShortHash(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "-" : value.Length <= 12 ? value : value[..12];
+
+    private sealed record ScheduleFileEvidence(string Path, long Bytes, string Sha256);
 
     public sealed class ScheduleSpecSet
     {
@@ -646,8 +835,15 @@ public static class SchedulesCommand
         [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
         [property: JsonPropertyName("createdAtUtc")] string CreatedAtUtc,
         [property: JsonPropertyName("set")] string Set,
+        [property: JsonPropertyName("profile")] string Profile,
         [property: JsonPropertyName("specPath")] string SpecPath,
         [property: JsonPropertyName("outputDirectory")] string OutputDirectory,
+        [property: JsonPropertyName("manifestPath")] string ManifestPath,
+        [property: JsonPropertyName("format")] string Format,
+        [property: JsonPropertyName("command")] string Command,
+        [property: JsonPropertyName("modelPath")] string? ModelPath,
+        [property: JsonPropertyName("documentName")] string? DocumentName,
+        [property: JsonPropertyName("documentVersion")] string? DocumentVersion,
         [property: JsonPropertyName("entries")] List<ScheduleExportManifestEntry> Entries,
         [property: JsonPropertyName("issues")] List<ScheduleExportManifestIssue> Issues);
 
@@ -658,6 +854,8 @@ public static class SchedulesCommand
         [property: JsonPropertyName("outputPath")] string OutputPath,
         [property: JsonPropertyName("success")] bool Success,
         [property: JsonPropertyName("rowCount")] int RowCount,
+        [property: JsonPropertyName("bytes")] long Bytes,
+        [property: JsonPropertyName("sha256")] string? Sha256,
         [property: JsonPropertyName("error")] string? Error);
 
     public sealed record ScheduleExportManifestIssue(
@@ -683,6 +881,12 @@ public static class SchedulesCommand
 
     public sealed record ScheduleFileDiff(
         [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("beforePath")] string? BeforePath,
+        [property: JsonPropertyName("afterPath")] string? AfterPath,
+        [property: JsonPropertyName("beforeSha256")] string? BeforeSha256,
+        [property: JsonPropertyName("afterSha256")] string? AfterSha256,
+        [property: JsonPropertyName("beforeBytes")] long? BeforeBytes,
+        [property: JsonPropertyName("afterBytes")] long? AfterBytes,
         [property: JsonPropertyName("beforeRows")] int BeforeRows,
         [property: JsonPropertyName("afterRows")] int AfterRows,
         [property: JsonPropertyName("changedRows")] int ChangedRows,

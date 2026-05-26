@@ -4,6 +4,7 @@ using System.CommandLine;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Client;
@@ -874,6 +875,14 @@ public static class PlanCommand
             return 1;
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         plan.ApplyRequest.DryRun = dryRun;
         plan.ApplyRequest.Category = null;
         plan.ApplyRequest.Filter = null;
@@ -897,7 +906,6 @@ public static class PlanCommand
         }
 
         await output.WriteLineAsync($"Applied plan: modified {data.Affected} element(s).");
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "set",
@@ -982,6 +990,14 @@ public static class PlanCommand
             }
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         var (affected, previews, failures, rollbackActions) = await ApplySheetIssueGroupsAsync(client, plan, dryRun);
         if (dryRun)
         {
@@ -1012,7 +1028,6 @@ public static class PlanCommand
                     $"  - {failure.Param}={failure.Value} (ids={string.Join(",", failure.ElementIds)}): {failure.Message}");
         }
 
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "sheet-issue",
@@ -1024,6 +1039,8 @@ public static class PlanCommand
         receipt.Success = failures.Count == 0;
         receipt.GroupCount = CreateSheetIssueGroups(plan).Count;
         receipt.ElementWrites = actionCount;
+        receipt.PlanActionCount = plan.Actions.Count;
+        receipt.SkippedCount = plan.Skipped.Count;
         receipt.Param = "sheet issue metadata";
         receipt.Value = $"{plan.IssueCode} / {plan.IssueDate}";
         receipt.Preview = previews;
@@ -1032,6 +1049,7 @@ public static class PlanCommand
         receipt.AffectedElementIds = receipt.RollbackActions.Count > 0
             ? DistinctSorted(receipt.RollbackActions.Select(action => action.ElementId))
             : DistinctSorted(plan.Actions.Select(action => action.SheetId));
+        receipt.RequiresRollback = receipt.RollbackActions.Count > 0;
         var receiptPath = SetPlanFileStore.SaveReceipt(file, receipt);
         await output.WriteLineAsync($"Receipt saved to {receiptPath}");
         return failures.Count == 0 ? 0 : 2;
@@ -1156,6 +1174,14 @@ public static class PlanCommand
             }
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         var (affected, previews, failures, rollbackActions) = await ApplySheetRenumberGroupsAsync(client, plan, dryRun);
         if (dryRun)
         {
@@ -1186,7 +1212,6 @@ public static class PlanCommand
                     $"  - {failure.Param}={failure.Value} (ids={string.Join(",", failure.ElementIds)}): {failure.Message}");
         }
 
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "sheet-renumber",
@@ -1198,6 +1223,8 @@ public static class PlanCommand
         receipt.Success = failures.Count == 0;
         receipt.GroupCount = CreateSheetRenumberGroups(plan).Count;
         receipt.ElementWrites = actionCount;
+        receipt.PlanActionCount = plan.Actions.Count;
+        receipt.SkippedCount = plan.Skipped.Count;
         receipt.Param = SheetRenumberPlanner.SheetNumberParameter;
         receipt.Value = $"{actionCount} sheet number change(s)";
         receipt.Preview = previews;
@@ -1206,6 +1233,7 @@ public static class PlanCommand
         receipt.AffectedElementIds = receipt.RollbackActions.Count > 0
             ? DistinctSorted(receipt.RollbackActions.Select(action => action.ElementId))
             : DistinctSorted(plan.Actions.Select(action => action.SheetId));
+        receipt.RequiresRollback = receipt.RollbackActions.Count > 0;
         var receiptPath = SetPlanFileStore.SaveReceipt(file, receipt);
         await output.WriteLineAsync($"Receipt saved to {receiptPath}");
         return failures.Count == 0 ? 0 : 2;
@@ -1351,6 +1379,14 @@ public static class PlanCommand
             }
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         var (affected, previews, failures, rollbackActions) = await ApplyRoomNumberingGroupsAsync(client, plan, dryRun);
         if (dryRun)
         {
@@ -1381,7 +1417,6 @@ public static class PlanCommand
                     $"  - {failure.Param}={failure.Value} (ids={string.Join(",", failure.ElementIds)}): {failure.Message}");
         }
 
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "room-numbering",
@@ -1393,6 +1428,9 @@ public static class PlanCommand
         receipt.Success = failures.Count == 0;
         receipt.GroupCount = RoomNumberingPlanner.CreateGroups(plan).Count;
         receipt.ElementWrites = actionCount;
+        receipt.RulePath = plan.RulePath;
+        receipt.PlanActionCount = plan.Actions.Count;
+        receipt.SkippedCount = plan.Skipped.Count;
         receipt.Param = plan.Parameter;
         receipt.Value = $"{actionCount} room number change(s)";
         receipt.Preview = previews;
@@ -1402,6 +1440,7 @@ public static class PlanCommand
         receipt.AffectedElementIds = receipt.RollbackActions.Count > 0
             ? DistinctSorted(receipt.RollbackActions.Select(action => action.ElementId))
             : DistinctSorted(plan.Actions.Select(action => action.RoomId));
+        receipt.RequiresRollback = receipt.RollbackActions.Count > 0;
         var receiptPath = SetPlanFileStore.SaveReceipt(file, receipt);
         await output.WriteLineAsync($"Receipt saved to {receiptPath}");
         return failures.Count == 0 ? 0 : 2;
@@ -1541,6 +1580,14 @@ public static class PlanCommand
             }
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         var (affected, previews, failures, rollbackActions) = await ApplyMarkAssignmentGroupsAsync(client, plan, dryRun);
         if (dryRun)
         {
@@ -1571,7 +1618,6 @@ public static class PlanCommand
                     $"  - {failure.Param}={failure.Value} (ids={string.Join(",", failure.ElementIds)}): {failure.Message}");
         }
 
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "mark-assignment",
@@ -1583,6 +1629,10 @@ public static class PlanCommand
         receipt.Success = failures.Count == 0;
         receipt.GroupCount = MarkNumberingPlanner.CreateGroups(plan).Count;
         receipt.ElementWrites = actionCount;
+        receipt.RulePath = plan.RulePath;
+        receipt.Sort = plan.Sort.ToList();
+        receipt.PlanActionCount = plan.Actions.Count;
+        receipt.SkippedCount = plan.Skipped.Count;
         receipt.Param = plan.Parameter;
         receipt.Value = $"{actionCount} Mark assignment change(s)";
         receipt.Preview = previews;
@@ -1592,6 +1642,7 @@ public static class PlanCommand
         receipt.AffectedElementIds = receipt.RollbackActions.Count > 0
             ? DistinctSorted(receipt.RollbackActions.Select(action => action.ElementId))
             : DistinctSorted(plan.Actions.Select(action => action.ElementId));
+        receipt.RequiresRollback = receipt.RollbackActions.Count > 0;
         var receiptPath = SetPlanFileStore.SaveReceipt(file, receipt);
         await output.WriteLineAsync($"Receipt saved to {receiptPath}");
         return failures.Count == 0 ? 0 : 2;
@@ -1704,6 +1755,14 @@ public static class PlanCommand
             return safety.ExitCode;
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         var response = await client.ApplyLinkRepairAsync(CreateLinkRepairRequest(plan, dryRun));
         if (!response.Success || response.Data == null)
         {
@@ -1732,7 +1791,6 @@ public static class PlanCommand
         if (data.Failures.Count > 0)
             await WriteCoordinationFailuresAsync(output, "link repair apply", data.Failures);
 
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "link-repair",
@@ -1797,6 +1855,14 @@ public static class PlanCommand
             return safety.ExitCode;
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         var response = await client.ApplyModelMapFixAsync(CreateModelMapFixRequest(plan, dryRun));
         if (!response.Success || response.Data == null)
         {
@@ -1825,7 +1891,6 @@ public static class PlanCommand
         if (data.Failures.Count > 0)
             await WriteCoordinationFailuresAsync(output, "model map-fix apply", data.Failures);
 
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "model-map-fix",
@@ -2045,6 +2110,14 @@ public static class PlanCommand
             return 1;
         }
 
+        PlanReceiptMetadata? metadata = null;
+        if (!dryRun)
+        {
+            metadata = await RequireReceiptMetadataAsync(client, output);
+            if (metadata == null)
+                return 1;
+        }
+
         var (affected, previews, failures, rollbackActions) = await ApplyImportGroupsAsync(
             client,
             plan,
@@ -2080,7 +2153,6 @@ public static class PlanCommand
                     $"  - {failure.Param}={failure.Value} (ids={string.Join(",", failure.ElementIds)}): {failure.Message}");
         }
 
-        var metadata = await TryGetReceiptMetadataAsync(client);
         var receipt = CreatePlanReceipt(
             file,
             "import",
@@ -2181,6 +2253,13 @@ public static class PlanCommand
             return 1;
         }
 
+        var metadata = CreateReceiptMetadata(snapshotResult.Data);
+        if (!HasReceiptDocumentIdentity(metadata))
+        {
+            await output.WriteLineAsync("Error: failed to capture receipt model identity: baseline snapshot does not include a model path or document name.");
+            return 1;
+        }
+
         try
         {
             var baselineDir = Path.GetDirectoryName(Path.GetFullPath(baselinePath));
@@ -2260,7 +2339,6 @@ public static class PlanCommand
 
         await output.WriteLineAsync($"Applied fix plan: modified {modified} element parameter(s).");
         await output.WriteLineAsync($"Rollback: revitcli rollback {baselinePath} --yes");
-        var metadata = CreateReceiptMetadata(snapshotResult.Data);
         var receipt = CreatePlanReceipt(
             file,
             "fix",
@@ -2379,6 +2457,7 @@ public static class PlanCommand
         return new PlanReceipt
         {
             PlanPath = Path.GetFullPath(file),
+            PlanHash = ComputeSha256Hex(file),
             Command = BuildPlanApplyCommand(file, maxChanges, allowInferred, highImpactThreshold, confirmHighImpact),
             DryRun = false,
             Timestamp = timestamp,
@@ -2424,17 +2503,41 @@ public static class PlanCommand
         return string.Join(" ", parts);
     }
 
-    private static async Task<PlanReceiptMetadata?> TryGetReceiptMetadataAsync(RevitClient client)
+    private static string ComputeSha256Hex(string file)
     {
+        using var stream = File.OpenRead(file);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    private static async Task<PlanReceiptMetadata?> RequireReceiptMetadataAsync(
+        RevitClient client,
+        TextWriter output)
+    {
+        ApiResponse<StatusInfo>? status;
         try
         {
-            var status = await client.GetStatusAsync();
-            return status.Success ? CreateReceiptMetadata(status.Data) : null;
+            status = await client.GetStatusAsync();
         }
-        catch
+        catch (Exception ex)
         {
+            await output.WriteLineAsync($"Error: failed to capture receipt model identity: {ex.Message}");
             return null;
         }
+
+        if (status == null || !status.Success || status.Data == null)
+        {
+            await output.WriteLineAsync($"Error: failed to capture receipt model identity: {status?.Error ?? "status unavailable"}");
+            return null;
+        }
+
+        var metadata = CreateReceiptMetadata(status.Data);
+        if (!HasReceiptDocumentIdentity(metadata))
+        {
+            await output.WriteLineAsync("Error: failed to capture receipt model identity: status did not include a model path or document name.");
+            return null;
+        }
+
+        return metadata;
     }
 
     private static PlanReceiptMetadata? CreateReceiptMetadata(StatusInfo? status)
@@ -2459,6 +2562,11 @@ public static class PlanCommand
             snapshot.Revit.Version);
     }
 
+    private static bool HasReceiptDocumentIdentity(PlanReceiptMetadata? metadata) =>
+        metadata != null &&
+        (!string.IsNullOrWhiteSpace(metadata.ModelPath) ||
+         !string.IsNullOrWhiteSpace(metadata.DocumentName));
+
     private static List<long> DistinctSorted(IEnumerable<long> ids)
     {
         return ids
@@ -2481,7 +2589,7 @@ public static class PlanCommand
             {
                 ElementId = item.Id,
                 Param = param,
-                OldValue = item.OldValue,
+                OldValue = item.OldValue ?? string.Empty,
                 NewValue = item.NewValue,
                 Source = source
             })
@@ -2534,7 +2642,7 @@ public static class PlanCommand
 
     private static string QuoteArgument(string value)
     {
-        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+        return $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
     }
 
     private sealed record PlanReceiptMetadata(

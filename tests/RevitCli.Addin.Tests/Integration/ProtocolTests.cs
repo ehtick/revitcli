@@ -43,7 +43,7 @@ public class ProtocolTests : IDisposable
 
         var info = ReadServerInfo();
         _actualPort = info.Port;
-        _client = new RevitClient($"http://localhost:{_actualPort}", info.Token);
+        _client = new RevitClient($"http://127.0.0.1:{_actualPort}", info.Token);
     }
 
     public void Dispose()
@@ -100,7 +100,7 @@ public class ProtocolTests : IDisposable
             Assert.NotNull(info);
             Assert.NotEqual(busyPort, info!.Port);
 
-            using var client = new RevitClient($"http://localhost:{info.Port}", info.Token);
+            using var client = new RevitClient($"http://127.0.0.1:{info.Port}", info.Token);
             var result = await client.GetStatusAsync();
 
             Assert.True(result.Success);
@@ -301,6 +301,107 @@ public class ProtocolTests : IDisposable
         Assert.Equal(Path.GetFullPath(outputDir), result.Data!.OutputDir);
         Assert.Single(result.Data.Exported);
         Assert.Equal(5001, result.Data.Exported[0].Id);
+    }
+
+    [Fact]
+    public async Task ViewsEndpoint_ReturnsPlaceholderViews()
+    {
+        var result = await _client.ListViewsAsync();
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.Contains(result.Data, view =>
+            view.Id == 3001 &&
+            view.Name == "Level 1 Floor Plan" &&
+            view.TemplateName == "Architectural Plan");
+    }
+
+    [Fact]
+    public async Task LinksEndpoint_ReturnsPlaceholderLinks()
+    {
+        var result = await _client.ListLinksAsync();
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.Contains(result.Data, link =>
+            link.Id == 4102 &&
+            link.LinkTypeId == 4202 &&
+            link.LinkedFileStatus == "NotFound" &&
+            link.PathExists == false);
+    }
+
+    [Fact]
+    public async Task LinkRepairEndpoint_ReturnsPreviewActions()
+    {
+        var result = await _client.ApplyLinkRepairAsync(new LinkRepairRequest
+        {
+            Actions = new List<LinkRepairOperation>
+            {
+                new()
+                {
+                    LinkId = 4102,
+                    LinkTypeId = 4202,
+                    LinkName = "MEP Model",
+                    TypeName = "MEP Model.rvt",
+                    OldPath = @"D:\coordination\MEP Model.rvt",
+                    NewPath = @"D:\coordination\fixed\MEP Model.rvt",
+                    OldLoaded = false,
+                    NewLoaded = true
+                }
+            }
+        });
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.Equal(1, result.Data.Affected);
+        var action = Assert.Single(result.Data.Preview);
+        Assert.Equal(4102, action.LinkId);
+        Assert.Equal(4202, action.LinkTypeId);
+        Assert.Equal(@"D:\coordination\fixed\MEP Model.rvt", action.NewPath);
+        Assert.True(action.NewLoaded);
+    }
+
+    [Fact]
+    public async Task ModelMapEndpoint_ReturnsPlaceholderElements()
+    {
+        var result = await _client.ListModelMapElementsAsync();
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.Contains(result.Data, element =>
+            element.Id == 5101 &&
+            element.Category == "Rooms" &&
+            element.WorksetName == "Interior" &&
+            element.AvailableWorksets.Contains("Architecture"));
+    }
+
+    [Fact]
+    public async Task ModelMapFixEndpoint_ReturnsPreviewActions()
+    {
+        var result = await _client.ApplyModelMapFixAsync(new ModelMapFixRequest
+        {
+            Actions = new List<ModelMapFixOperation>
+            {
+                new()
+                {
+                    ElementId = 5101,
+                    ElementName = "Room 101",
+                    Category = "Rooms",
+                    Field = "workset",
+                    OldValue = "Interior",
+                    NewValue = "Architecture"
+                }
+            }
+        });
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Data);
+        Assert.Equal(1, result.Data.Affected);
+        var action = Assert.Single(result.Data.Preview);
+        Assert.Equal(5101, action.ElementId);
+        Assert.Equal("workset", action.Field);
+        Assert.Equal("Architecture", action.NewValue);
+        Assert.Equal("Interior", action.OldValue);
     }
 
     private ServerInfo ReadServerInfo()

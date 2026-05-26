@@ -34,13 +34,26 @@ internal static class SheetIssuePlanner
                      .ThenBy(sheet => sheet.Name, StringComparer.OrdinalIgnoreCase)
                      .ThenBy(sheet => sheet.ViewId))
         {
-            foreach (var target in targets)
-            {
-                var newValue = target.Key.Equals("issueCode", StringComparison.OrdinalIgnoreCase)
-                    ? issueCode
-                    : issueDate;
+            var resolvedTargets = targets
+                .Select(target => new SheetIssueResolvedTarget(
+                    target,
+                    target.Key.Equals("issueCode", StringComparison.OrdinalIgnoreCase) ? issueCode : issueDate,
+                    ResolveParameterName(sheet.Parameters, target.Candidates)))
+                .ToArray();
+            var ambiguousParameters = resolvedTargets
+                .Where(target => !string.IsNullOrWhiteSpace(target.ParameterName))
+                .GroupBy(target => target.ParameterName, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Select(target => target.Target.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+                .ToDictionary(
+                    group => group.Key,
+                    group => string.Join(", ", group.Select(target => target.Target.Key).Distinct(StringComparer.OrdinalIgnoreCase)),
+                    StringComparer.OrdinalIgnoreCase);
 
-                var parameterName = ResolveParameterName(sheet.Parameters, target.Candidates);
+            foreach (var resolved in resolvedTargets)
+            {
+                var target = resolved.Target;
+                var newValue = resolved.NewValue;
+                var parameterName = resolved.ParameterName;
                 if (string.IsNullOrWhiteSpace(parameterName))
                 {
                     skipped.Add(new SheetIssuePlanSkipped(
@@ -50,6 +63,18 @@ internal static class SheetIssuePlanner
                         target.Key,
                         "parameter-missing",
                         $"No mapped parameter found for {target.Key}."));
+                    continue;
+                }
+
+                if (ambiguousParameters.TryGetValue(parameterName, out var ambiguousKeys))
+                {
+                    skipped.Add(new SheetIssuePlanSkipped(
+                        sheet.ViewId,
+                        sheet.Number,
+                        sheet.Name,
+                        target.Key,
+                        "parameter-ambiguous",
+                        $"Mapped parameter {parameterName} is shared by {ambiguousKeys}; split the titleblock map before applying."));
                     continue;
                 }
 
@@ -190,6 +215,11 @@ internal static class SheetIssuePlanner
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+
+    private sealed record SheetIssueResolvedTarget(
+        SheetIssueTargetParameter Target,
+        string NewValue,
+        string ParameterName);
 }
 
 internal static class SheetIssueParamMapStore
@@ -273,6 +303,21 @@ internal sealed record LoadedSheetIssueParamMap(string Path, SheetIssueParamMap 
 
 internal sealed class SheetIssueParamMap
 {
+    private static readonly string[] DefaultIssueCode =
+    {
+        "Sheet Issue Code",
+        "Issue Code",
+        "Revision",
+        "Revision Number",
+    };
+
+    private static readonly string[] DefaultIssueDate =
+    {
+        "Sheet Issue Date",
+        "Issue Date",
+        "Date",
+    };
+
     public List<string> IssueCode { get; set; } = new();
 
     public List<string> IssueDate { get; set; } = new();
@@ -281,8 +326,8 @@ internal sealed class SheetIssueParamMap
     {
         var map = new SheetIssueParamMap
         {
-            IssueCode = { "Sheet Issue Code", "Issue Code", "Revision", "Revision Number" },
-            IssueDate = { "Sheet Issue Date", "Issue Date", "Date" },
+            IssueCode = { DefaultIssueCode[0], DefaultIssueCode[1], DefaultIssueCode[2], DefaultIssueCode[3] },
+            IssueDate = { DefaultIssueDate[0], DefaultIssueDate[1], DefaultIssueDate[2] },
         };
         map.Normalize();
         return map;
@@ -290,10 +335,22 @@ internal sealed class SheetIssueParamMap
 
     public void Normalize()
     {
+        IssueCode = NormalizeCandidates(IssueCode);
+        IssueDate = NormalizeCandidates(IssueDate);
+
         if (IssueCode.Count == 0)
-            IssueCode.AddRange(Default().IssueCode);
+            IssueCode.AddRange(DefaultIssueCode);
         if (IssueDate.Count == 0)
-            IssueDate.AddRange(Default().IssueDate);
+            IssueDate.AddRange(DefaultIssueDate);
+    }
+
+    private static List<string> NormalizeCandidates(IEnumerable<string>? candidates)
+    {
+        return (candidates ?? Array.Empty<string>())
+            .Select(candidate => candidate?.Trim() ?? "")
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 }
 

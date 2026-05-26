@@ -4,8 +4,11 @@ using System.IO;
 using System.Linq;
 using RevitCli.Diagnostics;
 using RevitCli.Families;
+using RevitCli.Numbering;
 using RevitCli.Profile;
+using RevitCli.Sheets;
 using RevitCli.Workflows;
+using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -83,6 +86,8 @@ public static class StandardsValidator
         ValidateWorkflows(projectRoot, manifest.Required.Workflows, report.Issues);
         ValidateOutputPaths(projectRoot, manifest.Required.OutputPaths, report.Issues);
         ValidateScheduleTemplates(defaultProfile, manifest.Required.ScheduleTemplates, report.Issues);
+        ValidateRequiredFiles(projectRoot, "sheetMaps", "sheet map", manifest.Required.SheetMaps, report.Issues, ValidateSheetMapFile);
+        ValidateRequiredFiles(projectRoot, "numberingRules", "numbering rule", manifest.Required.NumberingRules, report.Issues, ValidateNumberingRuleFile);
         ValidateFamilyRules(manifest.Required.FamilyRules, report.Issues);
 
         report.Valid = report.Issues.All(issue => issue.Severity != StandardsValidationSeverity.Error);
@@ -401,6 +406,96 @@ public static class StandardsValidator
                     StandardsValidationSeverity.Error,
                     $"required.scheduleTemplates[{i}]",
                     $"schedule template not found in {ProfileLoader.FileName}: {name}"));
+            }
+        }
+    }
+
+    private static void ValidateRequiredFiles(
+        string projectRoot,
+        string requirementName,
+        string fileDescription,
+        IReadOnlyList<string> paths,
+        List<StandardsValidationIssue> issues,
+        Action<string>? validateFile)
+    {
+        for (var i = 0; i < paths.Count; i++)
+        {
+            var path = paths[i];
+            var issuePath = $"required.{requirementName}[{i}]";
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                issues.Add(new StandardsValidationIssue(
+                    StandardsValidationSeverity.Error,
+                    issuePath,
+                    "required file path is empty."));
+                continue;
+            }
+
+            if (!TryResolveUnderProject(projectRoot, path, issuePath, issues, out var fullPath))
+                continue;
+
+            if (!File.Exists(fullPath))
+            {
+                issues.Add(new StandardsValidationIssue(
+                    StandardsValidationSeverity.Error,
+                    issuePath,
+                    $"required file not found: {path}"));
+                continue;
+            }
+
+            if (validateFile is null)
+                continue;
+
+            try
+            {
+                validateFile(fullPath);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or YamlException)
+            {
+                issues.Add(new StandardsValidationIssue(
+                    StandardsValidationSeverity.Error,
+                    issuePath,
+                    $"{fileDescription} failed validation: {ex.Message}"));
+            }
+        }
+    }
+
+    private static void ValidateSheetMapFile(string fullPath)
+    {
+        _ = SheetIssueParamMapStore.LoadOrDefault(fullPath);
+    }
+
+    private static void ValidateNumberingRuleFile(string fullPath)
+    {
+        var stem = Path.GetFileNameWithoutExtension(fullPath);
+        if (stem.Contains("room", StringComparison.OrdinalIgnoreCase))
+        {
+            _ = RoomNumberingRuleStore.Load(fullPath);
+            return;
+        }
+
+        if (stem.Contains("door", StringComparison.OrdinalIgnoreCase) ||
+            stem.Contains("window", StringComparison.OrdinalIgnoreCase) ||
+            stem.Contains("mark", StringComparison.OrdinalIgnoreCase))
+        {
+            _ = MarkNumberingRuleStore.Load(fullPath);
+            return;
+        }
+
+        try
+        {
+            _ = RoomNumberingRuleStore.Load(fullPath);
+        }
+        catch (Exception roomEx) when (roomEx is IOException or InvalidOperationException or YamlException)
+        {
+            try
+            {
+                _ = MarkNumberingRuleStore.Load(fullPath);
+            }
+            catch (Exception markEx) when (markEx is IOException or InvalidOperationException or YamlException)
+            {
+                throw new InvalidOperationException(
+                    $"file is not a valid room or mark numbering rule ({roomEx.Message}; {markEx.Message})");
             }
         }
     }

@@ -36,10 +36,16 @@ internal static class RoomNumberingPlanner
         var parameter = string.IsNullOrWhiteSpace(rule.Rule.Parameter)
             ? DefaultParameter
             : rule.Rule.Parameter.Trim();
+        var reservedNumbers = NormalizeRuleValues(rule.Rule.ReservedNumbers);
+        var holdNumbers = NormalizeRuleValues(rule.Rule.HoldNumbers);
+        var unavailableNumbers = new HashSet<string>(
+            reservedNumbers.Concat(holdNumbers),
+            StringComparer.OrdinalIgnoreCase);
         var selectedIds = selected.Select(room => room.Id).ToHashSet();
         var allNumbers = rooms
-            .Where(room => room.Parameters.TryGetValue(parameter, out var value) && !string.IsNullOrWhiteSpace(value))
-            .GroupBy(room => room.Parameters[parameter], StringComparer.OrdinalIgnoreCase)
+            .Select(room => new { Room = room, Number = GetParameter(room, parameter) })
+            .Where(item => !string.IsNullOrWhiteSpace(item.Number))
+            .GroupBy(item => item.Number, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
         var actions = new List<RoomNumberingPlanAction>();
         var skipped = new List<RoomNumberingPlanSkipped>();
@@ -51,8 +57,13 @@ internal static class RoomNumberingPlanner
             foreach (var room in group)
             {
                 var current = GetParameter(room, parameter);
-                var target = RenderScheme(rule.Rule, room, sequence);
-                sequence++;
+                if (!string.IsNullOrWhiteSpace(current) && holdNumbers.Contains(current))
+                {
+                    skipped.Add(Skip(room, current, "hold-number", $"Room number {current} is held by the rule."));
+                    continue;
+                }
+
+                var target = RenderNextAvailableScheme(rule.Rule, room, ref sequence, unavailableNumbers);
 
                 if (string.IsNullOrWhiteSpace(target))
                 {
@@ -67,10 +78,10 @@ internal static class RoomNumberingPlanner
                 }
 
                 if (allNumbers.TryGetValue(target, out var holders) &&
-                    holders.Any(holder => holder.Id != room.Id))
+                    holders.Any(holder => holder.Room.Id != room.Id))
                 {
                     conflicts.Add(
-                        $"{target} is already used by room(s): {string.Join(", ", holders.Where(holder => holder.Id != room.Id).Select(holder => $"{holder.Name} [{holder.Id}]"))}");
+                        $"{target} is already used by room(s): {string.Join(", ", holders.Where(holder => holder.Room.Id != room.Id).Select(holder => $"{holder.Room.Name} [{holder.Room.Id}]"))}");
                     continue;
                 }
 
@@ -224,6 +235,29 @@ internal static class RoomNumberingPlanner
         return GetParameter(room, parameter);
     }
 
+    private static string RenderNextAvailableScheme(
+        RoomNumberingRule rule,
+        ElementInfo room,
+        ref int sequence,
+        ISet<string> unavailableNumbers)
+    {
+        for (var attempts = 0; attempts < 10000; attempts++)
+        {
+            var target = RenderScheme(rule, room, sequence);
+            sequence++;
+            if (string.IsNullOrWhiteSpace(target) || !unavailableNumbers.Contains(target))
+                return target;
+        }
+
+        throw new InvalidOperationException("Room renumber exceeded 10000 sequence attempts while skipping reserved or held numbers.");
+    }
+
+    private static HashSet<string> NormalizeRuleValues(IEnumerable<string>? values) =>
+        (values ?? Array.Empty<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     private static bool MatchesPattern(string? value, string pattern)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -296,6 +330,8 @@ public sealed class RoomNumberingRule
     public string Parameter { get; set; } = RoomNumberingPlanner.DefaultParameter;
     public string Scheme { get; set; } = "";
     public int Start { get; set; } = 1;
+    public List<string> ReservedNumbers { get; set; } = new();
+    public List<string> HoldNumbers { get; set; } = new();
     public List<string> GroupBy { get; set; } = new();
     public List<string> Sort { get; set; } = new();
     public Dictionary<string, string> Tokens { get; set; } = new(StringComparer.OrdinalIgnoreCase);

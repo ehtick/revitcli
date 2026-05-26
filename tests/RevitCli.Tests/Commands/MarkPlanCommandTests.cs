@@ -91,6 +91,10 @@ public sealed class MarkPlanCommandTests : IDisposable
         using var json = JsonDocument.Parse(File.ReadAllText(receiptPath));
         var root = json.RootElement;
         Assert.Equal("mark-assignment", root.GetProperty("operation").GetString());
+        Assert.Equal(Path.Combine(_root, "marks.yml"), root.GetProperty("rulePath").GetString());
+        Assert.Equal(2, root.GetProperty("planActionCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("skippedCount").GetInt32());
+        Assert.Equal(new[] { "level", "zone", "type", "location" }, root.GetProperty("sort").EnumerateArray().Select(item => item.GetString()).ToArray());
         Assert.Equal("Mark", root.GetProperty("param").GetString());
         Assert.Equal(2, root.GetProperty("rollbackActions").GetArrayLength());
     }

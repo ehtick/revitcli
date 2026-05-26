@@ -6,13 +6,17 @@ sheets and schedules, diagnose publish failures, snapshot/diff model state,
 and make reviewed parameter changes without clicking through repetitive
 Revit UI.
 
-> **Status: Unreleased v4.0 - Architect Terminal BIM Workbench**
+> **Status: Unreleased v5.0 planning - Issue Closure Workbench Quality Release**
 > Windows/Revit-first BIMOps runner with source-level support for Revit
 > 2024/2025/2026; the latest tagged release ZIP packages the Revit 2026 add-in.
 > Current focus:
-> reliable inspect/discover commands, standards checking, deliverable
-> publishing, schedule export, CSV writeback, safe dry-run plans,
-> `fix`/`rollback`, model snapshots, signed journals, and release preflight.
+> hardening the existing v4/v4.1 command surface into a real issue-day closure
+> loop: dry-run plans, explicit approval, receipts, rollback, package
+> traceability, signed journals, and Windows/Revit smoke evidence. The current
+> v5.0 RC boundary is Revit 2026-only: controlled issue-closure smoke is
+> recorded for Revit 2026, while Revit 2024/2025 remain source-build targets
+> without live v5.0 issue-closure claims; see
+> [v5-rc-readiness.md](docs/v5-rc-readiness.md).
 
 ```bash
 revitcli status --output json                                # connection check
@@ -26,7 +30,7 @@ revitcli schedule list --output markdown                     # review available 
 revitcli schedule export --name "Door Schedule" --output csv # export a schedule
 revitcli schedule create --category Doors --fields "Mark,Level" --name "Door Review" --dry-run --output json # preview ViewSchedule write
 revitcli export --format dwg --sheets "A1*" --output-dir .   # batch export
-revitcli set doors --param "Fire Rating" --value "60min"     # bulk set
+revitcli set doors --param "Fire Rating" --value "60min" --yes # approved bulk set
 revitcli snapshot --output snap.json                         # capture model state
 revitcli diff snap-mon.json snap-fri.json --output markdown  # what changed
 revitcli diff snap-mon.json snap-fri.json --review           # flag suspicious changes
@@ -38,10 +42,11 @@ revitcli workflow suggest --output yaml                       # draft workflow f
 revitcli workflow receipts --name pre-issue --output markdown # review one workflow's receipts
 revitcli issue preflight --profile .revitcli/issue.yml --output markdown --fail-on warning # issue readiness gate
 revitcli issue diff --from .revitcli/history/baseline.json --to current --review --output markdown # issue diff review
-revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --include-receipts true --output markdown # dry-run delivery package
+revitcli issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --dry-run --include-receipts true --output markdown # dry-run delivery package with per-file hashes
 revitcli score --history 30d --output json                    # machine-readable model health trend
 revitcli workbench contract --output json                     # machine-readable command contract
 revitcli workbench verify --dir . --output markdown           # verify local workbench contract readiness
+revitcli workbench verify --contract workbench-contract.v2 --dir . --output markdown # verify v5 issue-closure readiness contract
 revitcli workbench receipts --output json                     # machine-readable receipt schema index
 revitcli workbench paths --output json                        # flat callable command path index
 revitcli workbench exits --output json                        # predictable exit-code index
@@ -55,11 +60,17 @@ revitcli examples workflow --output json                     # machine-readable 
 revitcli examples recipes                                     # show Codex CLI recipe templates
 revitcli report weekly --report .revitcli/reports/weekly.md  # local weekly report
 revitcli report knowledge --output markdown                  # summarize reusable local project knowledge
-revitcli standards install ../office-standards --dry-run --output markdown # preview standards bootstrap
-revitcli standards install ../office-standards              # bootstrap a new project
+revitcli ledger query --source all --output json             # read local operation ledger artifacts
+revitcli ledger replay --source ledger --output json         # preview local ledger replay steps
+revitcli ledger validate --source all --output json          # validate local ledger artifact links
+revitcli ledger stats --source all --output json             # summarize local ledger project memory
+revitcli ledger timeline --source all --bucket day --output json # bucket local ledger project memory
+revitcli standards install profiles/office-standard --dry-run --output markdown # preview standards bootstrap
+revitcli standards install profiles/office-standard              # bootstrap a new project
 revitcli standards validate --output markdown                # check local office standards
 revitcli family purge --dry-run --report .revitcli/reports/family-purge.json # review cleanup candidates
 revitcli release verify --tag v2.3.0 --output markdown       # local release preflight handoff
+revitcli release verify --strict --output markdown           # v5.0 RC no-go gate
 revitcli publish --since baseline.json                       # incremental re-export
 revitcli import doors.csv --category doors --match-by Mark   # CSV → params
 ```
@@ -85,7 +96,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli status` | Show Revit version, addin version, active document; supports table/JSON output |
 | `revitcli doctor` | Diagnose setup and connection issues; supports table/JSON output |
 | `revitcli query <category>` | Query elements with filters; output table/JSON/CSV |
-| `revitcli set <category>` | Modify parameters with `--dry-run` or `--plan-output` preview |
+| `revitcli set <category>` | Modify parameters with `--dry-run` or `--plan-output` preview; direct apply requires `--yes` |
 | `revitcli plan show` / `apply` | Review and apply saved mutation plans |
 | `revitcli fix [checkName]` | Preview or apply profile-driven parameter fixes |
 | `revitcli rollback <artifact>` | Restore parameters from a fix baseline or plan receipt |
@@ -113,11 +124,16 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 | `revitcli model map-check` / `map-fix` | Audit and plan workset/phase mapping fixes with write precheck evidence |
 | `revitcli workbench contract` / `verify` / `receipts` / `paths` / `exits` / `extensions` / `outputs` / `safeguards` / `project` / `handoff` | Show and verify the stable command/output/dry-run/receipt/exit-code contract, receipt schema index, callable path index, exit-code index, extension-point index, output schema index, dry-run/approval safety index, local project artifact inventory, and one-command terminal handoff for Codex CLI |
 | `revitcli workflow validate` / `simulate` / `review` / `run` / `suggest` / `receipts` | Check, review, run, draft, and inspect reusable terminal workflow YAML with approval gates |
-| `revitcli issue preflight` / `diff` / `package` | Run the v5 issue closure contract with hidden-mutation preflight, issue-scoped diff review, dry-run package planning, child receipt traceability, bundle hash, and optional journal signature evidence |
+| `revitcli issue preflight` / `diff` / `package` | Run the v5 issue closure contract with hidden-mutation preflight, issue-scoped diff review, dry-run package planning, child receipt traceability, per-file hashes, bundle hash, and optional journal signature evidence |
 | `revitcli report weekly` / `knowledge` | Generate local weekly reports and project knowledge summaries from RevitCli artifacts |
+| `revitcli ledger query` | Query local journal, history, delivery manifest, and workflow receipt artifacts as `ledger-query.v1` without writing or requiring Revit |
+| `revitcli ledger replay` | Preview appended local ledger records as `ledger-replay.v1` with `dryRun=true`, `applySupported=false`, and `canApply=false` steps without writing or requiring Revit |
+| `revitcli ledger validate` | Validate local ledger source readability, artifact links, receipt status, and timestamp format as `ledger-validate.v1` without writing or requiring Revit |
+| `revitcli ledger stats` | Summarize local ledger operation counts by source, action, category, operator, receipt status, issue source, and malformed artifact issue severity as `ledger-stats.v1` without writing or requiring Revit |
+| `revitcli ledger timeline` | Bucket local ledger project memory by day or hour with source, action, category counts per bucket, operator counts per bucket, receipt status, issue severity, and unbucketed timestamp evidence as `ledger-timeline.v1` without writing or requiring Revit |
 | `revitcli deliverables list` / `stats` / `verify` / `plan` / `bundle` | Review delivery plans, manifest entries, receipt traceability, and package handoff zips |
 | `revitcli standards install` / `validate` | Install and validate required profiles, workflows, outputs, schedules, and family rules |
-| `revitcli release verify` | Check local release files, version/tag consistency, CI guardrails, and smoke documentation; use `--output markdown` for handoff notes |
+| `revitcli release verify` | Check local release files, version/tag consistency, CI guardrails, v5.0 RC boundary docs, and smoke documentation; use `--strict` for RC no-go blocking and `--output markdown` for handoff notes |
 | `revitcli snapshot` | Capture model semantic state as JSON |
 | `revitcli diff <from> <to>` | Diff two snapshots, or add `--review` for anomaly/notable/routine triage |
 | `revitcli import <file>` | Batch-write parameters from CSV, with `--plan-output` support |
@@ -179,7 +195,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - Successful real exports and publishes write receipts plus `.revitcli/deliveries/manifest.jsonl` entries; dry-runs never write delivery files
 - `deliverables plan --profile .revitcli.yml --since baseline.json --output markdown` prints a read-only `delivery-plan.v1` profile export plan with pipeline/preset output paths, baseline sheet counts when available, review command paths, and risk evidence before publish
 - `deliverables list`, `deliverables stats`, and `deliverables verify` review the local delivery manifest in table, JSON, or Markdown and confirm each entry points back to a readable receipt
-- `deliverables bundle --dry-run --output markdown` previews the manifest receipts and output files that would be packaged; real bundle runs write a zip plus `delivery-bundle-receipt.v1` sidecar
+- `deliverables bundle --dry-run --output markdown` previews the manifest receipts, per-file SHA256 evidence, and output files that would be packaged; real bundle runs write a zip plus `delivery-bundle-receipt.v1` sidecar with the bundle hash
 
 ### Publish `--since` — incremental re-export (v1.2.0)
 
@@ -244,8 +260,8 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - `marks assign --category doors --rule .revitcli/numbering/doors.yml --plan-output .revitcli/plans/door-marks.json --dry-run --output json|markdown` writes a `mark-assignment-plan.v1` dry-run artifact with frozen element ids, deterministic level/zone/type/location sorting, duplicate-target protection, stale-Mark apply validation, and receipt rollback actions
 - `marks verify --category doors,windows --against ".revitcli/numbering/*.yml" --output json|markdown` prints `mark-verify-report.v1` with duplicate Marks, missing Marks, and optional rule-conformance issues without writing the model
 - `schedules ensure --spec .revitcli/schedules/*.yml --plan-output .revitcli/plans/schedule-ensure.json --dry-run --mode create-only|sync-fields --output json|markdown` writes a `schedule-ensure-plan.v1` from `schedule-spec.v1` YAML with fields, filters, sort, key columns, and old structure baselines
-- `schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json|markdown` writes CSVs plus `schedule-export-manifest.v1` entries traceable to schedule ids and output paths
-- `schedules compare --from exports/schedules/baseline --to exports/schedules/current --keys Number,Mark --output json|markdown` prints a read-only `schedule-diff-report.v1` for changed, added, and removed CSV rows
+- `schedules batch-export --set issue --output-dir exports/schedules/current --format csv --manifest exports/schedules/current/manifest.json --output json|markdown` writes CSVs plus `schedule-export-manifest.v1` entries traceable to schedule ids, output paths, byte counts, and SHA256 hashes
+- `schedules compare --from exports/schedules/baseline --to exports/schedules/current --keys Number,Mark --output json|markdown` prints a read-only `schedule-diff-report.v1` for changed, added, and removed CSV rows with before/after paths, bytes, and SHA256 hashes
 - `views audit --rules .revitcli/views/standards.yml --templates --browser --output json|markdown` prints `view-standards-report.v1` for template mismatches, browser parameter gaps, and naming issues
 - `views template-apply --selector "Level*" --template "Architectural Plan" --plan-output .revitcli/plans/view-template.json --dry-run --output json|markdown` writes `view-template-plan.v1` with frozen view ids plus old/new template ids
 - `views clone-set --from-set "Level*" --to-prefix "Tender - " --naming-rule "{prefix}{name}" --plan-output .revitcli/plans/view-clone.json --dry-run --output json|markdown` writes `view-clone-plan.v1`, fails on target-name collisions, and carries rollback guards for placed views
@@ -255,7 +271,7 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 - `model map-fix --against .revitcli/model-mapping.yml --scope rooms,doors,walls --plan-output .revitcli/plans/model-map-fix.json --dry-run --output json|markdown` writes `model-map-fix-plan.v1` with element ids, old/new workset or phase values, and write precheck/probe-status fields before any future apply path
 - `issue preflight --profile .revitcli/issue.yml --output json|markdown --fail-on warning|error` prints `issue-preflight-report.v1` with artifact, command, mutation-plan, deliverables, and hidden-mutation checks before issue work proceeds
 - `issue diff --from baseline.json --to current --review --output json|markdown` prints `issue-diff-report.v1`, reusing snapshot diff review groups for issue-day anomaly/notable/routine triage
-- `issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue.zip --dry-run --sign-journal --include-receipts true --output json|markdown` prints `issue-package-receipt.v1` without writing delivery files in dry-run; approved package writes include manifest path, child files/receipts, bundle hash, and optional journal signature evidence
+- `issue package --profile .revitcli/issue.yml --bundle-path deliverables/issue-package.zip --dry-run --sign-journal --include-receipts true --output json|markdown` prints `issue-package-receipt.v1` without writing delivery files in dry-run; approved package writes include manifest path, child files/receipts, per-file SHA256 hashes, bundle hash, and optional journal signature evidence
 - `schedule create --dry-run --output json|markdown` prints `schedule-create.v1` without calling Revit; real schedule creates write `schedule-create-receipt.v1` under `.revitcli/receipts` by default, expose `receiptRequired`/`receiptSaved`, and JSON/Markdown failures use the same schema
 - Shell completions keep inspect, workflow, schedules, views, links, model, schedule, rooms, marks, and issue output formats aligned by subcommand, and `workbench verify` guards the inspect/workbench/workflow/schedules/views/links/model/schedule/rooms/marks/issue completion surface: inspect commands include `inspect plans`, workflow suggest uses table/JSON/YAML, workflow reports use table/JSON/Markdown, schedules ensure/batch-export/compare, views audit/template-apply/clone-set, links audit/repair, model map-check/map-fix, issue preflight/diff/package use table/JSON/Markdown, schedule list/create use table/JSON/Markdown, schedule export also offers CSV, and rooms/marks numbering commands offer table/JSON/Markdown
 - The contract lists stable command vocabulary, callable command paths, recipe discovery, risk mode, JSON/Markdown support, recommended first command, dry-run expectations, receipt locations, and exit-code notes
@@ -274,10 +290,11 @@ CLI (revitcli.exe)  ──HTTP REST──>  Revit Add-in (embedded HTTP server)
 
 ### Standards — local office requirements
 
-- `.revitcli/standards.yml` records pack metadata, compatibility notes, required profiles, workflow files, output paths, schedule templates, and built-in family rule ids
+- `.revitcli/standards.yml` records pack metadata, compatibility notes, required profiles, workflow files, output paths, schedule templates, sheet maps, numbering rules, and built-in family rule ids
 - `standards install <path-or-git-url>` copies governed files from an approved pack into the project, including every relative profile listed under `required.profiles`; use `--dry-run` to preview and `--force` to overwrite existing standards/profile/workflow files
 - `standards validate` checks those local files without contacting Revit; run `workflow validate --output markdown` for the installed workflows before issue work starts
 - `family validate --rules-from .revitcli/standards.yml` runs the reusable family rule set declared by the standards pack
+- `profiles/office-standard` is the canonical v5.4 local standards runtime fixture; it is validated by workbench and release gates without cloud, MCP, dashboard, or built-in LLM dependencies
 - Output formats: table, JSON, and Markdown for terminal review, CI jobs, or handoff notes
 
 ### Family Cleanup
@@ -303,6 +320,8 @@ required:
   workflows: [pre-issue]
   outputPaths: [deliverables]
   scheduleTemplates: [doors]
+  sheetMaps: [.revitcli/sheets/issue-meta.yml]
+  numberingRules: [.revitcli/numbering/rooms.yml, .revitcli/numbering/doors.yml]
   familyRules: [name-non-empty, category-known]
 ```
 
@@ -519,7 +538,7 @@ for the product intent and non-goals.
 Before review or release, validate the real Revit vertical slice with the internal smoke gate:
 
 ```text
-doctor -> status -> query --id -> query <category> --filter -> set --dry-run -> set -> restore
+doctor -> status -> query --id -> query <category> --filter -> set --dry-run -> set --yes -> restore
 ```
 
 For the current 2026 acceptance contract, use [docs/revit2026-real-smoke.md](docs/revit2026-real-smoke.md). For the multi-version gate, run:
@@ -551,9 +570,19 @@ docs/superpowers/          # Design specs and implementation plans
 - [x] v2.3 Codex CLI-assisted architect workflow: inspect/discover, safe batch plans, delivery workflows, standards packs
 - [x] v3.0 project standards workbench: office standards packs bootstrap profiles, workflows, outputs, family rules, and terminal validation
 - [x] v3.x review and knowledge capture: local reports, journal-derived workflow drafts, recipes, and handoff-ready review evidence
-- [ ] v4 terminal workbench: stable `workbench contract`, deeper workflow review, and long-running Revit automation ergonomics
+- [x] v4.0 terminal workbench: stable `workbench contract`, workbench verification, workflow review, and terminal handoff contracts
+- [x] v4.1 issue closure automation surface: sheet, numbering, schedule, view, link, model-map, issue, and workbench v2 command contracts
+- [x] v5.0 issue closure quality release: harden issue-day dry-run/apply/receipt/rollback/package/journal behavior on a controlled Revit 2026 RVT
+- [ ] v5.x production domains: sheet release control, schedule/deliverable closure, numbering apply, standards runtime, coordination hygiene, and local team pilot packaging
+- [ ] v6.0 Local BIMOps Workbench: standards runtime, operations ledger, local project memory, and governed workflow registry; current baseline includes append-only `ledger append`, preview-only `ledger replay`, read-only `ledger query` / `ledger validate` / `ledger stats` / `ledger timeline`, and `workflow registry` contracts with no SaaS, MCP, built-in LLM, or dashboard-central runtime
 
 See [docs/roadmap-2026q4-v4.md](docs/roadmap-2026q4-v4.md) for the Q4 → v4 terminal-first blueprint.
+See [docs/roadmap-v5-v6.md](docs/roadmap-v5-v6.md) for the v5.0 → v6.0 executable plan and
+[docs/v5-demo-and-pilot-playbook.md](docs/v5-demo-and-pilot-playbook.md) for the issue-day demo and pilot checklist.
+The v6.0 contract baseline is in
+[docs/v6-local-bimops-contract.md](docs/v6-local-bimops-contract.md).
+The v5.0 demo starts from `profiles/v5-issue.yml` and
+`scripts/v5-issue-day-demo.ps1`.
 
 ## Publishing
 

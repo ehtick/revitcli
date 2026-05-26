@@ -357,6 +357,105 @@ public static class LinksCommand
             });
     }
 
+    internal static LinkRepairPlanJsonEvidence VerifyLinkRepairPlanJsonIsPathLoadOnly()
+    {
+        var sourceTransform = "probe-transform-should-not-leak";
+        var plan = CreateRepairPlan(
+            new LinkPathMap
+            {
+                Links =
+                {
+                    new LinkPathRule
+                    {
+                        Name = "Campus",
+                        Load = false
+                    }
+                }
+            },
+            new[]
+            {
+                new LinkInfo
+                {
+                    Id = 101,
+                    LinkTypeId = 201,
+                    Name = "Campus",
+                    TypeName = "Campus",
+                    Path = "BIM 360://Hub/Project/Campus.rvt",
+                    LinkedFileStatus = "Loaded",
+                    IsLoaded = true,
+                    PathExists = true,
+                    IsCloud = true,
+                    WorksetName = "Shared Levels and Grids",
+                    TransformOrigin = "0,0,0",
+                    TransformFingerprint = sourceTransform,
+                    LastWriteTimeUtc = "2026-05-23T00:00:00.0000000Z",
+                    SizeBytes = 123456
+                }
+            },
+            "link-map.yml",
+            "link-plan.json",
+            maxChanges: 5);
+
+        var json = JsonSerializer.Serialize(plan, TerminalJsonOptions.PrettyCamel);
+        using var document = JsonDocument.Parse(json);
+        var actions = document.RootElement.GetProperty("actions").EnumerateArray().ToArray();
+        if (actions.Length != 1)
+            return new LinkRepairPlanJsonEvidence(false, $"expected one link repair action in emitted JSON, found {actions.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)}.");
+
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "linkId",
+            "linkTypeId",
+            "instanceIds",
+            "linkName",
+            "typeName",
+            "oldPath",
+            "newPath",
+            "oldLoaded",
+            "newLoaded",
+            "oldPathExists",
+            "newPathExists",
+            "oldPathLastWriteTimeUtc",
+            "newPathLastWriteTimeUtc",
+            "oldPathSizeBytes",
+            "newPathSizeBytes",
+        };
+        var names = actions[0].EnumerateObject()
+            .Select(property => property.Name)
+            .ToArray();
+        var unexpected = names
+            .Where(name => !allowed.Contains(name))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (unexpected.Length > 0)
+            return new LinkRepairPlanJsonEvidence(false, $"emitted link repair action exposes unexpected fields: {string.Join(", ", unexpected)}.");
+
+        var missing = allowed
+            .Where(name => !names.Contains(name, StringComparer.Ordinal))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (missing.Length > 0)
+            return new LinkRepairPlanJsonEvidence(false, $"emitted link repair action is missing path/load evidence fields: {string.Join(", ", missing)}.");
+
+        var forbiddenTokens = new[]
+        {
+            sourceTransform,
+            "transform",
+            "coordinate",
+            "origin",
+            "placement"
+        };
+        var leaked = forbiddenTokens
+            .Where(token => json.Contains(token, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (leaked.Length > 0)
+            return new LinkRepairPlanJsonEvidence(false, $"emitted link-repair-plan.v1 JSON leaks coordinate/transform evidence: {string.Join(", ", leaked)}.");
+
+        return new LinkRepairPlanJsonEvidence(
+            true,
+            "emitted link-repair-plan.v1 JSON is path/load-only: it carries old/new path, load-state, and file evidence fields; source transform/coordinate values are absent.");
+    }
+
     private static (bool Exists, string? LastWriteTimeUtc, long? SizeBytes) ProbePath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -583,4 +682,6 @@ public static class LinksCommand
         [property: JsonPropertyName("linkId")] long LinkId,
         [property: JsonPropertyName("linkName")] string LinkName,
         [property: JsonPropertyName("message")] string Message);
+
+    internal sealed record LinkRepairPlanJsonEvidence(bool Success, string Evidence);
 }

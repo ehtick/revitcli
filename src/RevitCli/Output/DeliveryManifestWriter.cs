@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -30,5 +31,11 @@ public static class DeliveryManifestWriter
             Console.Error.WriteLine($"[RevitCli] Delivery manifest write failed: {ex.Message}");
             return null;
         }
+    }
+
+    public static string ComputeSha256Hex(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 }

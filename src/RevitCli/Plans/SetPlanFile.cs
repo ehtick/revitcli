@@ -109,7 +109,7 @@ public sealed class SetPlanFile
 
     private static string QuoteArgument(string value)
     {
-        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+        return $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
     }
 }
 
@@ -160,6 +160,9 @@ public sealed class PlanReceipt
     [JsonPropertyName("planPath")]
     public string PlanPath { get; set; } = "";
 
+    [JsonPropertyName("planHash")]
+    public string PlanHash { get; set; } = "";
+
     [JsonPropertyName("command")]
     public string Command { get; set; } = "";
 
@@ -207,6 +210,18 @@ public sealed class PlanReceipt
 
     [JsonPropertyName("operation")]
     public string Operation { get; set; } = "";
+
+    [JsonPropertyName("rulePath")]
+    public string? RulePath { get; set; }
+
+    [JsonPropertyName("sort")]
+    public List<string> Sort { get; set; } = new();
+
+    [JsonPropertyName("planActionCount")]
+    public int PlanActionCount { get; set; }
+
+    [JsonPropertyName("skippedCount")]
+    public int SkippedCount { get; set; }
 
     [JsonPropertyName("param")]
     public string Param { get; set; } = "";
@@ -420,7 +435,7 @@ public sealed class ImportPlanFile
 
     private static string QuoteArgument(string value)
     {
-        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+        return $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
     }
 }
 

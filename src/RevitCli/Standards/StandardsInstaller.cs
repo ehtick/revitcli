@@ -199,6 +199,9 @@ public static class StandardsInstaller
                 Path.Combine(projectRoot, ".revitcli", "workflows", Path.GetFileName(workflow)));
         }
 
+        AddRequiredFiles(result, layout.RootDirectory, projectRoot, manifest.Required.SheetMaps, "sheet-map");
+        AddRequiredFiles(result, layout.RootDirectory, projectRoot, manifest.Required.NumberingRules, "numbering-rule");
+
         foreach (var outputPath in manifest.Required.OutputPaths.Where(path => !string.IsNullOrWhiteSpace(path)))
         {
             var target = ResolveUnderProject(projectRoot, outputPath);
@@ -238,6 +241,31 @@ public static class StandardsInstaller
         }
 
         return copied;
+    }
+
+    private static void AddRequiredFiles(
+        StandardsInstallResult result,
+        string sourceRoot,
+        string projectRoot,
+        IReadOnlyList<string> paths,
+        string kind)
+    {
+        var seenTargets = new HashSet<string>(PathComparer);
+        foreach (var path in paths.Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            var source = ResolveRequiredPackFile(sourceRoot, path, kind);
+            if (!File.Exists(source))
+            {
+                throw new InvalidOperationException(
+                    $"Required {kind} file not found in standards pack: {path}");
+            }
+
+            var target = ResolveRequiredProjectFile(projectRoot, path, kind);
+            if (!seenTargets.Add(target))
+                continue;
+
+            AddFile(result, kind, source, target);
+        }
     }
 
     private static void AddFile(

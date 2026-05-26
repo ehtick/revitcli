@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using RevitCli.Commands;
+using RevitCli.Output;
 using RevitCli.Shared;
 using Xunit;
 
@@ -35,6 +36,80 @@ public class DeliverablesCommandTests
             Assert.Equal(0, exitCode);
             Assert.Contains("Delivery manifest valid", writer.ToString());
             Assert.Contains("Entries verified: 1", writer.ToString());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_ValidManifestWithReceiptHash_ReportsActualReceiptHash()
+    {
+        var dir = TempDir();
+        try
+        {
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export");
+            var receiptHash = DeliveryManifestWriter.ComputeSha256Hex(receiptPath);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath,
+                receiptHash,
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", writer);
+
+            Assert.Equal(0, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.True(root.GetProperty("valid").GetBoolean());
+            var entry = Assert.Single(root.GetProperty("entries").EnumerateArray());
+            Assert.Equal(receiptHash, entry.GetProperty("receiptHash").GetString());
+            Assert.Equal(receiptHash, entry.GetProperty("actualReceiptHash").GetString());
+            Assert.DoesNotContain(root.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString()!.StartsWith("receipt-hash", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_MismatchedReceiptHash_ReturnsFailure()
+    {
+        var dir = TempDir();
+        try
+        {
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export");
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                format = "pdf",
+                receiptPath,
+                receiptHash = new string('0', 64),
+                timestamp = "2026-05-17T12:00:00Z"
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.False(root.GetProperty("valid").GetBoolean());
+            Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "receipt-hash-mismatch");
         }
         finally
         {
@@ -232,6 +307,124 @@ public class DeliverablesCommandTests
             Assert.False(root.GetProperty("valid").GetBoolean());
             Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
                 issue.GetProperty("code").GetString() == "receipt-missing");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_MalformedManifestLine_ReturnsFailure()
+    {
+        var dir = TempDir();
+        try
+        {
+            var manifestDir = Path.Combine(dir, ".revitcli", "deliveries");
+            Directory.CreateDirectory(manifestDir);
+            File.WriteAllText(Path.Combine(manifestDir, "manifest.jsonl"), "{not-json" + System.Environment.NewLine);
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            Assert.Contains(json.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "manifest-json-invalid");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_MalformedReceiptJson_ReturnsFailure()
+    {
+        var dir = TempDir();
+        try
+        {
+            var receiptDir = Path.Combine(dir, ".revitcli", "receipts");
+            Directory.CreateDirectory(receiptDir);
+            var receiptPath = Path.Combine(receiptDir, "bad.json");
+            File.WriteAllText(receiptPath, "{bad-json");
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                receiptPath
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "receipt-json-invalid");
+            Assert.Equal(1, root.GetProperty("stats").GetProperty("receiptUnreadableCount").GetInt32());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_ManifestLineMissingRequiredFields_ReturnsFailure()
+    {
+        var dir = TempDir();
+        try
+        {
+            WriteManifest(dir, new
+            {
+                success = true,
+                dryRun = false
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var issues = json.RootElement.GetProperty("issues").EnumerateArray().ToArray();
+            Assert.Contains(issues, issue => issue.GetProperty("code").GetString() == "manifest-schema-invalid");
+            Assert.Contains(issues, issue => issue.GetProperty("code").GetString() == "manifest-kind-invalid");
+            Assert.Contains(issues, issue => issue.GetProperty("code").GetString() == "receipt-path-missing");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_TamperedReceiptSchemaAndAction_ReturnsFailure()
+    {
+        var dir = TempDir();
+        try
+        {
+            var receiptPath = WriteReceipt(dir, "publish-receipt.v1", "publish");
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                receiptPath
+            });
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteVerifyAsync(dir, "json", writer);
+
+            Assert.Equal(1, exitCode);
+            using var json = JsonDocument.Parse(writer.ToString());
+            var issues = json.RootElement.GetProperty("issues").EnumerateArray().ToArray();
+            Assert.Contains(issues, issue => issue.GetProperty("code").GetString() == "receipt-schema-invalid");
+            Assert.Contains(issues, issue => issue.GetProperty("code").GetString() == "receipt-action-mismatch");
         }
         finally
         {
@@ -472,8 +665,9 @@ publish:
             Assert.Contains("# Delivery Bundle", output);
             Assert.Contains("- Mode: `dry-run`", output);
             Assert.Contains("- Bundle written: `false`", output);
-            Assert.Contains("| Kind | Bytes | Archive path | Source path | Manifest line |", output);
-            Assert.Contains("| deliverable | 9 | deliverables/pdf/A101.pdf |", output);
+            Assert.Contains("| Kind | Bytes | SHA256 | Archive path | Source path | Manifest line |", output);
+            Assert.Contains("| deliverable | 9 |", output);
+            Assert.Contains("| deliverables/pdf/A101.pdf |", output);
             Assert.Contains("## Issues", output);
             Assert.Contains("- None.", output);
         }
@@ -523,9 +717,17 @@ publish:
             Assert.True(root.GetProperty("success").GetBoolean());
             Assert.True(root.GetProperty("dryRun").GetBoolean());
             Assert.False(root.GetProperty("bundleWritten").GetBoolean());
+            Assert.False(root.GetProperty("receiptWritten").GetBoolean());
+            Assert.False(File.Exists(root.GetProperty("bundlePath").GetString()!));
+            Assert.False(File.Exists(root.GetProperty("receiptPath").GetString()!));
             Assert.Equal(3, root.GetProperty("fileCount").GetInt32());
             Assert.Equal(1, root.GetProperty("receiptCount").GetInt32());
             Assert.Equal(1, root.GetProperty("deliverableCount").GetInt32());
+            foreach (var file in root.GetProperty("files").EnumerateArray())
+            {
+                Assert.True(File.Exists(file.GetProperty("sourcePath").GetString()!), file.GetProperty("sourcePath").GetString());
+                Assert.Equal(64, file.GetProperty("sha256").GetString()!.Length);
+            }
             Assert.Contains(root.GetProperty("files").EnumerateArray(), file =>
                 file.GetProperty("archivePath").GetString() == "deliverables/pdf/A101.pdf");
             Assert.DoesNotContain(root.GetProperty("files").EnumerateArray(), file =>
@@ -627,7 +829,12 @@ publish:
             var root = receipt.RootElement;
             Assert.Equal("delivery-bundle-receipt.v1", root.GetProperty("schemaVersion").GetString());
             Assert.Equal("deliverables.bundle", root.GetProperty("action").GetString());
+            Assert.Contains("deliverables bundle", root.GetProperty("command").GetString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("--bundle-path", root.GetProperty("command").GetString(), StringComparison.OrdinalIgnoreCase);
             Assert.Equal(3, root.GetProperty("fileCount").GetInt32());
+            Assert.Equal(64, root.GetProperty("bundleHash").GetString()!.Length);
+            foreach (var file in root.GetProperty("files").EnumerateArray())
+                Assert.Equal(64, file.GetProperty("sha256").GetString()!.Length);
         }
         finally
         {
@@ -667,6 +874,99 @@ publish:
             using var json = JsonDocument.Parse(writer.ToString());
             Assert.Contains(json.RootElement.GetProperty("issues").EnumerateArray(), issue =>
                 issue.GetProperty("code").GetString() == "output-dir-missing");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Bundle_UnwritableBundleParentPath_ReturnsFailureWithoutWritingReceipt()
+    {
+        var dir = TempDir();
+        try
+        {
+            var outputDir = Path.Combine(dir, "deliverables", "pdf");
+            Directory.CreateDirectory(outputDir);
+            File.WriteAllText(Path.Combine(outputDir, "A101.pdf"), "pdf-bytes");
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export", outputDir: outputDir);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                receiptPath
+            });
+            var parentAsFile = Path.Combine(dir, "review-as-file");
+            File.WriteAllText(parentAsFile, "not a directory");
+            var bundlePath = Path.Combine(parentAsFile, "package.zip");
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteBundleAsync(
+                dir,
+                bundlePath,
+                dryRun: false,
+                force: false,
+                outputFormat: "json",
+                writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.False(File.Exists(bundlePath));
+            Assert.False(File.Exists(bundlePath + ".receipt.json"));
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.False(root.GetProperty("bundleWritten").GetBoolean());
+            Assert.False(root.GetProperty("receiptWritten").GetBoolean());
+            Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "bundle-write-failed");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Bundle_ReceiptWriteFailureCleansPartialBundle()
+    {
+        var dir = TempDir();
+        try
+        {
+            var outputDir = Path.Combine(dir, "deliverables", "pdf");
+            Directory.CreateDirectory(outputDir);
+            File.WriteAllText(Path.Combine(outputDir, "A101.pdf"), "pdf-bytes");
+            var receiptPath = WriteReceipt(dir, "export-receipt.v1", "export", outputDir: outputDir);
+            WriteManifest(dir, new
+            {
+                schemaVersion = "delivery-manifest.v1",
+                kind = "export",
+                success = true,
+                dryRun = false,
+                receiptPath
+            });
+            var bundlePath = Path.Combine(dir, "review", "package.zip");
+            Directory.CreateDirectory(bundlePath + ".receipt.json");
+            var writer = new StringWriter();
+
+            var exitCode = await DeliverablesCommand.ExecuteBundleAsync(
+                dir,
+                bundlePath,
+                dryRun: false,
+                force: false,
+                outputFormat: "json",
+                writer);
+
+            Assert.Equal(1, exitCode);
+            Assert.False(File.Exists(bundlePath));
+            Assert.False(File.Exists(bundlePath + ".receipt.json"));
+            using var json = JsonDocument.Parse(writer.ToString());
+            var root = json.RootElement;
+            Assert.False(root.GetProperty("bundleWritten").GetBoolean());
+            Assert.False(root.GetProperty("receiptWritten").GetBoolean());
+            Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+                issue.GetProperty("code").GetString() == "bundle-receipt-write-failed");
         }
         finally
         {

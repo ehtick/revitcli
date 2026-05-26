@@ -308,6 +308,189 @@ issueDate:
     }
 
     [Fact]
+    public async Task IssueMeta_CustomParamMap_TrimsAndDeduplicatesCandidates()
+    {
+        var mapPath = Path.Combine(_root, "titleblock-map.yml");
+        File.WriteAllText(mapPath, """
+issueCode:
+  - " Custom Revision "
+  - Custom Revision
+  - ""
+issueDate:
+  - " Custom Date "
+""");
+        var client = MakeClient(new ModelSnapshot
+        {
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A-101",
+                    Name = "Level 1",
+                    Parameters =
+                    {
+                        ["Custom Revision"] = "R02",
+                        ["Custom Date"] = "2026-05-01",
+                    }
+                },
+            }
+        });
+        var output = new StringWriter();
+
+        var exitCode = await SheetsCommand.ExecuteIssueMetaAsync(
+            client,
+            selector: "all",
+            issueCode: "R03",
+            issueDate: "2026-05-20",
+            planOutputPath: Path.Combine(_root, "issue.json"),
+            paramMapPath: mapPath,
+            dryRun: true,
+            outputFormat: "json",
+            output: output);
+
+        Assert.Equal(0, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var targets = json.RootElement.GetProperty("targetParameters").EnumerateArray().ToArray();
+        var issueCode = Assert.Single(targets, target => target.GetProperty("key").GetString() == "issueCode");
+        var issueDate = Assert.Single(targets, target => target.GetProperty("key").GetString() == "issueDate");
+        var issueCodeCandidates = issueCode.GetProperty("candidates").EnumerateArray().Select(item => item.GetString()).ToArray();
+        var issueDateCandidates = issueDate.GetProperty("candidates").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Equal(new[] { "Custom Revision" }, issueCodeCandidates);
+        Assert.Equal(new[] { "Custom Date" }, issueDateCandidates);
+    }
+
+    [Fact]
+    public async Task IssueMeta_AmbiguousMappedParameter_IsSkippedWithoutActions()
+    {
+        var mapPath = Path.Combine(_root, "ambiguous-titleblock-map.yml");
+        File.WriteAllText(mapPath, """
+issueCode:
+  - Release Field
+issueDate:
+  - Release Field
+""");
+        var client = MakeClient(new ModelSnapshot
+        {
+            Sheets =
+            {
+                new SnapshotSheet
+                {
+                    ViewId = 10,
+                    Number = "A-101",
+                    Name = "Level 1",
+                    Parameters = { ["Release Field"] = "R02" }
+                },
+            }
+        });
+        var output = new StringWriter();
+
+        var exitCode = await SheetsCommand.ExecuteIssueMetaAsync(
+            client,
+            selector: "all",
+            issueCode: "R03",
+            issueDate: "2026-05-20",
+            planOutputPath: Path.Combine(_root, "issue.json"),
+            paramMapPath: mapPath,
+            dryRun: true,
+            outputFormat: "json",
+            output: output);
+
+        Assert.Equal(2, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Equal(0, json.RootElement.GetProperty("summary").GetProperty("actionCount").GetInt32());
+        Assert.Equal(2, json.RootElement.GetProperty("summary").GetProperty("skippedCount").GetInt32());
+        Assert.All(json.RootElement.GetProperty("skipped").EnumerateArray(), skipped =>
+        {
+            Assert.Equal("parameter-ambiguous", skipped.GetProperty("reason").GetString());
+            Assert.Contains("Release Field", skipped.GetProperty("message").GetString());
+        });
+    }
+
+    [Theory]
+    [InlineData(100)]
+    [InlineData(300)]
+    [InlineData(1000)]
+    public async Task IssueMeta_LargePlans_PreserveDeterministicActionOrdering(int sheetCount)
+    {
+        var firstPlanPath = Path.Combine(_root, $"issue-{sheetCount}-first.json");
+        var secondPlanPath = Path.Combine(_root, $"issue-{sheetCount}-second.json");
+        var firstOutput = new StringWriter();
+        var secondOutput = new StringWriter();
+
+        var firstExit = await SheetsCommand.ExecuteIssueMetaAsync(
+            MakeClient(MakeIssueSheetSnapshot(sheetCount)),
+            selector: "all",
+            issueCode: "R03",
+            issueDate: "2026-05-20",
+            planOutputPath: firstPlanPath,
+            paramMapPath: null,
+            dryRun: true,
+            outputFormat: "json",
+            output: firstOutput);
+        var secondExit = await SheetsCommand.ExecuteIssueMetaAsync(
+            MakeClient(MakeIssueSheetSnapshot(sheetCount)),
+            selector: "all",
+            issueCode: "R03",
+            issueDate: "2026-05-20",
+            planOutputPath: secondPlanPath,
+            paramMapPath: null,
+            dryRun: true,
+            outputFormat: "json",
+            output: secondOutput);
+
+        Assert.Equal(0, firstExit);
+        Assert.Equal(0, secondExit);
+        var firstActions = ReadSheetIssueActionKeys(firstPlanPath);
+        var secondActions = ReadSheetIssueActionKeys(secondPlanPath);
+        Assert.Equal(sheetCount * 2, firstActions.Length);
+        Assert.Equal(firstActions, secondActions);
+        Assert.Equal("A-0001|issueCode|Sheet Issue Code|R02|R03", firstActions[0]);
+        Assert.Equal($"A-{sheetCount:D4}|issueDate|Sheet Issue Date|2026-05-01|2026-05-20", firstActions[^1]);
+    }
+
+    [Theory]
+    [InlineData(100)]
+    [InlineData(300)]
+    [InlineData(1000)]
+    public async Task Renumber_LargePlans_PreserveDeterministicActionOrdering(int sheetCount)
+    {
+        var rulePath = WriteLargeRenumberRule(sheetCount);
+        var firstPlanPath = Path.Combine(_root, $"renumber-{sheetCount}-first.json");
+        var secondPlanPath = Path.Combine(_root, $"renumber-{sheetCount}-second.json");
+        var firstOutput = new StringWriter();
+        var secondOutput = new StringWriter();
+
+        var firstExit = await SheetsCommand.ExecuteRenumberAsync(
+            MakeClient(MakeRenumberSheetSnapshot(sheetCount)),
+            rulePath,
+            firstPlanPath,
+            selector: "all",
+            maxChanges: null,
+            dryRun: true,
+            outputFormat: "json",
+            output: firstOutput);
+        var secondExit = await SheetsCommand.ExecuteRenumberAsync(
+            MakeClient(MakeRenumberSheetSnapshot(sheetCount)),
+            rulePath,
+            secondPlanPath,
+            selector: "all",
+            maxChanges: null,
+            dryRun: true,
+            outputFormat: "json",
+            output: secondOutput);
+
+        Assert.Equal(0, firstExit);
+        Assert.Equal(0, secondExit);
+        var firstActions = ReadSheetRenumberActionKeys(firstPlanPath);
+        var secondActions = ReadSheetRenumberActionKeys(secondPlanPath);
+        Assert.Equal(sheetCount, firstActions.Length);
+        Assert.Equal(firstActions, secondActions);
+        Assert.Equal("TMP-0001|Sheet Number|TMP-0001|A-101", firstActions[0]);
+        Assert.Equal($"TMP-{sheetCount:D4}|Sheet Number|TMP-{sheetCount:D4}|A-1{sheetCount:D2}", firstActions[^1]);
+    }
+
+    [Fact]
     public async Task IssueMeta_RejectsRealWritePath()
     {
         var handler = new FakeHttpHandler("{}");
@@ -619,6 +802,96 @@ numbering:
         var path = Path.Combine(_root, "index.yml");
         File.WriteAllText(path, yaml);
         return path;
+    }
+
+    private string WriteLargeRenumberRule(int sheetCount)
+    {
+        return WriteIndex($$"""
+name: large-sheet-renumber
+schemaVersion: 1
+numbering:
+  scheme: "A-{floor:1}{seq:04}"
+  ranges:
+    - floors: [1]
+      seqMin: 1
+      seqMax: {{sheetCount}}
+""");
+    }
+
+    private static ModelSnapshot MakeIssueSheetSnapshot(int sheetCount)
+    {
+        var snapshot = new ModelSnapshot
+        {
+            Revit = { Document = "tower.rvt", DocumentPath = "D:\\models\\tower.rvt" },
+            Model = { FileHash = "abc123" },
+        };
+
+        for (var index = sheetCount; index >= 1; index--)
+        {
+            snapshot.Sheets.Add(new SnapshotSheet
+            {
+                ViewId = 10_000 + index,
+                Number = $"A-{index:D4}",
+                Name = $"Level {index:D4}",
+                Parameters =
+                {
+                    ["Sheet Issue Code"] = "R02",
+                    ["Sheet Issue Date"] = "2026-05-01",
+                }
+            });
+        }
+
+        return snapshot;
+    }
+
+    private static ModelSnapshot MakeRenumberSheetSnapshot(int sheetCount)
+    {
+        var snapshot = new ModelSnapshot
+        {
+            Revit = { Document = "tower.rvt", DocumentPath = "D:\\models\\tower.rvt" },
+            Model = { FileHash = "abc123" },
+        };
+
+        for (var index = sheetCount; index >= 1; index--)
+        {
+            snapshot.Sheets.Add(new SnapshotSheet
+            {
+                ViewId = 20_000 + index,
+                Number = $"TMP-{index:D4}",
+                Name = $"Level {index:D4}",
+            });
+        }
+
+        return snapshot;
+    }
+
+    private static string[] ReadSheetIssueActionKeys(string planPath)
+    {
+        using var json = JsonDocument.Parse(File.ReadAllText(planPath));
+        return json.RootElement.GetProperty("actions")
+            .EnumerateArray()
+            .Select(action => string.Join(
+                "|",
+                action.GetProperty("sheetNumber").GetString(),
+                action.GetProperty("key").GetString(),
+                action.GetProperty("parameter").GetString(),
+                action.GetProperty("oldValue").GetString(),
+                action.GetProperty("newValue").GetString()))
+            .ToArray();
+    }
+
+    private static string[] ReadSheetRenumberActionKeys(string planPath)
+    {
+        using var json = JsonDocument.Parse(File.ReadAllText(planPath));
+        return json.RootElement.GetProperty("actions")
+            .EnumerateArray()
+            .Select(action => string.Join(
+                "|",
+                action.GetProperty("sheetNumber").GetString(),
+                action.GetProperty("parameter").GetString(),
+                action.GetProperty("oldNumber").GetString(),
+                action.GetProperty("newNumber").GetString()))
+            .ToArray();
     }
 
     private static RevitClient MakeClient(ModelSnapshot snapshot)
