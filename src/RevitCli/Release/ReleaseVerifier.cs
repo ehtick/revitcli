@@ -1666,7 +1666,7 @@ internal static partial class ReleaseVerifier
         var supportClaim = JsonBool(status, "productionSupportClaim");
         var hasPilotCounts = minimumCount.HasValue && completedCount.HasValue;
         var completedPilotsComplete = completedCount.HasValue &&
-            CompletedOfficePilotEvidenceComplete(status, completedCount.Value);
+            CompletedOfficePilotEvidenceComplete(root, status, completedCount.Value);
         var requiredEvidenceComplete =
             JsonBoolEquals(status, "requiredEvidence.doctor", true) &&
             JsonBoolEquals(status, "requiredEvidence.status", true) &&
@@ -1714,7 +1714,7 @@ internal static partial class ReleaseVerifier
             path);
     }
 
-    private static bool CompletedOfficePilotEvidenceComplete(JsonElement status, int expectedCount)
+    private static bool CompletedOfficePilotEvidenceComplete(string root, JsonElement status, int expectedCount)
     {
         if (!TryReadUniqueStringArray(status, "completedPilotIds", expectedCount, out var completedPilotIds))
             return false;
@@ -1732,6 +1732,7 @@ internal static partial class ReleaseVerifier
             completedPilotIds.Contains(pilotId) &&
             evidencePilotIds.Add(pilotId) &&
             JsonPublicOfficePilotEvidencePacketPath(pilot, "evidencePacketPath") &&
+            CompletedOfficePilotEvidencePacketComplete(root, JsonString(pilot, "evidencePacketPath")) &&
             JsonBoolEquals(pilot, "doctor", true) &&
             JsonBoolEquals(pilot, "status", true) &&
             JsonBoolEquals(pilot, "workbench", true) &&
@@ -1763,6 +1764,49 @@ internal static partial class ReleaseVerifier
             trimmed.StartsWith("docs/smoke/v6.0/", StringComparison.Ordinal) &&
             trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool CompletedOfficePilotEvidencePacketComplete(string root, string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return false;
+
+        var fullPath = Path.Combine(root, ToNativePath(relativePath.Trim()));
+        if (!File.Exists(fullPath))
+            return false;
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(fullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        return ContainsAll(text,
+            "Required Commands",
+            "doctor --check-version 2026 --output json",
+            "status --output json",
+            "workbench verify --contract workbench-contract.v2",
+            "release verify --strict --output json",
+            "ledger query --source ledger --output json",
+            "ledger validate --source ledger --output json",
+            "ledger stats --source ledger --analytics-snapshot",
+            "ledger timeline --source ledger --analytics-snapshot",
+            "journal verify --output json",
+            "Live Operation Evidence",
+            "Rollback result",
+            "User Review",
+            "BIM manager signoff",
+            "Project-copy owner signoff",
+            "Support ticket review",
+            "Multi-user rollout postmortem",
+            "Boundary summary");
+    }
+
+    private static bool ContainsAll(string text, params string[] values) =>
+        values.All(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
 
     private static bool TryReadUniqueStringArray(
         JsonElement element,

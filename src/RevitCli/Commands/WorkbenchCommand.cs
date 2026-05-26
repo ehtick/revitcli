@@ -7964,8 +7964,9 @@ steps:
             var completedCount = ReadJsonInt(root, "completedOfficePilotCount");
             var completionClaim = ReadJsonBool(root, "officeRolloutCompletion");
             var supportClaim = ReadJsonBool(root, "productionSupportClaim");
+            var repositoryRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path) ?? "", "..", "..", ".."));
             var completedPilotsComplete = completedCount.HasValue &&
-                CompletedOfficePilotEvidenceComplete(root, completedCount.Value);
+                CompletedOfficePilotEvidenceComplete(repositoryRoot, root, completedCount.Value);
             var requiredEvidenceComplete =
                 JsonPathBoolEquals(root, "requiredEvidence.doctor", true) &&
                 JsonPathBoolEquals(root, "requiredEvidence.status", true) &&
@@ -8045,7 +8046,7 @@ steps:
         property.ValueKind == JsonValueKind.String &&
         !string.IsNullOrWhiteSpace(property.GetString());
 
-    private static bool CompletedOfficePilotEvidenceComplete(JsonElement status, int expectedCount)
+    private static bool CompletedOfficePilotEvidenceComplete(string root, JsonElement status, int expectedCount)
     {
         if (!TryReadUniqueStringArray(status, "completedPilotIds", expectedCount, out var completedPilotIds))
             return false;
@@ -8063,6 +8064,7 @@ steps:
             completedPilotIds.Contains(pilotId) &&
             evidencePilotIds.Add(pilotId) &&
             JsonPathPublicOfficePilotEvidencePacket(pilot, "evidencePacketPath") &&
+            CompletedOfficePilotEvidencePacketComplete(root, pilot.GetProperty("evidencePacketPath").GetString()) &&
             JsonPathBoolEquals(pilot, "doctor", true) &&
             JsonPathBoolEquals(pilot, "status", true) &&
             JsonPathBoolEquals(pilot, "workbench", true) &&
@@ -8093,6 +8095,46 @@ steps:
             !trimmed.Contains("/..", StringComparison.Ordinal) &&
             trimmed.StartsWith("docs/smoke/v6.0/", StringComparison.Ordinal) &&
             trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CompletedOfficePilotEvidencePacketComplete(string root, string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return false;
+
+        var fullPath = Path.Combine(root, relativePath.Trim());
+        if (!File.Exists(fullPath))
+            return false;
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(fullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        return ContainsAll(text,
+            "Required Commands",
+            "doctor --check-version 2026 --output json",
+            "status --output json",
+            "workbench verify --contract workbench-contract.v2",
+            "release verify --strict --output json",
+            "ledger query --source ledger --output json",
+            "ledger validate --source ledger --output json",
+            "ledger stats --source ledger --analytics-snapshot",
+            "ledger timeline --source ledger --analytics-snapshot",
+            "journal verify --output json",
+            "Live Operation Evidence",
+            "Rollback result",
+            "User Review",
+            "BIM manager signoff",
+            "Project-copy owner signoff",
+            "Support ticket review",
+            "Multi-user rollout postmortem",
+            "Boundary summary");
     }
 
     private static bool TryReadUniqueStringArray(

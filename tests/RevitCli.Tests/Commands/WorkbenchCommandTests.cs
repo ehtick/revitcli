@@ -1096,6 +1096,7 @@ Post-rollback evidence
                     .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
                     .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
                     .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+            WriteCompletedPilotEvidencePackets(root, "pilot-01", "pilot-02");
             Directory.SetCurrentDirectory(FindRepositoryRoot());
             var output = new StringWriter();
 
@@ -1111,6 +1112,50 @@ Post-rollback evidence
                 document.RootElement.GetProperty("checks").EnumerateArray(),
                 check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
                     check.GetProperty("status").GetString() == "pass");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60OfficeRolloutEvidencePacketMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-office-rollout-packet-missing-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var statusPath = Path.Combine(root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+            File.WriteAllText(
+                statusPath,
+                File.ReadAllText(statusPath)
+                    .Replace("\"completedOfficePilotCount\": 0", "\"completedOfficePilotCount\": 2", StringComparison.Ordinal)
+                    .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
+                    .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
+                    .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
+                    .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("completedPilots", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -3132,4 +3177,43 @@ journal verify
         }
         """;
     }
+
+    private static void WriteCompletedPilotEvidencePackets(string root, params string[] pilotIds)
+    {
+        foreach (var pilotId in pilotIds)
+        {
+            var path = Path.Combine(root, "docs", "smoke", "v6.0", $"{pilotId}.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, CompletedPilotEvidencePacketContent(pilotId));
+        }
+    }
+
+    private static string CompletedPilotEvidencePacketContent(string pilotId) => $$"""
+        # v6.0 Office Pilot {{pilotId}}
+
+        ## Required Commands
+
+        - `doctor --check-version 2026 --output json`
+        - `status --output json`
+        - `workbench verify --contract workbench-contract.v2 --dir . --output json`
+        - `release verify --strict --output json`
+        - `ledger query --source ledger --output json`
+        - `ledger validate --source ledger --output json`
+        - `ledger stats --source ledger --analytics-snapshot .revitcli/analytics/ledger-stats.json --output json`
+        - `ledger timeline --source ledger --analytics-snapshot .revitcli/analytics/ledger-timeline.json --output json`
+        - `journal verify --output json`
+
+        ## Live Operation Evidence
+
+        - Rollback result: passed
+
+        ## User Review
+
+        - BIM manager signoff: approved
+        - Project-copy owner signoff: approved
+        - Support ticket review: reviewed
+        - Multi-user rollout postmortem: complete
+
+        Boundary summary: no SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, no database runtime.
+        """;
 }

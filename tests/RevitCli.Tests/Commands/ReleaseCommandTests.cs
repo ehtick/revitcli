@@ -680,6 +680,7 @@ Run `release verify --strict`.
                 .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
                 .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
                 .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+        WriteCompletedPilotEvidencePackets(_root, "pilot-01", "pilot-02");
         var output = new StringWriter();
 
         var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
@@ -690,6 +691,31 @@ Run `release verify --strict`.
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:office-rollout-status-no-overclaim-json" &&
             check.GetProperty("status").GetString() == "ok");
+    }
+
+    [Fact]
+    public async Task Verify_V60OfficeRolloutStatusMissingEvidencePacketFile_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var statusPath = Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+        File.WriteAllText(
+            statusPath,
+            File.ReadAllText(statusPath)
+                .Replace("\"completedOfficePilotCount\": 0", "\"completedOfficePilotCount\": 2", StringComparison.Ordinal)
+                .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
+                .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
+                .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
+                .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:office-rollout-status-completed-pilots-json" &&
+            check.GetProperty("status").GetString() == "error");
     }
 
     [Fact]
@@ -2860,6 +2886,41 @@ Run `release verify --strict`.
         }
         """;
     }
+
+    private static void WriteCompletedPilotEvidencePackets(string root, params string[] pilotIds)
+    {
+        foreach (var pilotId in pilotIds)
+            WriteFile(root, $"docs/smoke/v6.0/{pilotId}.md", CompletedPilotEvidencePacketContent(pilotId));
+    }
+
+    private static string CompletedPilotEvidencePacketContent(string pilotId) => $$"""
+        # v6.0 Office Pilot {{pilotId}}
+
+        ## Required Commands
+
+        - `doctor --check-version 2026 --output json`
+        - `status --output json`
+        - `workbench verify --contract workbench-contract.v2 --dir . --output json`
+        - `release verify --strict --output json`
+        - `ledger query --source ledger --output json`
+        - `ledger validate --source ledger --output json`
+        - `ledger stats --source ledger --analytics-snapshot .revitcli/analytics/ledger-stats.json --output json`
+        - `ledger timeline --source ledger --analytics-snapshot .revitcli/analytics/ledger-timeline.json --output json`
+        - `journal verify --output json`
+
+        ## Live Operation Evidence
+
+        - Rollback result: passed
+
+        ## User Review
+
+        - BIM manager signoff: approved
+        - Project-copy owner signoff: approved
+        - Support ticket review: reviewed
+        - Multi-user rollout postmortem: complete
+
+        Boundary summary: no SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, no database runtime.
+        """;
 
     private static void WriteFile(string root, string relativePath, string content)
     {
