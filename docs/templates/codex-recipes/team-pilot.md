@@ -24,7 +24,10 @@ any supportable error reports to the pilot postmortem.
 For v6.0 office rollout pilots, also fill
 `docs/smoke/v6.0/pilot-evidence-template.md`. That packet adds ledger query,
 ledger validation, analytics snapshot, rollback, and user-review evidence for
-controlled project-copy pilots without making a production support claim. Do
-not claim office rollout completion until 2-3 completed office pilots have BIM
-manager signoff, project-copy owner signoff, support ticket review, and
-multi-user rollout postmortems.
+controlled project-copy pilots without making a production support claim. Start
+each packet with `revitcli release pilot scaffold --pilot-id <public-id>` and
+check it with `revitcli release pilot validate --path docs/smoke/v6.0/<public-id>.md`
+before listing it in `office-rollout-status.json`. Do not claim office rollout
+completion until 2-3 completed office pilots have BIM manager signoff,
+project-copy owner signoff, support ticket review, and multi-user rollout
+postmortems.

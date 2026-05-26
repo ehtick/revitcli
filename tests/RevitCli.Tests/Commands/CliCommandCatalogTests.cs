@@ -143,6 +143,15 @@ public class CliCommandCatalogTests
     }
 
     [Fact]
+    public void InteractiveHelpEntries_IncludeReleasePilotValidate()
+    {
+        Assert.Contains(
+            CliCommandCatalog.InteractiveHelpEntries,
+            entry => entry.Command == "release pilot validate" &&
+                     entry.Description.Contains("evidence packet"));
+    }
+
+    [Fact]
     public void InteractiveHelpEntries_IncludeWorkbenchReceipts()
     {
         Assert.Contains(

@@ -13,8 +13,30 @@ namespace RevitCli.Commands;
 public static class ReleaseCommand
 {
     private const string PilotScaffoldSchemaVersion = "release-pilot-scaffold.v1";
+    private const string PilotValidateSchemaVersion = "release-pilot-validate.v1";
     private const string PilotScaffoldRolloutStatusHint =
         "Do not add this pilot to office-rollout-status.json until every required command, live-operation, review, signoff, support-review, and postmortem item is complete.";
+    private static readonly string[] RequiredPilotEvidencePacketPhrases =
+    {
+        "## Required Commands",
+        "doctor --check-version 2026 --output json",
+        "status --output json",
+        "workbench verify --contract workbench-contract.v2",
+        "release verify --strict --output json",
+        "ledger query --source ledger --output json",
+        "ledger validate --source ledger --output json",
+        "ledger stats --source ledger --analytics-snapshot",
+        "ledger timeline --source ledger --analytics-snapshot",
+        "journal verify --output json",
+        "## Live Operation Evidence",
+        "Rollback result",
+        "## User Review",
+        "BIM manager signoff",
+        "Project-copy owner signoff",
+        "Support ticket review",
+        "Multi-user rollout postmortem",
+        "Boundary summary",
+    };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -35,6 +57,7 @@ public static class ReleaseCommand
     {
         var command = new Command("pilot", "Office rollout pilot evidence helpers");
         command.AddCommand(CreatePilotScaffoldCommand());
+        command.AddCommand(CreatePilotValidateCommand());
         return command;
     }
 
@@ -69,6 +92,35 @@ public static class ReleaseCommand
         {
             Environment.ExitCode = await ExecutePilotScaffoldAsync(root, pilotId, path, force, output, Console.Out);
         }, rootOpt, pilotIdOpt, pathOpt, forceOpt, outputOpt);
+
+        return command;
+    }
+
+    private static Command CreatePilotValidateCommand()
+    {
+        var rootOpt = new Option<string>(
+            "--root",
+            () => Directory.GetCurrentDirectory(),
+            "Repository root");
+        var pathOpt = new Option<string>(
+            "--path",
+            "Repo-relative evidence packet path under docs/smoke/v6.0/")
+        {
+            IsRequired = true,
+        };
+        var outputOpt = new Option<string>(
+            "--output",
+            () => "table",
+            "Output format: table, json, markdown");
+
+        var command = new Command("validate", "Validate a public-safe v6.0 office pilot evidence packet")
+        {
+            rootOpt, pathOpt, outputOpt
+        };
+        command.SetHandler(async (root, path, output) =>
+        {
+            Environment.ExitCode = await ExecutePilotValidateAsync(root, path, output, Console.Out);
+        }, rootOpt, pathOpt, outputOpt);
 
         return command;
     }
@@ -195,6 +247,79 @@ public static class ReleaseCommand
         return 0;
     }
 
+    public static async Task<int> ExecutePilotValidateAsync(
+        string root,
+        string evidencePacketPath,
+        string outputFormat,
+        TextWriter output)
+    {
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
+        {
+            await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, markdown.");
+            return 1;
+        }
+
+        var normalizedRoot = Path.GetFullPath(root);
+        var path = evidencePacketPath.Trim();
+        var issues = new List<ReleasePilotValidateIssue>();
+        if (!IsPublicSafePilotEvidencePath(path))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "path-safety",
+                "error",
+                "Evidence packet path must be repo-relative under docs/smoke/v6.0/ and end with .md.",
+                null,
+                path));
+        }
+
+        string? packet = null;
+        if (issues.Count == 0)
+        {
+            var fullPath = Path.Combine(normalizedRoot, path.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(fullPath))
+            {
+                issues.Add(new ReleasePilotValidateIssue(
+                    "packet-missing",
+                    "error",
+                    "Evidence packet file does not exist.",
+                    null,
+                    path));
+            }
+            else
+            {
+                try
+                {
+                    packet = await File.ReadAllTextAsync(fullPath);
+                }
+                catch (IOException ex)
+                {
+                    issues.Add(new ReleasePilotValidateIssue(
+                        "packet-unreadable",
+                        "error",
+                        $"Evidence packet file could not be read: {ex.Message}",
+                        null,
+                        path));
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    issues.Add(new ReleasePilotValidateIssue(
+                        "packet-unreadable",
+                        "error",
+                        $"Evidence packet file could not be read: {ex.Message}",
+                        null,
+                        path));
+                }
+            }
+        }
+
+        if (packet is not null)
+            AddPilotPacketContentIssues(packet, issues);
+
+        var result = ReleasePilotValidateResult.FromIssues(path, issues);
+        await WritePilotValidateResultAsync(output, normalizedOutput, result);
+        return result.Success ? 0 : 1;
+    }
+
     private static async Task WritePilotScaffoldResultAsync(
         TextWriter output,
         string normalizedOutput,
@@ -214,6 +339,63 @@ public static class ReleaseCommand
         }
     }
 
+    private static async Task WritePilotValidateResultAsync(
+        TextWriter output,
+        string normalizedOutput,
+        ReleasePilotValidateResult result)
+    {
+        if (normalizedOutput == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(result, JsonOptions));
+        }
+        else if (normalizedOutput == "markdown")
+        {
+            await output.WriteLineAsync(RenderPilotValidateMarkdown(result));
+        }
+        else
+        {
+            await output.WriteLineAsync(RenderPilotValidateTable(result));
+        }
+    }
+
+    private static void AddPilotPacketContentIssues(
+        string packet,
+        List<ReleasePilotValidateIssue> issues)
+    {
+        foreach (var phrase in RequiredPilotEvidencePacketPhrases)
+        {
+            if (!packet.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            {
+                issues.Add(new ReleasePilotValidateIssue(
+                    "missing-required-evidence",
+                    "error",
+                    $"Evidence packet is missing required phrase: {phrase}",
+                    null,
+                    phrase));
+            }
+        }
+
+        foreach (var (label, lineNumber) in FindBlankPilotFields(packet))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "blank-scaffold-field",
+                "error",
+                $"Evidence packet still has a blank scaffold field: {label}",
+                lineNumber,
+                label));
+        }
+
+        foreach (var (line, lineNumber) in FindPublicSafetyFindings(packet))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "public-safety-path",
+                "error",
+                "Evidence packet appears to contain a local absolute path; replace it with a public-safe identifier.",
+                lineNumber,
+                line.Trim()));
+        }
+    }
+
     private static bool IsPublicSafePilotId(string pilotId) =>
         !string.IsNullOrWhiteSpace(pilotId) &&
         pilotId.All(ch => char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-');
@@ -228,6 +410,61 @@ public static class ReleaseCommand
             !trimmed.Contains("/..", StringComparison.Ordinal) &&
             trimmed.StartsWith("docs/smoke/v6.0/", StringComparison.Ordinal) &&
             trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<(string Label, int LineNumber)> FindBlankPilotFields(string packet)
+    {
+        var lines = packet.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var trimmed = lines[i].Trim();
+            if (!trimmed.StartsWith("- ", StringComparison.Ordinal))
+                continue;
+
+            var separator = trimmed.IndexOf(':', StringComparison.Ordinal);
+            if (separator < 0)
+                continue;
+
+            var label = trimmed[2..separator].Trim();
+            var value = trimmed[(separator + 1)..].Trim();
+            if (label.Length > 0 && value.Length == 0)
+                yield return (label, i + 1);
+        }
+    }
+
+    private static IEnumerable<(string Line, int LineNumber)> FindPublicSafetyFindings(string packet)
+    {
+        var lines = packet.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (ContainsLocalAbsolutePath(line))
+                yield return (line, i + 1);
+        }
+    }
+
+    private static bool ContainsLocalAbsolutePath(string line) =>
+        ContainsWindowsDrivePath(line) ||
+        line.Contains(@"\\", StringComparison.Ordinal) ||
+        line.Contains("/home/", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("/Users/", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("/mnt/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ContainsWindowsDrivePath(string line)
+    {
+        for (var i = 0; i + 2 < line.Length; i++)
+        {
+            var previousIsWord = i > 0 && char.IsLetterOrDigit(line[i - 1]);
+            if (char.IsLetter(line[i]) &&
+                !previousIsWord &&
+                line[i + 1] == ':' &&
+                (line[i + 2] == '\\' || line[i + 2] == '/'))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string RenderPilotEvidencePacket(string pilotId) => $$"""
@@ -335,6 +572,55 @@ public static class ReleaseCommand
         return writer.ToString().TrimEnd();
     }
 
+    private static string RenderPilotValidateTable(ReleasePilotValidateResult result)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("Release pilot validate");
+        writer.WriteLine($"Result:   {(result.Success ? "PASS" : "FAIL")}");
+        writer.WriteLine($"Path:     {result.EvidencePacketPath}");
+        writer.WriteLine($"Errors:   {result.ErrorCount}");
+        writer.WriteLine($"Warnings: {result.WarningCount}");
+        if (result.Issues.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine($"{"Severity",-8} {"Issue",-26} Message");
+            writer.WriteLine(new string('-', 90));
+            foreach (var issue in result.Issues)
+                writer.WriteLine($"{issue.Severity,-8} {Truncate(issue.Id, 26),-26} {issue.Message}");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderPilotValidateMarkdown(ReleasePilotValidateResult result)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Release Pilot Validate");
+        writer.WriteLine();
+        writer.WriteLine($"- Status: `{(result.Success ? "PASS" : "FAIL")}`");
+        writer.WriteLine($"- Evidence packet: `{EscapeInlineCode(result.EvidencePacketPath)}`");
+        writer.WriteLine($"- Errors: `{result.ErrorCount}`");
+        writer.WriteLine($"- Warnings: `{result.WarningCount}`");
+        writer.WriteLine();
+        writer.WriteLine("## Issues");
+        if (result.Issues.Length == 0)
+        {
+            writer.WriteLine("- None.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("| Severity | Issue | Line | Message |");
+        writer.WriteLine("|---|---|---:|---|");
+        foreach (var issue in result.Issues)
+        {
+            writer.WriteLine(
+                $"| {EscapeTableCell(issue.Severity)} | {EscapeTableCell(issue.Id)} | {(issue.LineNumber?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-")} | {EscapeTableCell(issue.Message)} |");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
     private sealed record ReleasePilotScaffoldResult(
         string SchemaVersion,
         bool Success,
@@ -356,6 +642,37 @@ public static class ReleaseCommand
                 message,
                 PilotScaffoldRolloutStatusHint);
     }
+
+    private sealed record ReleasePilotValidateResult(
+        string SchemaVersion,
+        bool Success,
+        string EvidencePacketPath,
+        int ErrorCount,
+        int WarningCount,
+        ReleasePilotValidateIssue[] Issues)
+    {
+        public static ReleasePilotValidateResult FromIssues(
+            string evidencePacketPath,
+            List<ReleasePilotValidateIssue> issues)
+        {
+            var errorCount = issues.Count(issue => issue.Severity == "error");
+            var warningCount = issues.Count(issue => issue.Severity == "warning");
+            return new ReleasePilotValidateResult(
+                PilotValidateSchemaVersion,
+                errorCount == 0,
+                evidencePacketPath,
+                errorCount,
+                warningCount,
+                issues.ToArray());
+        }
+    }
+
+    private sealed record ReleasePilotValidateIssue(
+        string Id,
+        string Severity,
+        string Message,
+        int? LineNumber,
+        string? Excerpt);
 
     private static string RenderTable(ReleaseVerifyReport report)
     {

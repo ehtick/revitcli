@@ -111,7 +111,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("list stats verify plan bundle --dir --profile --since --bundle-path --dry-run --force --output", script);
         Assert.Contains("install validate --manifest --dir --output --ref --subpath --force --dry-run", script);
         Assert.Contains("verify pilot --root --output --tag --strict --pilot-id --path --force", script);
-        Assert.Contains("compgen -W \"scaffold\" -- \"$cur\"", script);
+        Assert.Contains("compgen -W \"scaffold validate\" -- \"$cur\"", script);
         Assert.Contains("verify issue-meta renumber index init show --against --rule --issues-only --output --path --force --selector --issue-code --issue-date --plan-output --param-map --dry-run --max-changes", script);
         Assert.Contains("renumber --rule --plan-output --scope --dry-run --max-changes --output", script);
         Assert.Contains("assign verify --category --rule --plan-output --sort --dry-run --max-changes --against --output", script);
@@ -185,7 +185,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("list stats verify plan bundle", script);
         Assert.Contains("install validate", script);
         Assert.Contains("verify", script);
-        Assert.Contains("_values 'subcommand' scaffold", script);
+        Assert.Contains("_values 'subcommand' scaffold validate", script);
         Assert.Contains("--tag[Release tag]", script);
         Assert.Contains("--strict[Treat warnings as failures]", script);
         Assert.Contains("--pilot-id[Public-safe pilot identifier]", script);
@@ -286,7 +286,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("$standardsOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("'release' = @('verify', 'pilot', '--root', '--output', '--tag', '--strict', '--pilot-id', '--path', '--force')", script);
         Assert.Contains("$releaseOutputFormats = @('table', 'json', 'markdown')", script);
-        Assert.Contains("$releasePilotSubcommands = @('scaffold')", script);
+        Assert.Contains("$releasePilotSubcommands = @('scaffold', 'validate')", script);
         Assert.Contains("'sheets' = @('verify', 'issue-meta', 'renumber', 'index', 'init', 'show', '--against', '--rule', '--issues-only', '--output', '--path', '--force', '--selector', '--issue-code', '--issue-date', '--plan-output', '--param-map', '--dry-run', '--max-changes')", script);
         Assert.Contains("$sheetsOutputFormats = @('table', 'json', 'markdown', 'yaml')", script);
         Assert.Contains("'rooms' = @('renumber', '--rule', '--plan-output', '--scope', '--dry-run', '--max-changes', '--output')", script);

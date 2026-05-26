@@ -8,7 +8,10 @@ for private office notes.
 
 Create a new public-safe packet with
 `release pilot scaffold --pilot-id v6-pilot-2026-office-copy-01 --output json`
-before collecting private office evidence.
+before collecting private office evidence. Before adding the packet to
+`docs/smoke/v6.0/office-rollout-status.json`, run
+`release pilot validate --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json`
+and keep the result free of errors.
 
 - Pilot identifier:
 - Date/time:
