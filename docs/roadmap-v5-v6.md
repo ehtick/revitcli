@@ -253,7 +253,9 @@ Done means:
   completed pilots reach the threshold. Production support claims additionally
   require `--support-review docs/smoke/v6.0/<support-review>.md` so the status
   file records a public-safe `productionSupportReviewPath` summary after
-  private support review.
+  private support review. Support review creation is deferred until the
+  completed pilot threshold is satisfied, so premature production-support
+  requests keep the next actions on pilot packet intake first.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable status as 0 completed office pilots and no office rollout
   completion claim. Future completion requires per-pilot evidence flags, not

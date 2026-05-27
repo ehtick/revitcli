@@ -4058,6 +4058,7 @@ public static class WorkbenchCommand
             "nextActions",
             "--support-review",
             "productionSupportReviewPath",
+            "Support review creation is deferred until the completed pilot threshold",
             "doctor --check-version 2026 --output json",
             "`status --output json`",
             "workbench verify --contract workbench-contract.v2",

@@ -417,8 +417,11 @@ The contract baseline is acceptable when:
   production support still requires an explicit
   `--production-support` request plus
   `--support-review docs/smoke/v6.0/<support-review>.md` after private support
-  review. The written status records `productionSupportReviewPath`; it is not
-  a production support claim by default.
+  review. Support review creation is deferred until the completed pilot
+  threshold is satisfied, so premature production-support requests keep the
+  next actions on pilot packet intake first. The written status records
+  `productionSupportReviewPath`; it is not a production support claim by
+  default.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable rollout status, minimum pilot count, completed pilot count,
   per-pilot evidence flags, public-safe repo-relative Markdown evidence packet

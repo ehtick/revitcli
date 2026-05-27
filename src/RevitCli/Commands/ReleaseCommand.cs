@@ -503,7 +503,8 @@ public static class ReleaseCommand
         var officeRolloutCompletionAfter = officeRolloutCompletionBefore;
         var productionSupportClaimAfter = productionSupportClaimBefore;
         var wrote = false;
-        var productionSupportReviewIssues = productionSupport
+        var shouldValidateProductionSupportReview = productionSupport && read.Result.CanClaimOfficeRollout;
+        var productionSupportReviewIssues = shouldValidateProductionSupportReview
             ? await ValidateProductionSupportReviewAsync(normalizedRoot, supportReviewPath)
             : new List<ReleasePilotValidateIssue>();
         var productionSupportReviewReady = productionSupportReviewIssues.All(issue => issue.Severity != "error");
@@ -2146,7 +2147,7 @@ public static class ReleaseCommand
             int productionSupportReviewErrorCount)
         {
             var actions = new List<string>(status.NextActions);
-            if (productionSupportReviewErrorCount > 0)
+            if (status.CanClaimOfficeRollout && productionSupportReviewErrorCount > 0)
             {
                 actions.Add("create docs/smoke/v6.0/<support-review>.md from docs/smoke/v6.0/production-support-review-template.md");
                 actions.Add("release pilot claim --production-support --support-review docs/smoke/v6.0/<support-review>.md --output json");
@@ -2180,7 +2181,7 @@ public static class ReleaseCommand
                 blockers.Add("packetValidation");
             if (status.MissingEvidenceSummary.Length > 0)
                 blockers.Add("missingEvidence");
-            if (productionSupportReviewErrorCount > 0)
+            if (status.CanClaimOfficeRollout && productionSupportReviewErrorCount > 0)
                 blockers.Add("productionSupportReview");
 
             return blockers.Count == 0

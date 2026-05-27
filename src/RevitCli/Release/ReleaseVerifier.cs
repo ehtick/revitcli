@@ -1257,6 +1257,8 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence template requires a support review path for production support claims.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-support-review-status-path", pilotEvidence, "productionSupportReviewPath",
             "v6.0 pilot evidence template records the production support review summary path.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-support-review-deferred", pilotEvidence, "Support review creation is deferred until the completed pilot threshold",
+            "v6.0 pilot evidence keeps support review next actions after pilot evidence readiness.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-postmortem", pilotEvidence, "Multi-user rollout postmortem",
             "v6.0 pilot evidence template requires multi-user rollout postmortem.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddGuardedContains(report, "v6.0:pilot-evidence-no-saas", pilotEvidence, "SaaS",

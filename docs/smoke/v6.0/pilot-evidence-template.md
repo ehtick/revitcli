@@ -33,6 +33,9 @@ write. Add
 include `--support-review docs/smoke/v6.0/<support-review>.md` so
 `office-rollout-status.json` records a public-safe
 `productionSupportReviewPath` summary for the production support claim.
+Support review creation is deferred until the completed pilot threshold is
+satisfied, so premature production-support requests keep the next actions on
+pilot packet intake first.
 
 - Pilot identifier:
 - Date/time:

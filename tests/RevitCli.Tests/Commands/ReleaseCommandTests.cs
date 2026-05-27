@@ -1107,6 +1107,42 @@ jobs:
     }
 
     [Fact]
+    public async Task PilotClaim_ProductionSupportBeforePilotThreshold_DefersSupportReviewActions()
+    {
+        WriteHealthyTree(_root);
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotClaimAsync(
+            _root,
+            yes: true,
+            productionSupport: true,
+            outputFormat: "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("wrote").GetBoolean());
+        Assert.False(root.GetProperty("canClaimOfficeRollout").GetBoolean());
+        var blockers = root.GetProperty("claimBlockers").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+        Assert.Contains("completedOfficePilotCount", blockers);
+        Assert.Contains("evidenceCompleteOfficePilotCount", blockers);
+        Assert.DoesNotContain("productionSupportReview", blockers);
+        var nextActions = root.GetProperty("nextActions").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+        Assert.Contains("release pilot scaffold --pilot-id <public-id> --output json", nextActions);
+        Assert.DoesNotContain(
+            "create docs/smoke/v6.0/<support-review>.md from docs/smoke/v6.0/production-support-review-template.md",
+            nextActions);
+        Assert.DoesNotContain(root.GetProperty("issues").EnumerateArray(), item =>
+            item.GetProperty("id").GetString() == "production-support-review-required");
+    }
+
+    [Fact]
     public async Task PilotClaim_IncompleteRegisteredEvidence_ReportsClaimBlockers()
     {
         WriteHealthyTree(_root);
