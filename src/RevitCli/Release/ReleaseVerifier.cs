@@ -457,6 +457,10 @@ internal static partial class ReleaseVerifier
                     "WSL live smoke defaults current-source proof to false until every commit surface matches source HEAD.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:drift-kind", wslScript, "currentSourceDriftKind",
                     "WSL live smoke classifies current-source drift before reporting next actions.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:top-level-current-source-installed", wslScript, "currentSourceInstalled: $currentSourceInstalled",
+                    "WSL live smoke exposes current-source installation status as a top-level summary field.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:top-level-mutates-model", wslScript, "mutatesModel: false",
+                    "WSL live smoke exposes its no-model-write boundary as a top-level summary field.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:restart-required", wslScript, "restart-required",
                     "WSL live smoke distinguishes staged-current add-ins that only need a Revit restart.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:install-required", wslScript, "install-required",

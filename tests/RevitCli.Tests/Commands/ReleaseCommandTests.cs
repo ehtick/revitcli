@@ -370,6 +370,25 @@ jobs:
     }
 
     [Fact]
+    public async Task Verify_WslCurrentSourceSmokeWithoutTopLevelCurrentSourceInstalled_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var path = Path.Combine(_root, "scripts", "smoke-revit-wsl.sh");
+        File.WriteAllText(
+            path,
+            File.ReadAllText(path).Replace("currentSourceInstalled: $currentSourceInstalled", "currentSourceInstalledNested: $currentSourceInstalled", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:top-level-current-source-installed" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
     public async Task Verify_Markdown_PrintsReviewSections()
     {
         WriteHealthyTree(_root);
@@ -4094,6 +4113,7 @@ echo "restart-required"
 echo "install-required"
 sourceInstalledDrift=true
 postRestartCommand="scripts/smoke-revit-wsl.sh --require-current-source"
+currentSourceInstalled: $currentSourceInstalled
 cat > install-current-source.ps1 <<'EOF'
 & .\scripts\install-current-source-revit2026.ps1 -Revit2026InstallDir 'D:\revit2026\Revit 2026'
 EOF

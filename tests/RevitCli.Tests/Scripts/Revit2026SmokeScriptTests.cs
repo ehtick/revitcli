@@ -117,6 +117,7 @@ public sealed class Revit2026SmokeScriptTests
         Assert.Contains("install-current-source.ps1", script);
         Assert.Contains("installHandoff", script);
         Assert.Contains("postRestartCommand", script);
+        Assert.Contains("currentSourceInstalled: $currentSourceInstalled", script);
         Assert.Contains("currentSourceInstalled", script);
         Assert.Contains("requireCurrentSource", script);
         Assert.Contains("mutatesModel: false", script);

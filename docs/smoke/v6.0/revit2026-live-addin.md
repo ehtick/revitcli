@@ -11,11 +11,14 @@ by invoking the installed Windows CLI through `scripts/smoke-revit-wsl.sh`.
 That helper records `doctor --check-version 2026 --output json`,
 `status --output json`, `query --id`, filtered `query`, and a `set --dry-run`
 preview into `.artifacts/live-smoke/revit2026-wsl-*`, plus
-`summary.json` with the pass/fail rollup, `sourceInstalledDrift`,
-`currentSourceDriftKind`, `stagedAddinCommit`, and `stagedAddinPath`, without
-passing `--yes` or mutating the model. The refresh is live-environment evidence
-only: it also records the source `HEAD`, so installed Windows CLI/add-in version
-drift stays visible instead of being treated as current-source validation. Use
+`summary.json` with the pass/fail rollup and top-level
+`sourceInstalledDrift`, `currentSourceInstalled`, `currentSourceDriftKind`,
+`stagedAddinCommit`, `stagedAddinPath`, and `mutatesModel=false`, without
+passing `--yes` or mutating the model. The nested `versions` and `boundary`
+objects keep the same evidence for compatibility. The refresh is
+live-environment evidence only: it also records the source `HEAD`, so installed
+Windows CLI/add-in version drift stays visible instead of being treated as
+current-source validation. Use
 `scripts/smoke-revit-wsl.sh --require-current-source` when the claim needs the
 currently checked-out source to be installed. The helper fails with
 `install-required` when the staged install is not current and writes
