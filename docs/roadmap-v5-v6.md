@@ -234,8 +234,9 @@ Done means:
   BIM manager signoff, project-copy owner signoff, support review, and
   multi-user rollout postmortems, with each packet `Pilot identifier` matching
   the registered pilot id. `release pilot scaffold` creates the
-  public-safe per-pilot Markdown scaffold without changing rollout status, and
-  `release pilot validate` checks a packet before it is listed as completed
+  public-safe per-pilot Markdown scaffold without changing rollout status and
+  reports scaffold `nextActions` for validate/register intake. `release pilot
+  validate` checks a packet before it is listed as completed
   evidence. `release pilot register` dry-runs or writes the completed-pilot
   status entry only after validation and reports
   `completedOfficePilotCountBefore`, `completedOfficePilotCountAfter`, and

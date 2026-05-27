@@ -436,6 +436,11 @@ jobs:
         Assert.Equal("v6-pilot-2026-office-copy-01", root.GetProperty("pilotId").GetString());
         Assert.Equal("docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md", root.GetProperty("evidencePacketPath").GetString());
         Assert.Contains("office-rollout-status.json", root.GetProperty("rolloutStatusHint").GetString()!, StringComparison.Ordinal);
+        var nextActions = root.GetProperty("nextActions").EnumerateArray()
+            .Select(action => action.GetString())
+            .ToArray();
+        Assert.Contains("release pilot validate --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json", nextActions);
+        Assert.Contains("release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json", nextActions);
 
         var packetPath = Path.Combine(_root, "docs", "smoke", "v6.0", "v6-pilot-2026-office-copy-01.md");
         Assert.True(File.Exists(packetPath));
@@ -1846,6 +1851,26 @@ Run `release verify --strict`.
         Assert.False(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:pilot-evidence-scaffold-command" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60PilotEvidenceScaffoldNextActions_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath).Replace("scaffold `nextActions`", "scaffold next steps", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-scaffold-next-actions" &&
             check.GetProperty("status").GetString() == "error");
     }
 

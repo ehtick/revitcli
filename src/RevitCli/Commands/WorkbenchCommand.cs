@@ -4047,6 +4047,7 @@ public static class WorkbenchCommand
             "controlled project-copy pilots",
             "Pilot identifier",
             "release pilot scaffold",
+            "scaffold `nextActions`",
             "release pilot validate",
             "release pilot register",
             "register nextActions",

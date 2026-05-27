@@ -1201,6 +1201,8 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence binds each packet to a registered pilot id.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-scaffold-command", pilotEvidence, "release pilot scaffold",
             "v6.0 pilot evidence intake exposes the local scaffold command.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-scaffold-next-actions", pilotEvidence, "scaffold `nextActions`",
+            "v6.0 pilot scaffold reports machine-readable next actions for validate/register intake.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-validate-command", pilotEvidence, "release pilot validate",
             "v6.0 pilot evidence intake exposes the local packet validation command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-register-command", pilotEvidence, "release pilot register",

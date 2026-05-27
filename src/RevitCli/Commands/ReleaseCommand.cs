@@ -351,10 +351,18 @@ public static class ReleaseCommand
             true,
             force,
             "Created v6.0 office pilot evidence packet scaffold.",
-            PilotScaffoldRolloutStatusHint);
+            PilotScaffoldRolloutStatusHint,
+            BuildPilotScaffoldNextActions(pilotId, path));
         await WritePilotScaffoldResultAsync(output, normalizedOutput, result);
         return 0;
     }
+
+    private static string[] BuildPilotScaffoldNextActions(string pilotId, string evidencePacketPath) =>
+        new[]
+        {
+            $"release pilot validate --path {evidencePacketPath} --output json",
+            $"release pilot register --pilot-id {pilotId} --path {evidencePacketPath} --output json",
+        };
 
     public static async Task<int> ExecutePilotValidateAsync(
         string root,
@@ -1367,6 +1375,14 @@ public static class ReleaseCommand
         writer.WriteLine($"Force:   {result.Force.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Message: {result.Message}");
         writer.WriteLine($"Rollout: {result.RolloutStatusHint}");
+        if (result.NextActions.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("Next actions:");
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- {action}");
+        }
+
         return writer.ToString().TrimEnd();
     }
 
@@ -1382,6 +1398,18 @@ public static class ReleaseCommand
         writer.WriteLine($"- Force: `{result.Force.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Message: {result.Message}");
         writer.WriteLine($"- Rollout status: {result.RolloutStatusHint}");
+        writer.WriteLine();
+        writer.WriteLine("## Next Actions");
+        if (result.NextActions.Length == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- `{EscapeInlineCode(action)}`");
+        }
+
         return writer.ToString().TrimEnd();
     }
 
@@ -1763,7 +1791,8 @@ public static class ReleaseCommand
         bool Wrote,
         bool Force,
         string Message,
-        string RolloutStatusHint)
+        string RolloutStatusHint,
+        string[] NextActions)
     {
         public static ReleasePilotScaffoldResult Failed(string pilotId, string evidencePacketPath, string message) =>
             new(
@@ -1774,7 +1803,8 @@ public static class ReleaseCommand
                 false,
                 false,
                 message,
-                PilotScaffoldRolloutStatusHint);
+                PilotScaffoldRolloutStatusHint,
+                Array.Empty<string>());
     }
 
     private sealed record ReleasePilotValidateResult(
