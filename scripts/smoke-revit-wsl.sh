@@ -29,6 +29,7 @@ Environment overrides:
   REVITCLI_SMOKE_PARAM
   REVITCLI_SMOKE_VALUE
   REVITCLI_WSL_SMOKE_OUTPUT_DIR
+  REVITCLI_REVIT2026_INSTALL_DIR
 EOF
 }
 
@@ -41,6 +42,7 @@ filter="${REVITCLI_SMOKE_FILTER:-标记 = TEST}"
 param="${REVITCLI_SMOKE_PARAM:-注释}"
 value="${REVITCLI_SMOKE_VALUE:-revitcli-v6-wsl-smoke-${timestamp}}"
 output_dir="${REVITCLI_WSL_SMOKE_OUTPUT_DIR:-${repo_root}/.artifacts/live-smoke/revit2026-wsl-${timestamp}}"
+revit2026_install_dir="${REVITCLI_REVIT2026_INSTALL_DIR:-D:\\revit2026\\Revit 2026}"
 require_current_source=false
 
 while [[ $# -gt 0 ]]; do
@@ -100,6 +102,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 mkdir -p "$output_dir"
+output_dir="$(cd "$output_dir" && pwd)"
 
 run_step() {
   local name="$1"
@@ -114,6 +117,10 @@ run_step() {
     printf 'fail:%s\n' "$exit_code" > "${output_dir}/${name}.status"
     return "$exit_code"
   fi
+}
+
+escape_ps_single_quoted() {
+  printf "%s" "$1" | sed "s/'/''/g"
 }
 
 git -C "$repo_root" rev-parse HEAD > "${output_dir}/source-head.txt"
@@ -153,11 +160,31 @@ source_installed_drift=false
 if [[ -n "$installed_commit" && "$installed_commit" != "$source_head" ]]; then
   source_installed_drift=true
 fi
+repo_root_windows="$repo_root"
+if command -v wslpath >/dev/null 2>&1; then
+  repo_root_windows="$(wslpath -w "$repo_root")"
+fi
+install_handoff_path=""
+install_handoff_windows_path=""
+post_restart_command="scripts/smoke-revit-wsl.sh --require-current-source"
 next_actions_json='[]'
 if [[ "$source_installed_drift" == "true" ]]; then
+  install_handoff_path="${output_dir}/install-current-source.ps1"
+  install_handoff_windows_path="$install_handoff_path"
+  if command -v wslpath >/dev/null 2>&1; then
+    install_handoff_windows_path="$(wslpath -w "$install_handoff_path")"
+  fi
+  repo_root_ps="$(escape_ps_single_quoted "$repo_root_windows")"
+  revit_install_ps="$(escape_ps_single_quoted "$revit2026_install_dir")"
+  cat > "$install_handoff_path" <<EOF
+\$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath '$repo_root_ps'
+& .\scripts\install.ps1 -RevitYears 2026 -Revit2026InstallDir '$revit_install_ps' -Force
+Write-Host 'Restart Revit 2026, then rerun from WSL: scripts/smoke-revit-wsl.sh --require-current-source'
+EOF
   next_actions_json='[
     "close Revit when convenient",
-    "run powershell.exe -ExecutionPolicy Bypass -File scripts/install.ps1 -RevitYears 2026 -Revit2026InstallDir \"D:\\revit2026\\Revit 2026\" -Force",
+    "run generated install-current-source.ps1 from Windows PowerShell",
     "restart Revit 2026 to activate any staged add-in",
     "rerun scripts/smoke-revit-wsl.sh --require-current-source"
   ]'
@@ -184,6 +211,9 @@ jq -n \
   --arg liveAddinVersion "$live_addin_version" \
   --arg statusAddinVersion "$status_addin_version" \
   --arg installedCommit "$installed_commit" \
+  --arg installHandoffPath "$install_handoff_path" \
+  --arg installHandoffWindowsPath "$install_handoff_windows_path" \
+  --arg postRestartCommand "$post_restart_command" \
   --arg documentName "$status_document" \
   --arg category "$category" \
   --arg filter "$filter" \
@@ -214,6 +244,11 @@ jq -n \
       statusAddin: $statusAddinVersion,
       installedCommit: $installedCommit,
       sourceInstalledDrift: $sourceInstalledDrift
+    },
+    installHandoff: {
+      path: $installHandoffPath,
+      windowsPath: $installHandoffWindowsPath,
+      postRestartCommand: $postRestartCommand
     },
     revit: {
       doctorSuccess: $doctorSuccess,

@@ -17,7 +17,8 @@ evidence only: it also records the source `HEAD`, so installed Windows CLI/add-i
 version drift stays visible instead of being treated as current-source
 validation. Use `scripts/smoke-revit-wsl.sh --require-current-source` when the
 claim needs the currently checked-out source to be installed; the helper then
-fails on drift and writes `nextActions` for reinstall/restart/rerun.
+fails on drift and writes `nextActions` plus a generated
+`install-current-source.ps1` handoff for reinstall/restart/rerun.
 
 The 2026-05-27 WSL helper run wrote
 `.artifacts/live-smoke/revit2026-wsl-20260527-current/` with all five steps
