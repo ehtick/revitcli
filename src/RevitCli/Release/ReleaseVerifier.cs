@@ -1003,6 +1003,8 @@ internal static partial class ReleaseVerifier
             "v6.0 contract exposes local office pilot rollout status registration.", "docs/v6-local-bimops-contract.md");
         AddContains(report, "v6.0:release-pilot-status-doc", contract, "release pilot status",
             "v6.0 contract exposes local office pilot rollout status reporting.", "docs/v6-local-bimops-contract.md");
+        AddContains(report, "v6.0:release-pilot-claim-doc", contract, "release pilot claim",
+            "v6.0 contract exposes an explicit local office rollout completion claim command.", "docs/v6-local-bimops-contract.md");
         AddGuardedContains(report, "v6.0:no-saas-doc", contract, "SaaS",
             "v6.0 contract keeps SaaS out of the baseline.", "docs/v6-local-bimops-contract.md", V60SaasContradictions);
         AddGuardedContains(report, "v6.0:no-mcp-doc", contract, "MCP",
@@ -1102,6 +1104,8 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence intake exposes the local status registration command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-rollout-status-command", pilotEvidence, "release pilot status",
             "v6.0 pilot evidence intake exposes the local rollout status reporting command.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-claim-command", pilotEvidence, "release pilot claim",
+            "v6.0 pilot evidence intake exposes an explicit completion claim command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-doctor", pilotEvidence, "doctor --check-version 2026 --output json",
             "v6.0 pilot evidence requires doctor version proof.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-status", pilotEvidence, "`status --output json`",

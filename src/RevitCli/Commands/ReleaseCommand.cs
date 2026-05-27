@@ -16,6 +16,7 @@ public static class ReleaseCommand
     private const string PilotValidateSchemaVersion = "release-pilot-validate.v1";
     private const string PilotRegisterSchemaVersion = "release-pilot-register.v1";
     private const string PilotStatusSchemaVersion = "release-pilot-status.v1";
+    private const string PilotClaimSchemaVersion = "release-pilot-claim.v1";
     private const string OfficeRolloutStatusSchemaVersion = "v6-office-rollout-status.v1";
     private const string OfficeRolloutStatusPath = "docs/smoke/v6.0/office-rollout-status.json";
     private const string PilotScaffoldRolloutStatusHint =
@@ -64,6 +65,7 @@ public static class ReleaseCommand
         command.AddCommand(CreatePilotValidateCommand());
         command.AddCommand(CreatePilotRegisterCommand());
         command.AddCommand(CreatePilotStatusCommand());
+        command.AddCommand(CreatePilotClaimCommand());
         return command;
     }
 
@@ -98,6 +100,35 @@ public static class ReleaseCommand
         {
             Environment.ExitCode = await ExecutePilotScaffoldAsync(root, pilotId, path, force, output, Console.Out);
         }, rootOpt, pilotIdOpt, pathOpt, forceOpt, outputOpt);
+
+        return command;
+    }
+
+    private static Command CreatePilotClaimCommand()
+    {
+        var rootOpt = new Option<string>(
+            "--root",
+            () => Directory.GetCurrentDirectory(),
+            "Repository root");
+        var yesOpt = new Option<bool>(
+            "--yes",
+            "Write the office rollout completion claim to office-rollout-status.json");
+        var productionSupportOpt = new Option<bool>(
+            "--production-support",
+            "Also mark productionSupportClaim after private office support review");
+        var outputOpt = new Option<string>(
+            "--output",
+            () => "table",
+            "Output format: table, json, markdown");
+
+        var command = new Command("claim", "Claim v6.0 office rollout completion after validated pilot evidence")
+        {
+            rootOpt, yesOpt, productionSupportOpt, outputOpt
+        };
+        command.SetHandler(async (root, yes, productionSupport, output) =>
+        {
+            Environment.ExitCode = await ExecutePilotClaimAsync(root, yes, productionSupport, output, Console.Out);
+        }, rootOpt, yesOpt, productionSupportOpt, outputOpt);
 
         return command;
     }
@@ -426,6 +457,62 @@ public static class ReleaseCommand
         }
 
         var normalizedRoot = Path.GetFullPath(root);
+        var read = await ReadPilotStatusAsync(normalizedRoot);
+        await WritePilotStatusResultAsync(output, normalizedOutput, read.Result);
+        return read.Result.Success ? 0 : 1;
+    }
+
+    public static async Task<int> ExecutePilotClaimAsync(
+        string root,
+        bool yes,
+        bool productionSupport,
+        string outputFormat,
+        TextWriter output)
+    {
+        if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
+        {
+            await output.WriteLineAsync("Error: unknown output format. Use one of: table, json, markdown.");
+            return 1;
+        }
+
+        var normalizedRoot = Path.GetFullPath(root);
+        var read = await ReadPilotStatusAsync(normalizedRoot);
+        var status = read.Status;
+        var officeRolloutCompletionBefore = status?.OfficeRolloutCompletion ?? false;
+        var productionSupportClaimBefore = status?.ProductionSupportClaim ?? false;
+        var officeRolloutCompletionAfter = officeRolloutCompletionBefore;
+        var productionSupportClaimAfter = productionSupportClaimBefore;
+        var wrote = false;
+
+        if (status is not null && read.Result.CanClaimOfficeRollout)
+        {
+            officeRolloutCompletionAfter = true;
+            productionSupportClaimAfter = productionSupportClaimBefore || productionSupport;
+            if (yes)
+            {
+                status.OfficeRolloutCompletion = officeRolloutCompletionAfter;
+                status.ProductionSupportClaim = productionSupportClaimAfter;
+                Directory.CreateDirectory(Path.GetDirectoryName(read.FullStatusPath)!);
+                await File.WriteAllTextAsync(read.FullStatusPath, JsonSerializer.Serialize(status, JsonOptions) + Environment.NewLine);
+                wrote = true;
+            }
+        }
+
+        var result = ReleasePilotClaimResult.From(
+            read.Result,
+            yes,
+            wrote,
+            productionSupport,
+            officeRolloutCompletionBefore,
+            productionSupportClaimBefore,
+            officeRolloutCompletionAfter,
+            productionSupportClaimAfter);
+        await WritePilotClaimResultAsync(output, normalizedOutput, result);
+        return result.Success ? 0 : 1;
+    }
+
+    private static async Task<ReleasePilotStatusRead> ReadPilotStatusAsync(string normalizedRoot)
+    {
         var statusPath = Path.Combine(normalizedRoot, OfficeRolloutStatusPath.Replace('/', Path.DirectorySeparatorChar));
         var issues = new List<ReleasePilotValidateIssue>();
         var status = ReadOfficeRolloutStatus(statusPath, issues);
@@ -447,13 +534,14 @@ public static class ReleaseCommand
             }
         }
 
-        var result = ReleasePilotStatusResult.From(
+        return new ReleasePilotStatusRead(
             status,
-            OfficeRolloutStatusPath,
-            completedPilots,
-            issues);
-        await WritePilotStatusResultAsync(output, normalizedOutput, result);
-        return result.Success ? 0 : 1;
+            statusPath,
+            ReleasePilotStatusResult.From(
+                status,
+                OfficeRolloutStatusPath,
+                completedPilots,
+                issues));
     }
 
     private static async Task<ReleasePilotValidateResult> ValidatePilotEvidencePacketAsync(
@@ -585,6 +673,25 @@ public static class ReleaseCommand
         else
         {
             await output.WriteLineAsync(RenderPilotStatusTable(result));
+        }
+    }
+
+    private static async Task WritePilotClaimResultAsync(
+        TextWriter output,
+        string normalizedOutput,
+        ReleasePilotClaimResult result)
+    {
+        if (normalizedOutput == "json")
+        {
+            await output.WriteLineAsync(JsonSerializer.Serialize(result, JsonOptions));
+        }
+        else if (normalizedOutput == "markdown")
+        {
+            await output.WriteLineAsync(RenderPilotClaimMarkdown(result));
+        }
+        else
+        {
+            await output.WriteLineAsync(RenderPilotClaimTable(result));
         }
     }
 
@@ -1260,6 +1367,64 @@ public static class ReleaseCommand
         return writer.ToString().TrimEnd();
     }
 
+    private static string RenderPilotClaimTable(ReleasePilotClaimResult result)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("Release pilot claim");
+        writer.WriteLine($"Result:       {(result.Success ? "PASS" : "FAIL")}");
+        writer.WriteLine($"Status:       {result.StatusPath}");
+        writer.WriteLine($"Dry run:      {result.DryRun.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Wrote:        {result.Wrote.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Completed:    {result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}");
+        writer.WriteLine($"Remaining:    {result.RemainingOfficePilotCount}");
+        writer.WriteLine($"Can claim:    {result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Rollout:      {result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()} -> {result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Support:      {result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()} -> {result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Message:      {result.Message}");
+        if (result.Issues.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine($"{"Severity",-8} {"Issue",-34} Message");
+            writer.WriteLine(new string('-', 100));
+            foreach (var issue in result.Issues)
+                writer.WriteLine($"{issue.Severity,-8} {Truncate(issue.Id, 34),-34} {issue.Message}");
+        }
+
+        return writer.ToString().TrimEnd();
+    }
+
+    private static string RenderPilotClaimMarkdown(ReleasePilotClaimResult result)
+    {
+        var writer = new StringWriter();
+        writer.WriteLine("# Release Pilot Claim");
+        writer.WriteLine();
+        writer.WriteLine($"- Status: `{(result.Success ? "PASS" : "FAIL")}`");
+        writer.WriteLine($"- Rollout status: `{EscapeInlineCode(result.StatusPath)}`");
+        writer.WriteLine($"- Dry run: `{result.DryRun.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Wrote: `{result.Wrote.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Completed pilots: `{result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}`");
+        writer.WriteLine($"- Remaining pilots: `{result.RemainingOfficePilotCount}`");
+        writer.WriteLine($"- Can claim office rollout: `{result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Office rollout completion: `{result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()}` -> `{result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()}` -> `{result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Message: {result.Message}");
+        writer.WriteLine();
+        writer.WriteLine("## Issues");
+        if (result.Issues.Length == 0)
+        {
+            writer.WriteLine("- None.");
+            return writer.ToString().TrimEnd();
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("| Severity | Issue | Message |");
+        writer.WriteLine("|---|---|---|");
+        foreach (var issue in result.Issues)
+            writer.WriteLine($"| {EscapeTableCell(issue.Severity)} | {EscapeTableCell(issue.Id)} | {EscapeTableCell(issue.Message)} |");
+
+        return writer.ToString().TrimEnd();
+    }
+
     private sealed record ReleasePilotScaffoldResult(
         string SchemaVersion,
         bool Success,
@@ -1433,6 +1598,74 @@ public static class ReleaseCommand
         bool ValidationSuccess,
         int ValidationErrorCount,
         int ValidationWarningCount);
+
+    private sealed record ReleasePilotClaimResult(
+        string SchemaVersion,
+        bool Success,
+        string StatusPath,
+        bool DryRun,
+        bool Wrote,
+        bool RequestedProductionSupportClaim,
+        int MinimumOfficePilotCount,
+        int CompletedOfficePilotCount,
+        int RemainingOfficePilotCount,
+        bool CanClaimOfficeRollout,
+        bool OfficeRolloutCompletionBefore,
+        bool ProductionSupportClaimBefore,
+        bool OfficeRolloutCompletionAfter,
+        bool ProductionSupportClaimAfter,
+        int ErrorCount,
+        int WarningCount,
+        string Message,
+        ReleasePilotValidateIssue[] Issues)
+    {
+        public static ReleasePilotClaimResult From(
+            ReleasePilotStatusResult status,
+            bool yes,
+            bool wrote,
+            bool requestedProductionSupportClaim,
+            bool officeRolloutCompletionBefore,
+            bool productionSupportClaimBefore,
+            bool officeRolloutCompletionAfter,
+            bool productionSupportClaimAfter)
+        {
+            var success = status.Success && status.CanClaimOfficeRollout;
+            var message = success
+                ? yes
+                    ? requestedProductionSupportClaim
+                        ? "Marked office rollout completion and production support claim after validated pilot evidence."
+                        : "Marked office rollout completion; production support claim remains disabled."
+                    : requestedProductionSupportClaim
+                        ? "Dry run only; pass --yes to write office rollout completion and production support claim after private support review."
+                        : "Dry run only; pass --yes to write office rollout completion. Production support claim remains disabled unless --production-support is supplied."
+                : "Office rollout completion was not claimed; fix pilot status issues or collect the remaining completed pilots first.";
+
+            return new ReleasePilotClaimResult(
+                PilotClaimSchemaVersion,
+                success,
+                status.StatusPath,
+                !yes,
+                wrote,
+                requestedProductionSupportClaim,
+                status.MinimumOfficePilotCount,
+                status.CompletedOfficePilotCount,
+                status.RemainingOfficePilotCount,
+                status.CanClaimOfficeRollout,
+                officeRolloutCompletionBefore,
+                productionSupportClaimBefore,
+                officeRolloutCompletionAfter,
+                productionSupportClaimAfter,
+                status.ErrorCount,
+                status.WarningCount,
+                message,
+                status.Issues);
+        }
+    }
+
+    private sealed record ReleasePilotStatusRead(
+        OfficeRolloutStatusDocument? Status,
+        string FullStatusPath,
+        ReleasePilotStatusResult Result);
 
     private sealed class OfficeRolloutStatusDocument
     {

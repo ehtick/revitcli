@@ -236,7 +236,9 @@ Done means:
   evidence. `release pilot register` dry-runs or writes the completed-pilot
   status entry only after validation. `release pilot status` reports current
   completed/remaining office pilots and validates registered evidence packets
-  without changing rollout status.
+  without changing rollout status. `release pilot claim` is the dry-run-first
+  explicit completion claim path once validated completed pilots reach the
+  threshold.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable status as 0 completed office pilots and no office rollout
   completion claim. Future completion requires per-pilot evidence flags, not

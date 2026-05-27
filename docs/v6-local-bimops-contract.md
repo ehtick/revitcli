@@ -393,7 +393,11 @@ The contract baseline is acceptable when:
   checks it before rollout status is updated. `release pilot register` dry-runs
   or writes the completed-pilot entry after validation. `release pilot status`
   reports the machine-readable office pilot rollout progress without mutating
-  status. It is not a production support claim.
+  status. `release pilot claim` is dry-run by default and writes the office
+  rollout completion claim only after validated completed pilot evidence reaches
+  the threshold; production support still requires an explicit
+  `--production-support` request after private support review. It is not a
+  production support claim by default.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable rollout status, minimum pilot count, completed pilot count,
   per-pilot evidence flags, public-safe repo-relative Markdown evidence packet
