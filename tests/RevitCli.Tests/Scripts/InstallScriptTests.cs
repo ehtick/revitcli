@@ -34,6 +34,20 @@ public sealed class InstallScriptTests
         Assert.DoesNotContain("($year -eq \"2026\") -and ($RevitInstallDir -ne \"\")", script);
     }
 
+    [Fact]
+    public void CurrentSourceRevit2026Handoff_InstallsAndPrintsWslVerification()
+    {
+        var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "install-current-source-revit2026.ps1"));
+
+        Assert.Contains("install.ps1", script);
+        Assert.Contains("-RevitYears", script);
+        Assert.Contains("2026", script);
+        Assert.Contains("-Revit2026InstallDir", script);
+        Assert.Contains("-Force", script);
+        Assert.Contains("-AllowRunningRevit", script);
+        Assert.Contains("scripts/smoke-revit-wsl.sh --require-current-source", script);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

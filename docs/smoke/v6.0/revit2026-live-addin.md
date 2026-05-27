@@ -18,7 +18,10 @@ version drift stays visible instead of being treated as current-source
 validation. Use `scripts/smoke-revit-wsl.sh --require-current-source` when the
 claim needs the currently checked-out source to be installed; the helper then
 fails on drift and writes `nextActions` plus a generated
-`install-current-source.ps1` handoff for reinstall/restart/rerun.
+`install-current-source.ps1` handoff for reinstall/restart/rerun. For a stable
+repo-tracked Windows entrypoint, run
+`scripts\install-current-source-revit2026.ps1`, restart Revit if the Add-in was
+staged, then rerun the WSL helper with `--require-current-source`.
 
 The 2026-05-27 WSL helper run wrote
 `.artifacts/live-smoke/revit2026-wsl-20260527-current/` with all five steps
