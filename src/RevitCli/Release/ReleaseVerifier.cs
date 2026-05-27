@@ -137,6 +137,7 @@ internal static partial class ReleaseVerifier
             ".github/workflows/release.yml",
             ".github/workflows/publish.yml",
             "scripts/install.ps1",
+            "scripts/install-current-source-revit2026.ps1",
             "scripts/smoke-revit.ps1",
         };
 
@@ -372,6 +373,23 @@ internal static partial class ReleaseVerifier
             "Installer stages add-ins when Revit is running.", "scripts/install.ps1");
         AddContains(report, "installer:path-list-match", text, "Test-PathListContains",
             "Installer uses exact PATH list matching.", "scripts/install.ps1");
+
+        var handoffPath = Path.Combine(root, ToNativePath("scripts/install-current-source-revit2026.ps1"));
+        if (File.Exists(handoffPath))
+        {
+            var handoff = ReadText(handoffPath, report, "installer-current-source-handoff:readable");
+            if (handoff is not null)
+            {
+                AddContains(report, "installer-current-source-handoff:install", handoff, "install.ps1",
+                    "Current-source Revit 2026 handoff runs the source-tree installer.", "scripts/install-current-source-revit2026.ps1");
+                AddContains(report, "installer-current-source-handoff:revit2026", handoff, "-RevitYears\", \"2026\"",
+                    "Current-source Revit 2026 handoff targets the Revit 2026 add-in.", "scripts/install-current-source-revit2026.ps1");
+                AddContains(report, "installer-current-source-handoff:force", handoff, "-Force",
+                    "Current-source Revit 2026 handoff forces the source-tree install path.", "scripts/install-current-source-revit2026.ps1");
+                AddContains(report, "installer-current-source-handoff:verify", handoff, "scripts/smoke-revit-wsl.sh --require-current-source",
+                    "Current-source Revit 2026 handoff prints the WSL live verification command.", "scripts/install-current-source-revit2026.ps1");
+            }
+        }
     }
 
     private static void CheckSmokeDocs(string root, ReleaseVerifyReport report)

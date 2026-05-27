@@ -60,6 +60,9 @@ public sealed class ReleaseCommandTests : IDisposable
             check.GetProperty("id").GetString() == "smoke-script:v4-workbench" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "installer-current-source-handoff:verify" &&
+            check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v5-rc:status" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
@@ -200,6 +203,41 @@ jobs:
         Assert.Equal(1, exitCode);
         Assert.Contains("ci:no-addin-build", output.ToString());
         Assert.Contains("FAIL", output.ToString());
+    }
+
+    [Fact]
+    public async Task Verify_MissingCurrentSourceRevit2026Handoff_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        File.Delete(Path.Combine(_root, "scripts", "install-current-source-revit2026.ps1"));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "file:scripts/install-current-source-revit2026.ps1" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_CurrentSourceRevit2026HandoffWithoutWslGate_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var path = Path.Combine(_root, "scripts", "install-current-source-revit2026.ps1");
+        File.WriteAllText(
+            path,
+            File.ReadAllText(path).Replace("scripts/smoke-revit-wsl.sh --require-current-source", "scripts/smoke-revit-wsl.sh", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "installer-current-source-handoff:verify" &&
+            check.GetProperty("status").GetString() == "error");
     }
 
     [Fact]
@@ -3864,6 +3902,22 @@ param(
 )
 $staged = 'staged'
 function Test-PathListContains { }
+""");
+        WriteFile(root, "scripts/install-current-source-revit2026.ps1", """
+param(
+    [string]$Revit2026InstallDir = "D:\revit2026\Revit 2026",
+    [switch]$AllowRunningRevit
+)
+$installArgs = @(
+    "-RevitYears", "2026",
+    "-Revit2026InstallDir", $Revit2026InstallDir,
+    "-Force"
+)
+if ($AllowRunningRevit) {
+    $installArgs += "-AllowRunningRevit"
+}
+& (Join-Path $PSScriptRoot "install.ps1") @installArgs
+Write-Host "scripts/smoke-revit-wsl.sh --require-current-source"
 """);
         WriteFile(root, "scripts/smoke-revit.ps1", "2024 2025 2026 V4Workbench workbench\", \"verify schedule\", \"export");
     }
