@@ -19,18 +19,33 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-Set-Location -LiteralPath $repoRoot
+$installRoot = $repoRoot
 
-$installArgs = @(
-    "-RevitYears", "2026",
-    "-Revit2026InstallDir", $Revit2026InstallDir,
-    "-Force"
-)
-if ($AllowRunningRevit) {
-    $installArgs += "-AllowRunningRevit"
+if ($repoRoot.StartsWith("\\", [System.StringComparison]::Ordinal)) {
+    $snapshotRoot = Join-Path $env:LOCALAPPDATA "RevitCli\current-source-snapshot"
+    Write-Host "Source tree is on a UNC path; mirroring to $snapshotRoot before Windows dotnet build ..." -ForegroundColor Yellow
+    New-Item -ItemType Directory -Path (Split-Path -Parent $snapshotRoot) -Force | Out-Null
+
+    & robocopy $repoRoot $snapshotRoot /MIR /XD ".artifacts" ".codex" "bin" "obj" /XF "*.user" /NFL /NDL /NJH /NJS /NP | Out-Host
+    if ($LASTEXITCODE -gt 7) {
+        throw "robocopy current source snapshot failed with exit code $LASTEXITCODE"
+    }
+
+    $installRoot = $snapshotRoot
 }
 
-& (Join-Path $PSScriptRoot "install.ps1") @installArgs
+Set-Location -LiteralPath $installRoot
+
+$installArgs = @{
+    RevitYears = @("2026")
+    Revit2026InstallDir = $Revit2026InstallDir
+    Force = $true
+}
+if ($AllowRunningRevit) {
+    $installArgs.AllowRunningRevit = $true
+}
+
+& (Join-Path $installRoot "scripts\install.ps1") @installArgs
 
 Write-Host ""
 Write-Host "Next:" -ForegroundColor Cyan

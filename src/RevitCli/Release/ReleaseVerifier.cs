@@ -382,10 +382,27 @@ internal static partial class ReleaseVerifier
             {
                 AddContains(report, "installer-current-source-handoff:install", handoff, "install.ps1",
                     "Current-source Revit 2026 handoff runs the source-tree installer.", "scripts/install-current-source-revit2026.ps1");
-                AddContains(report, "installer-current-source-handoff:revit2026", handoff, "-RevitYears\", \"2026\"",
-                    "Current-source Revit 2026 handoff targets the Revit 2026 add-in.", "scripts/install-current-source-revit2026.ps1");
-                AddContains(report, "installer-current-source-handoff:force", handoff, "-Force",
-                    "Current-source Revit 2026 handoff forces the source-tree install path.", "scripts/install-current-source-revit2026.ps1");
+                AddContains(report, "installer-current-source-handoff:revit2026", handoff, "RevitYears = @(\"2026\")",
+                    "Current-source Revit 2026 handoff targets the Revit 2026 add-in with named PowerShell splatting.", "scripts/install-current-source-revit2026.ps1");
+                AddContains(report, "installer-current-source-handoff:force", handoff, "Force = $true",
+                    "Current-source Revit 2026 handoff forces the source-tree install path with named PowerShell splatting.", "scripts/install-current-source-revit2026.ps1");
+                AddContains(report, "installer-current-source-handoff:unc-snapshot", handoff, "current-source-snapshot",
+                    "Current-source Revit 2026 handoff mirrors UNC source trees to a Windows-local snapshot before building.", "scripts/install-current-source-revit2026.ps1");
+                AddContains(report, "installer-current-source-handoff:robocopy", handoff, "robocopy",
+                    "Current-source Revit 2026 handoff uses robocopy for the Windows-local source snapshot.", "scripts/install-current-source-revit2026.ps1");
+                report.Add(
+                    "installer-current-source-handoff:named-splat",
+                    handoff.Contains("\"-RevitYears\"", StringComparison.OrdinalIgnoreCase) ||
+                    handoff.Contains("\"-Force\"", StringComparison.OrdinalIgnoreCase) ||
+                    handoff.Contains("\"-AllowRunningRevit\"", StringComparison.OrdinalIgnoreCase)
+                        ? ReleaseVerifyStatus.Error
+                        : ReleaseVerifyStatus.Ok,
+                    handoff.Contains("\"-RevitYears\"", StringComparison.OrdinalIgnoreCase) ||
+                    handoff.Contains("\"-Force\"", StringComparison.OrdinalIgnoreCase) ||
+                    handoff.Contains("\"-AllowRunningRevit\"", StringComparison.OrdinalIgnoreCase)
+                        ? "Current-source Revit 2026 handoff must use named hashtable splatting, not quoted parameter-name strings."
+                        : "Current-source Revit 2026 handoff avoids quoted parameter-name strings that PowerShell can pass as positional values.",
+                    "scripts/install-current-source-revit2026.ps1");
                 AddContains(report, "installer-current-source-handoff:verify", handoff, "scripts/smoke-revit-wsl.sh --require-current-source",
                     "Current-source Revit 2026 handoff prints the WSL live verification command.", "scripts/install-current-source-revit2026.ps1");
             }

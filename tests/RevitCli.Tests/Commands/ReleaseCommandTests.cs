@@ -241,6 +241,66 @@ jobs:
     }
 
     [Fact]
+    public async Task Verify_CurrentSourceRevit2026HandoffWithQuotedParameterSplat_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var path = Path.Combine(_root, "scripts", "install-current-source-revit2026.ps1");
+        File.WriteAllText(
+            path,
+            File.ReadAllText(path)
+                .Replace(
+                    """
+                    $installArgs = @{
+                        RevitYears = @("2026")
+                        Revit2026InstallDir = $Revit2026InstallDir
+                        Force = $true
+                    }
+                    if ($AllowRunningRevit) {
+                        $installArgs.AllowRunningRevit = $true
+                    }
+                    """,
+                    """
+                    $installArgs = @(
+                        "-RevitYears", "2026",
+                        "-Revit2026InstallDir", $Revit2026InstallDir,
+                        "-Force"
+                    )
+                    if ($AllowRunningRevit) {
+                        $installArgs += "-AllowRunningRevit"
+                    }
+                    """,
+                    StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "installer-current-source-handoff:named-splat" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_CurrentSourceRevit2026HandoffWithoutUncSnapshot_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var path = Path.Combine(_root, "scripts", "install-current-source-revit2026.ps1");
+        File.WriteAllText(
+            path,
+            File.ReadAllText(path).Replace("current-source-snapshot", "source-snapshot", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "installer-current-source-handoff:unc-snapshot" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
     public async Task Verify_Markdown_PrintsReviewSections()
     {
         WriteHealthyTree(_root);
@@ -3909,15 +3969,22 @@ param(
     [string]$Revit2026InstallDir = "D:\revit2026\Revit 2026",
     [switch]$AllowRunningRevit
 )
-$installArgs = @(
-    "-RevitYears", "2026",
-    "-Revit2026InstallDir", $Revit2026InstallDir,
-    "-Force"
-)
-if ($AllowRunningRevit) {
-    $installArgs += "-AllowRunningRevit"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$installRoot = $repoRoot
+if ($repoRoot.StartsWith("\\", [System.StringComparison]::Ordinal)) {
+    $snapshotRoot = Join-Path $env:LOCALAPPDATA "RevitCli\current-source-snapshot"
+    & robocopy $repoRoot $snapshotRoot /MIR /XD ".artifacts" ".codex" "bin" "obj" /NFL /NDL /NJH /NJS /NP
+    $installRoot = $snapshotRoot
 }
-& (Join-Path $PSScriptRoot "install.ps1") @installArgs
+$installArgs = @{
+    RevitYears = @("2026")
+    Revit2026InstallDir = $Revit2026InstallDir
+    Force = $true
+}
+if ($AllowRunningRevit) {
+    $installArgs.AllowRunningRevit = $true
+}
+& (Join-Path $installRoot "scripts\install.ps1") @installArgs
 Write-Host "scripts/smoke-revit-wsl.sh --require-current-source"
 """);
         WriteFile(root, "scripts/smoke-revit.ps1", "2024 2025 2026 V4Workbench workbench\", \"verify schedule\", \"export");
