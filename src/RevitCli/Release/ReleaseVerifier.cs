@@ -139,6 +139,7 @@ internal static partial class ReleaseVerifier
             "scripts/install.ps1",
             "scripts/install-current-source-revit2026.ps1",
             "scripts/smoke-revit.ps1",
+            "scripts/smoke-revit-wsl.sh",
         };
 
         foreach (var relative in required)
@@ -429,6 +430,29 @@ internal static partial class ReleaseVerifier
                     "Real smoke script runs workbench verify during v4 smoke.", "scripts/smoke-revit.ps1");
                 AddContains(report, "smoke-script:v4-schedule-export", script, "schedule\", \"export",
                     "Real smoke script exercises live schedule export during v4 smoke.", "scripts/smoke-revit.ps1");
+            }
+        }
+
+        var wslScriptPath = Path.Combine(root, ToNativePath("scripts/smoke-revit-wsl.sh"));
+        if (File.Exists(wslScriptPath))
+        {
+            var wslScript = ReadText(wslScriptPath, report, "smoke-script-wsl:readable");
+            if (wslScript is not null)
+            {
+                AddContains(report, "smoke-script-wsl:require-current-source", wslScript, "--require-current-source",
+                    "WSL live smoke can require current-source installation.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:cli-commit", wslScript, "cliCommit",
+                    "WSL live smoke records the installed Windows CLI commit.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:installed-addin-commit", wslScript, "installedAddinCommit",
+                    "WSL live smoke records the installed add-in commit.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:live-addin-commit", wslScript, "liveAddinCommit",
+                    "WSL live smoke records the live Revit add-in commit.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:status-addin-commit", wslScript, "statusAddinCommit",
+                    "WSL live smoke records the status endpoint add-in commit.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:current-source-boundary", wslScript, "current_source_installed=false",
+                    "WSL live smoke defaults current-source proof to false until every commit surface matches source HEAD.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:repair-handoff", wslScript, @".\scripts\install-current-source-revit2026.ps1",
+                    "WSL live smoke repair handoff uses the current-source installer path.", "scripts/smoke-revit-wsl.sh");
             }
         }
 

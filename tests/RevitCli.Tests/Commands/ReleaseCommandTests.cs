@@ -60,6 +60,12 @@ public sealed class ReleaseCommandTests : IDisposable
             check.GetProperty("id").GetString() == "smoke-script:v4-workbench" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:live-addin-commit" &&
+            check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:repair-handoff" &&
+            check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "installer-current-source-handoff:verify" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
@@ -297,6 +303,25 @@ jobs:
         using var json = JsonDocument.Parse(output.ToString());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "installer-current-source-handoff:unc-snapshot" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_WslCurrentSourceSmokeWithoutLiveAddinCommit_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var path = Path.Combine(_root, "scripts", "smoke-revit-wsl.sh");
+        File.WriteAllText(
+            path,
+            File.ReadAllText(path).Replace("liveAddinCommit", "liveCommit", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:live-addin-commit" &&
             check.GetProperty("status").GetString() == "error");
     }
 
@@ -3988,6 +4013,24 @@ if ($AllowRunningRevit) {
 Write-Host "scripts/smoke-revit-wsl.sh --require-current-source"
 """);
         WriteFile(root, "scripts/smoke-revit.ps1", "2024 2025 2026 V4Workbench workbench\", \"verify schedule\", \"export");
+        WriteFile(root, "scripts/smoke-revit-wsl.sh", """
+#!/usr/bin/env bash
+set -euo pipefail
+require_current_source=false
+current_source_installed=false
+cliCommit="abc"
+installedAddinCommit="abc"
+liveAddinCommit="abc"
+statusAddinCommit="abc"
+sourceInstalledDrift=true
+postRestartCommand="scripts/smoke-revit-wsl.sh --require-current-source"
+cat > install-current-source.ps1 <<'EOF'
+& .\scripts\install-current-source-revit2026.ps1 -Revit2026InstallDir 'D:\revit2026\Revit 2026'
+EOF
+echo "currentSourceInstalled"
+echo "nextActions"
+echo "mutatesModel: false"
+""");
     }
 
     private static void WriteLocalControlledPilotSourceBundle(string root)
