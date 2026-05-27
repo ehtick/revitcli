@@ -238,8 +238,9 @@ Done means:
   `release pilot validate` checks a packet before it is listed as completed
   evidence. `release pilot register` dry-runs or writes the completed-pilot
   status entry only after validation. `release pilot status` reports current
-  completed/remaining office pilots and validates registered evidence packets
-  without changing rollout status. `release pilot claim` is the dry-run-first
+  completed/remaining office pilots, validates registered evidence packets,
+  and surfaces per-pilot `missingEvidence` flags without changing rollout
+  status. `release pilot claim` is the dry-run-first
   explicit completion claim path once validated completed pilots reach the
   threshold.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current

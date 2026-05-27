@@ -531,7 +531,8 @@ public static class ReleaseCommand
                     pilot.EvidencePacketPath,
                     validation.Success,
                     validation.ErrorCount,
-                    validation.WarningCount));
+                    validation.WarningCount,
+                    MissingCompletedPilotEvidence(pilot).ToArray()));
             }
         }
 
@@ -1052,6 +1053,25 @@ public static class ReleaseCommand
         pilot.SupportTicketReview &&
         pilot.MultiUserRolloutPostmortem;
 
+    private static IEnumerable<string> MissingCompletedPilotEvidence(CompletedOfficePilotStatus pilot)
+    {
+        if (!pilot.Doctor) yield return "doctor";
+        if (!pilot.Status) yield return "status";
+        if (!pilot.Workbench) yield return "workbench";
+        if (!pilot.Release) yield return "release";
+        if (!pilot.LedgerQuery) yield return "ledgerQuery";
+        if (!pilot.LedgerValidate) yield return "ledgerValidate";
+        if (!pilot.LedgerStatsAnalyticsSnapshot) yield return "ledgerStatsAnalyticsSnapshot";
+        if (!pilot.LedgerTimelineAnalyticsSnapshot) yield return "ledgerTimelineAnalyticsSnapshot";
+        if (!pilot.JournalVerify) yield return "journalVerify";
+        if (!pilot.RollbackResult) yield return "rollbackResult";
+        if (!pilot.UserReview) yield return "userReview";
+        if (!pilot.BimManagerSignoff) yield return "bimManagerSignoff";
+        if (!pilot.ProjectCopyOwnerSignoff) yield return "projectCopyOwnerSignoff";
+        if (!pilot.SupportTicketReview) yield return "supportTicketReview";
+        if (!pilot.MultiUserRolloutPostmortem) yield return "multiUserRolloutPostmortem";
+    }
+
     private static bool IsPublicSafePilotId(string pilotId) =>
         !string.IsNullOrWhiteSpace(pilotId) &&
         pilotId.All(ch => char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-');
@@ -1348,11 +1368,13 @@ public static class ReleaseCommand
         if (result.CompletedPilots.Length > 0)
         {
             writer.WriteLine();
-            writer.WriteLine($"{"Pilot",-24} {"Errors",6} {"Warnings",8} Path");
+            writer.WriteLine($"{"Pilot",-24} {"Errors",6} {"Warnings",8} {"Missing",7} Path");
             writer.WriteLine(new string('-', 90));
             foreach (var pilot in result.CompletedPilots)
             {
-                writer.WriteLine($"{Truncate(pilot.PilotId, 24),-24} {pilot.ValidationErrorCount,6} {pilot.ValidationWarningCount,8} {pilot.EvidencePacketPath}");
+                writer.WriteLine($"{Truncate(pilot.PilotId, 24),-24} {pilot.ValidationErrorCount,6} {pilot.ValidationWarningCount,8} {pilot.MissingEvidenceCount,7} {pilot.EvidencePacketPath}");
+                if (pilot.MissingEvidence.Length > 0)
+                    writer.WriteLine($"  missing evidence: {string.Join(", ", pilot.MissingEvidence)}");
             }
         }
 
@@ -1390,12 +1412,15 @@ public static class ReleaseCommand
         else
         {
             writer.WriteLine();
-            writer.WriteLine("| Pilot | Evidence packet | Validation | Errors | Warnings |");
-            writer.WriteLine("|---|---|---|---:|---:|");
+            writer.WriteLine("| Pilot | Evidence packet | Validation | Errors | Warnings | Missing evidence |");
+            writer.WriteLine("|---|---|---|---:|---:|---|");
             foreach (var pilot in result.CompletedPilots)
             {
+                var missing = pilot.MissingEvidence.Length == 0
+                    ? "none"
+                    : string.Join(", ", pilot.MissingEvidence);
                 writer.WriteLine(
-                    $"| {EscapeTableCell(pilot.PilotId)} | {EscapeTableCell(pilot.EvidencePacketPath)} | {(pilot.ValidationSuccess ? "PASS" : "FAIL")} | {pilot.ValidationErrorCount} | {pilot.ValidationWarningCount} |");
+                    $"| {EscapeTableCell(pilot.PilotId)} | {EscapeTableCell(pilot.EvidencePacketPath)} | {(pilot.ValidationSuccess ? "PASS" : "FAIL")} | {pilot.ValidationErrorCount} | {pilot.ValidationWarningCount} | {EscapeTableCell(missing)} |");
             }
         }
 
@@ -1646,7 +1671,11 @@ public static class ReleaseCommand
         string EvidencePacketPath,
         bool ValidationSuccess,
         int ValidationErrorCount,
-        int ValidationWarningCount);
+        int ValidationWarningCount,
+        string[] MissingEvidence)
+    {
+        public int MissingEvidenceCount => MissingEvidence.Length;
+    }
 
     private sealed record ReleasePilotClaimResult(
         string SchemaVersion,

@@ -1110,6 +1110,8 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence intake exposes the local status registration command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-rollout-status-command", pilotEvidence, "release pilot status",
             "v6.0 pilot evidence intake exposes the local rollout status reporting command.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-rollout-status-missing-evidence", pilotEvidence, "missingEvidence",
+            "v6.0 pilot status reports per-pilot missing evidence flags.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-claim-command", pilotEvidence, "release pilot claim",
             "v6.0 pilot evidence intake exposes an explicit completion claim command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-doctor", pilotEvidence, "doctor --check-version 2026 --output json",
