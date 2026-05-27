@@ -43,6 +43,7 @@ param="${REVITCLI_SMOKE_PARAM:-注释}"
 value="${REVITCLI_SMOKE_VALUE:-revitcli-v6-wsl-smoke-${timestamp}}"
 output_dir="${REVITCLI_WSL_SMOKE_OUTPUT_DIR:-${repo_root}/.artifacts/live-smoke/revit2026-wsl-${timestamp}}"
 revit2026_install_dir="${REVITCLI_REVIT2026_INSTALL_DIR:-D:\\revit2026\\Revit 2026}"
+install_metadata_path="${REVITCLI_INSTALL_METADATA_PATH:-/mnt/c/Users/Lenovo/AppData/Local/RevitCli/install.json}"
 require_current_source=false
 
 while [[ $# -gt 0 ]]; do
@@ -163,11 +164,20 @@ cli_commit="$(extract_commit "$cli_version")"
 installed_addin_commit="$(extract_commit "$installed_addin_version")"
 live_addin_commit="$(extract_commit "$live_addin_version")"
 status_addin_commit="$(extract_commit "$status_addin_version")"
+staged_addin_path=""
+staged_addin_commit=""
+if [[ -f "$install_metadata_path" ]]; then
+  staged_addin_path="$(jq -r '.stagedAddins[]? | select(.revitYear == "2026") | .stagedDir // empty' "$install_metadata_path" | head -n 1)"
+  if [[ "$staged_addin_path" == *"_"* ]]; then
+    staged_addin_commit="${staged_addin_path##*_}"
+  fi
+fi
 current_source_installed=false
 cli_current=false
 installed_addin_current=false
 live_addin_current=false
 status_addin_current=false
+staged_addin_current=false
 if [[ "$cli_commit" == "$source_head" ]]; then
   cli_current=true
 fi
@@ -179,6 +189,9 @@ if [[ "$live_addin_commit" == "$source_head" ]]; then
 fi
 if [[ "$status_addin_commit" == "$source_head" ]]; then
   status_addin_current=true
+fi
+if [[ "$staged_addin_commit" == "$source_head" ]]; then
+  staged_addin_current=true
 fi
 if [[ "$cli_current" == "true" &&
       "$installed_addin_current" == "true" &&
@@ -193,6 +206,7 @@ if [[ "$current_source_installed" != "true" ]]; then
   current_source_drift_kind="install-required"
   if [[ "$cli_current" == "true" &&
         "$installed_addin_current" == "true" &&
+        "$staged_addin_current" == "true" &&
         ("$live_addin_current" != "true" || "$status_addin_current" != "true") ]]; then
     current_source_drift_kind="restart-required"
   fi
@@ -253,10 +267,12 @@ jq -n \
   --arg installedAddinVersion "$installed_addin_version" \
   --arg liveAddinVersion "$live_addin_version" \
   --arg statusAddinVersion "$status_addin_version" \
+  --arg stagedAddinPath "$staged_addin_path" \
   --arg cliCommit "$cli_commit" \
   --arg installedAddinCommit "$installed_addin_commit" \
   --arg liveAddinCommit "$live_addin_commit" \
   --arg statusAddinCommit "$status_addin_commit" \
+  --arg stagedAddinCommit "$staged_addin_commit" \
   --arg currentSourceDriftKind "$current_source_drift_kind" \
   --arg installHandoffPath "$install_handoff_path" \
   --arg installHandoffWindowsPath "$install_handoff_windows_path" \
@@ -290,10 +306,12 @@ jq -n \
       installedAddin: $installedAddinVersion,
       liveAddin: $liveAddinVersion,
       statusAddin: $statusAddinVersion,
+      stagedAddinPath: $stagedAddinPath,
       cliCommit: $cliCommit,
       installedAddinCommit: $installedAddinCommit,
       liveAddinCommit: $liveAddinCommit,
       statusAddinCommit: $statusAddinCommit,
+      stagedAddinCommit: $stagedAddinCommit,
       currentSourceDriftKind: $currentSourceDriftKind,
       sourceInstalledDrift: $sourceInstalledDrift
     },

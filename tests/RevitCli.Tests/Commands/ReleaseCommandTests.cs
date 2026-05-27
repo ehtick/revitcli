@@ -69,6 +69,9 @@ public sealed class ReleaseCommandTests : IDisposable
             check.GetProperty("id").GetString() == "smoke-script-wsl:restart-required" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:staged-addin-commit" &&
+            check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "installer-current-source-handoff:verify" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
@@ -344,6 +347,25 @@ jobs:
         using var json = JsonDocument.Parse(output.ToString());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "smoke-script-wsl:drift-kind" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_WslCurrentSourceSmokeWithoutStagedAddinCommit_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var path = Path.Combine(_root, "scripts", "smoke-revit-wsl.sh");
+        File.WriteAllText(
+            path,
+            File.ReadAllText(path).Replace("stagedAddinCommit", "stagedCommit", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:staged-addin-commit" &&
             check.GetProperty("status").GetString() == "error");
     }
 
@@ -4045,6 +4067,8 @@ cliCommit="abc"
 installedAddinCommit="abc"
 liveAddinCommit="abc"
 statusAddinCommit="abc"
+stagedAddinCommit="abc"
+stagedAddinPath="C:\Users\Lenovo\AppData\Local\RevitCli\staged\addin\2026\stamp-abc"
 echo "restart-required"
 echo "install-required"
 sourceInstalledDrift=true

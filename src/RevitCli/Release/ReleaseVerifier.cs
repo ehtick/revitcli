@@ -449,6 +449,10 @@ internal static partial class ReleaseVerifier
                     "WSL live smoke records the live Revit add-in commit.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:status-addin-commit", wslScript, "statusAddinCommit",
                     "WSL live smoke records the status endpoint add-in commit.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:staged-addin-commit", wslScript, "stagedAddinCommit",
+                    "WSL live smoke records the staged add-in commit.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:staged-addin-path", wslScript, "stagedAddinPath",
+                    "WSL live smoke records the staged add-in path.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:current-source-boundary", wslScript, "current_source_installed=false",
                     "WSL live smoke defaults current-source proof to false until every commit surface matches source HEAD.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:drift-kind", wslScript, "currentSourceDriftKind",

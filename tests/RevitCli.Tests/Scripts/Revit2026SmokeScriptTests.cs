@@ -102,6 +102,9 @@ public sealed class Revit2026SmokeScriptTests
         Assert.Contains("installedAddinCommit", script);
         Assert.Contains("liveAddinCommit", script);
         Assert.Contains("statusAddinCommit", script);
+        Assert.Contains("stagedAddinCommit", script);
+        Assert.Contains("stagedAddinPath", script);
+        Assert.Contains("REVITCLI_INSTALL_METADATA_PATH", script);
         Assert.Contains("current_source_installed=false", script);
         Assert.Contains("currentSourceDriftKind", script);
         Assert.Contains("restart-required", script);
