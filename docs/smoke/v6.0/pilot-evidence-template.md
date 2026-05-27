@@ -29,7 +29,10 @@ review is complete, run
 `--yes` only to write the office rollout completion claim. The dry-run claim
 result must include machine-readable `claimBlockers` before any completion
 write. Add
-`--production-support` only after the private support review approves it.
+`--production-support` only after the private support review approves it, and
+include `--support-review docs/smoke/v6.0/<support-review>.md` so
+`office-rollout-status.json` records a public-safe
+`productionSupportReviewPath` summary for the production support claim.
 
 - Pilot identifier:
 - Date/time:

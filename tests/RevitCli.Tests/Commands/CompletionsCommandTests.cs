@@ -110,7 +110,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("compgen -W \"day hour\" -- \"$cur\"", script);
         Assert.Contains("list stats verify plan bundle --dir --profile --since --bundle-path --dry-run --force --output", script);
         Assert.Contains("install validate --manifest --dir --output --ref --subpath --force --dry-run", script);
-        Assert.Contains("verify pilot --root --output --tag --strict --pilot-id --path --force --yes --production-support", script);
+        Assert.Contains("verify pilot --root --output --tag --strict --pilot-id --path --force --yes --production-support --support-review", script);
         Assert.Contains("compgen -W \"scaffold validate register status claim\" -- \"$cur\"", script);
         Assert.Contains("verify issue-meta renumber index init show --against --rule --issues-only --output --path --force --selector --issue-code --issue-date --plan-output --param-map --dry-run --max-changes", script);
         Assert.Contains("renumber --rule --plan-output --scope --dry-run --max-changes --output", script);
@@ -284,7 +284,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("$deliverablesOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("'install', 'validate', '--manifest', '--dir', '--output', '--ref', '--subpath', '--force', '--dry-run'", script);
         Assert.Contains("$standardsOutputFormats = @('table', 'json', 'markdown')", script);
-        Assert.Contains("'release' = @('verify', 'pilot', '--root', '--output', '--tag', '--strict', '--pilot-id', '--path', '--force', '--yes', '--production-support')", script);
+        Assert.Contains("'release' = @('verify', 'pilot', '--root', '--output', '--tag', '--strict', '--pilot-id', '--path', '--force', '--yes', '--production-support', '--support-review')", script);
         Assert.Contains("$releaseOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("$releasePilotSubcommands = @('scaffold', 'validate', 'register', 'status', 'claim')", script);
         Assert.Contains("'sheets' = @('verify', 'issue-meta', 'renumber', 'index', 'init', 'show', '--against', '--rule', '--issues-only', '--output', '--path', '--force', '--selector', '--issue-code', '--issue-date', '--plan-output', '--param-map', '--dry-run', '--max-changes')", script);

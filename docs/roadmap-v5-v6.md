@@ -250,7 +250,10 @@ Done means:
   path.
   `release pilot claim` is the dry-run-first explicit completion claim path
   with machine-readable `claimBlockers` and `nextActions` until validated
-  completed pilots reach the threshold.
+  completed pilots reach the threshold. Production support claims additionally
+  require `--support-review docs/smoke/v6.0/<support-review>.md` so the status
+  file records a public-safe `productionSupportReviewPath` summary after
+  private support review.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable status as 0 completed office pilots and no office rollout
   completion claim. Future completion requires per-pilot evidence flags, not

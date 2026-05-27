@@ -43,6 +43,13 @@ public static class ReleaseCommand
         "Multi-user rollout postmortem",
         "Boundary summary",
     };
+    private static readonly string[] RequiredProductionSupportReviewPhrases =
+    {
+        "Production support review",
+        "private support review approved",
+        "office rollout completion",
+        "production support claim",
+    };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -117,6 +124,9 @@ public static class ReleaseCommand
         var productionSupportOpt = new Option<bool>(
             "--production-support",
             "Also mark productionSupportClaim after private office support review");
+        var supportReviewOpt = new Option<string?>(
+            "--support-review",
+            "Repo-relative public-safe production support review summary under docs/smoke/v6.0/");
         var outputOpt = new Option<string>(
             "--output",
             () => "table",
@@ -124,12 +134,12 @@ public static class ReleaseCommand
 
         var command = new Command("claim", "Claim v6.0 office rollout completion after validated pilot evidence")
         {
-            rootOpt, yesOpt, productionSupportOpt, outputOpt
+            rootOpt, yesOpt, productionSupportOpt, supportReviewOpt, outputOpt
         };
-        command.SetHandler(async (root, yes, productionSupport, output) =>
+        command.SetHandler(async (root, yes, productionSupport, supportReview, output) =>
         {
-            Environment.ExitCode = await ExecutePilotClaimAsync(root, yes, productionSupport, output, Console.Out);
-        }, rootOpt, yesOpt, productionSupportOpt, outputOpt);
+            Environment.ExitCode = await ExecutePilotClaimAsync(root, yes, productionSupport, supportReview, output, Console.Out);
+        }, rootOpt, yesOpt, productionSupportOpt, supportReviewOpt, outputOpt);
 
         return command;
     }
@@ -468,6 +478,15 @@ public static class ReleaseCommand
         bool yes,
         bool productionSupport,
         string outputFormat,
+        TextWriter output) =>
+        await ExecutePilotClaimAsync(root, yes, productionSupport, supportReviewPath: null, outputFormat, output);
+
+    public static async Task<int> ExecutePilotClaimAsync(
+        string root,
+        bool yes,
+        bool productionSupport,
+        string? supportReviewPath,
+        string outputFormat,
         TextWriter output)
     {
         if (!TerminalOutputFormat.TryNormalize(outputFormat, out var normalizedOutput, "table", "json", "markdown"))
@@ -484,8 +503,12 @@ public static class ReleaseCommand
         var officeRolloutCompletionAfter = officeRolloutCompletionBefore;
         var productionSupportClaimAfter = productionSupportClaimBefore;
         var wrote = false;
+        var productionSupportReviewIssues = productionSupport
+            ? await ValidateProductionSupportReviewAsync(normalizedRoot, supportReviewPath)
+            : new List<ReleasePilotValidateIssue>();
+        var productionSupportReviewReady = productionSupportReviewIssues.All(issue => issue.Severity != "error");
 
-        if (status is not null && read.Result.CanClaimOfficeRollout)
+        if (status is not null && read.Result.CanClaimOfficeRollout && productionSupportReviewReady)
         {
             officeRolloutCompletionAfter = true;
             productionSupportClaimAfter = productionSupportClaimBefore || productionSupport;
@@ -493,6 +516,8 @@ public static class ReleaseCommand
             {
                 status.OfficeRolloutCompletion = officeRolloutCompletionAfter;
                 status.ProductionSupportClaim = productionSupportClaimAfter;
+                if (productionSupport)
+                    status.ProductionSupportReviewPath = supportReviewPath?.Trim() ?? "";
                 Directory.CreateDirectory(Path.GetDirectoryName(read.FullStatusPath)!);
                 await File.WriteAllTextAsync(read.FullStatusPath, JsonSerializer.Serialize(status, JsonOptions) + Environment.NewLine);
                 wrote = true;
@@ -504,6 +529,8 @@ public static class ReleaseCommand
             yes,
             wrote,
             productionSupport,
+            supportReviewPath?.Trim(),
+            productionSupportReviewIssues,
             officeRolloutCompletionBefore,
             productionSupportClaimBefore,
             officeRolloutCompletionAfter,
@@ -521,7 +548,7 @@ public static class ReleaseCommand
 
         if (status is not null)
         {
-            AddPilotStatusIssues(status, issues);
+            AddPilotStatusIssues(normalizedRoot, status, issues);
             foreach (var pilot in status.CompletedPilots)
             {
                 var validation = await ValidatePilotEvidencePacketAsync(normalizedRoot, pilot.EvidencePacketPath, pilot.PilotId);
@@ -601,6 +628,78 @@ public static class ReleaseCommand
         }
 
         return ReleasePilotValidateResult.FromIssues(path, issues);
+    }
+
+    private static async Task<List<ReleasePilotValidateIssue>> ValidateProductionSupportReviewAsync(
+        string root,
+        string? supportReviewPath)
+    {
+        var issues = new List<ReleasePilotValidateIssue>();
+        if (string.IsNullOrWhiteSpace(supportReviewPath))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "production-support-review-required",
+                "error",
+                "Production support claims require --support-review with a public-safe Markdown summary under docs/smoke/v6.0/.",
+                null,
+                null));
+            return issues;
+        }
+
+        var path = supportReviewPath.Trim();
+        if (!IsPublicSafePilotEvidencePath(path))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "production-support-review-path-safety",
+                "error",
+                "Production support review path must be repo-relative under docs/smoke/v6.0/ and end with .md.",
+                null,
+                path));
+            return issues;
+        }
+
+        var fullPath = Path.Combine(Path.GetFullPath(root), path.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(fullPath))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "production-support-review-missing",
+                "error",
+                "Production support review summary file does not exist.",
+                null,
+                path));
+            return issues;
+        }
+
+        string text;
+        try
+        {
+            text = await File.ReadAllTextAsync(fullPath);
+        }
+        catch (IOException ex)
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "production-support-review-unreadable",
+                "error",
+                $"Production support review summary could not be read: {ex.Message}",
+                null,
+                path));
+            return issues;
+        }
+
+        foreach (var phrase in RequiredProductionSupportReviewPhrases)
+        {
+            if (!text.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            {
+                issues.Add(new ReleasePilotValidateIssue(
+                    "production-support-review-content",
+                    "error",
+                    $"Production support review summary is missing required phrase '{phrase}'.",
+                    null,
+                    phrase));
+            }
+        }
+
+        return issues;
     }
 
     private static async Task WritePilotScaffoldResultAsync(
@@ -890,6 +989,7 @@ public static class ReleaseCommand
     }
 
     private static void AddPilotStatusIssues(
+        string root,
         OfficeRolloutStatusDocument status,
         List<ReleasePilotValidateIssue> issues)
     {
@@ -984,6 +1084,17 @@ public static class ReleaseCommand
                 null,
                 OfficeRolloutStatusPath));
         }
+
+        if (status.ProductionSupportClaim &&
+            !ProductionSupportReviewComplete(root, status.ProductionSupportReviewPath))
+        {
+            issues.Add(new ReleasePilotValidateIssue(
+                "rollout-status-production-support-review",
+                "error",
+                "office-rollout-status.json productionSupportClaim requires a public-safe productionSupportReviewPath summary with private support review approval evidence.",
+                null,
+                status.ProductionSupportReviewPath));
+        }
     }
 
     private static OfficeRolloutStatusDocument AddCompletedPilot(
@@ -1012,6 +1123,7 @@ public static class ReleaseCommand
         status.CompletedPilotIds ??= Array.Empty<string>();
         status.CompletedPilots ??= Array.Empty<CompletedOfficePilotStatus>();
         status.RequiredEvidence ??= new OfficeRolloutRequiredEvidence();
+        status.ProductionSupportReviewPath ??= "";
         foreach (var pilot in status.CompletedPilots)
         {
             pilot.PilotId ??= "";
@@ -1086,6 +1198,27 @@ public static class ReleaseCommand
             !trimmed.Contains("/..", StringComparison.Ordinal) &&
             trimmed.StartsWith("docs/smoke/v6.0/", StringComparison.Ordinal) &&
             trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ProductionSupportReviewComplete(string root, string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath) || !IsPublicSafePilotEvidencePath(relativePath))
+            return false;
+
+        var fullPath = Path.Combine(Path.GetFullPath(root), relativePath.Trim().Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(fullPath))
+            return false;
+
+        try
+        {
+            var text = File.ReadAllText(fullPath);
+            return RequiredProductionSupportReviewPhrases.All(phrase =>
+                text.Contains(phrase, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     private static IEnumerable<(string Label, int LineNumber)> FindBlankPilotFields(string packet)
@@ -1527,6 +1660,7 @@ public static class ReleaseCommand
         writer.WriteLine($"Can claim:    {result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Rollout:      {result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()} -> {result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Support:      {result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()} -> {result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Support review: {result.ProductionSupportReviewPath ?? ""}");
         writer.WriteLine($"Message:      {result.Message}");
         if (result.NextActions.Length > 0)
         {
@@ -1572,6 +1706,7 @@ public static class ReleaseCommand
         writer.WriteLine($"- Can claim office rollout: `{result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Office rollout completion: `{result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()}` -> `{result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()}` -> `{result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Production support review: `{EscapeInlineCode(result.ProductionSupportReviewPath ?? "")}`");
         writer.WriteLine($"- Message: {result.Message}");
         writer.WriteLine();
         writer.WriteLine("## Next Actions");
@@ -1888,6 +2023,7 @@ public static class ReleaseCommand
             {
                 actions.Add("release pilot claim --output json");
                 actions.Add("release pilot claim --yes --output json");
+                actions.Add("release pilot claim --production-support --support-review docs/smoke/v6.0/<support-review>.md --output json");
             }
 
             return actions.Distinct(StringComparer.Ordinal).ToArray();
@@ -1919,6 +2055,7 @@ public static class ReleaseCommand
         bool DryRun,
         bool Wrote,
         bool RequestedProductionSupportClaim,
+        string? ProductionSupportReviewPath,
         int MinimumOfficePilotCount,
         int CompletedOfficePilotCount,
         int RemainingOfficePilotCount,
@@ -1941,13 +2078,18 @@ public static class ReleaseCommand
             bool yes,
             bool wrote,
             bool requestedProductionSupportClaim,
+            string? productionSupportReviewPath,
+            List<ReleasePilotValidateIssue> productionSupportReviewIssues,
             bool officeRolloutCompletionBefore,
             bool productionSupportClaimBefore,
             bool officeRolloutCompletionAfter,
             bool productionSupportClaimAfter)
         {
-            var success = status.Success && status.CanClaimOfficeRollout;
-            var claimBlockers = BuildClaimBlockers(status);
+            var reviewErrorCount = productionSupportReviewIssues.Count(issue => issue.Severity == "error");
+            var reviewWarningCount = productionSupportReviewIssues.Count(issue => issue.Severity == "warning");
+            var issues = status.Issues.Concat(productionSupportReviewIssues).ToArray();
+            var success = status.Success && status.CanClaimOfficeRollout && reviewErrorCount == 0;
+            var claimBlockers = BuildClaimBlockers(status, reviewErrorCount);
             var message = success
                 ? yes
                     ? requestedProductionSupportClaim
@@ -1965,6 +2107,7 @@ public static class ReleaseCommand
                 !yes,
                 wrote,
                 requestedProductionSupportClaim,
+                productionSupportReviewPath,
                 status.MinimumOfficePilotCount,
                 status.CompletedOfficePilotCount,
                 status.RemainingOfficePilotCount,
@@ -1975,17 +2118,17 @@ public static class ReleaseCommand
                 productionSupportClaimBefore,
                 officeRolloutCompletionAfter,
                 productionSupportClaimAfter,
-                status.ErrorCount,
-                status.WarningCount,
+                status.ErrorCount + reviewErrorCount,
+                status.WarningCount + reviewWarningCount,
                 message,
                 claimBlockers,
                 status.NextActions,
-                status.Issues);
+                issues);
         }
 
-        private static string[] BuildClaimBlockers(ReleasePilotStatusResult status)
+        private static string[] BuildClaimBlockers(ReleasePilotStatusResult status, int productionSupportReviewErrorCount)
         {
-            if (status.CanClaimOfficeRollout)
+            if (status.CanClaimOfficeRollout && productionSupportReviewErrorCount == 0)
                 return Array.Empty<string>();
 
             var blockers = new List<string>();
@@ -1999,6 +2142,8 @@ public static class ReleaseCommand
                 blockers.Add("packetValidation");
             if (status.MissingEvidenceSummary.Length > 0)
                 blockers.Add("missingEvidence");
+            if (productionSupportReviewErrorCount > 0)
+                blockers.Add("productionSupportReview");
 
             return blockers.Count == 0
                 ? new[] { "officeRolloutReadiness" }
@@ -2020,6 +2165,7 @@ public static class ReleaseCommand
         public CompletedOfficePilotStatus[] CompletedPilots { get; set; } = Array.Empty<CompletedOfficePilotStatus>();
         public bool OfficeRolloutCompletion { get; set; }
         public bool ProductionSupportClaim { get; set; }
+        public string ProductionSupportReviewPath { get; set; } = "";
         public OfficeRolloutRequiredEvidence RequiredEvidence { get; set; } = new();
     }
 

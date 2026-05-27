@@ -1418,8 +1418,10 @@ Post-rollback evidence
                     .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
                     .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
                     .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
-                    .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+                    .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal)
+                    .Replace("\"productionSupportReviewPath\": \"\"", "\"productionSupportReviewPath\": \"docs/smoke/v6.0/v6-production-support-review.md\"", StringComparison.Ordinal));
             WriteCompletedPilotEvidencePackets(root, "pilot-01", "pilot-02");
+            WriteProductionSupportReview(root, "v6-production-support-review.md");
             Directory.SetCurrentDirectory(FindRepositoryRoot());
             var output = new StringWriter();
 
@@ -3561,6 +3563,19 @@ journal verify
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, CompletedPilotEvidencePacketContent(pilotId));
         }
+    }
+
+    private static void WriteProductionSupportReview(string root, string fileName)
+    {
+        var path = Path.Combine(root, "docs", "smoke", "v6.0", fileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """
+# Production support review
+
+- private support review approved: yes
+- office rollout completion: reviewed
+- production support claim: approved
+""");
     }
 
     private static string CompletedPilotEvidencePacketContent(string pilotId) => $$"""

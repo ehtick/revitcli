@@ -3965,6 +3965,8 @@ public static class WorkbenchCommand
             "dashboard-central",
             "real Revit pilots",
             "office rollout pilots",
+            "--support-review",
+            "productionSupportReviewPath",
             "pilot evidence packet",
             "local controlled pilot packet",
             "read-only ledger query",
@@ -4053,6 +4055,8 @@ public static class WorkbenchCommand
             "release pilot claim",
             "claimBlockers",
             "nextActions",
+            "--support-review",
+            "productionSupportReviewPath",
             "doctor --check-version 2026 --output json",
             "`status --output json`",
             "workbench verify --contract workbench-contract.v2",
@@ -8228,6 +8232,8 @@ steps:
             var repositoryRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path) ?? "", "..", "..", ".."));
             var completedPilotsComplete = completedCount.HasValue &&
                 CompletedOfficePilotEvidenceComplete(repositoryRoot, root, completedCount.Value);
+            var productionSupportReviewComplete = supportClaim is not true ||
+                ProductionSupportReviewComplete(repositoryRoot, root);
             var requiredEvidenceComplete =
                 JsonPathBoolEquals(root, "requiredEvidence.doctor", true) &&
                 JsonPathBoolEquals(root, "requiredEvidence.status", true) &&
@@ -8263,9 +8269,9 @@ steps:
             var belowMinimum = completedCount.GetValueOrDefault() < minimumCount.GetValueOrDefault();
             var reachedMinimum = completedCount.GetValueOrDefault() >= minimumCount.GetValueOrDefault();
             if (!((belowMinimum && completionClaim is false && supportClaim is false) ||
-                  (reachedMinimum && completionClaim.HasValue && supportClaim.HasValue && completedPilotsComplete)))
+                  (reachedMinimum && completionClaim.HasValue && supportClaim.HasValue && completedPilotsComplete && productionSupportReviewComplete)))
             {
-                return "docs/smoke/v6.0/office-rollout-status.json must keep completion/support false below the pilot threshold, or provide a consistent threshold-reached status with complete per-pilot evidence.";
+                return "docs/smoke/v6.0/office-rollout-status.json must keep completion/support false below the pilot threshold, or provide a consistent threshold-reached status with complete per-pilot evidence and productionSupportReviewPath when production support is claimed.";
             }
 
             return null;
@@ -8398,6 +8404,43 @@ steps:
             "Support ticket review",
             "Multi-user rollout postmortem",
             "Boundary summary");
+    }
+
+    private static bool ProductionSupportReviewComplete(string root, JsonElement status)
+    {
+        if (!TryReadNonEmptyJsonString(status, "productionSupportReviewPath", out var relativePath))
+            return false;
+
+        var trimmed = relativePath.Trim();
+        if (trimmed.Contains('\\', StringComparison.Ordinal) ||
+            trimmed.Contains(':', StringComparison.Ordinal) ||
+            trimmed.StartsWith("/", StringComparison.Ordinal) ||
+            trimmed.Contains("../", StringComparison.Ordinal) ||
+            trimmed.Contains("/..", StringComparison.Ordinal) ||
+            !trimmed.StartsWith("docs/smoke/v6.0/", StringComparison.Ordinal) ||
+            !trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var fullPath = Path.Combine(root, trimmed);
+        if (!File.Exists(fullPath))
+            return false;
+
+        try
+        {
+            var text = File.ReadAllText(fullPath);
+            return ContainsAll(
+                text,
+                "Production support review",
+                "private support review approved",
+                "office rollout completion",
+                "production support claim");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static bool ContainsPilotIdentifier(string text, string expectedPilotId)

@@ -414,12 +414,15 @@ The contract baseline is acceptable when:
   `claimBlockers` and `nextActions`, and writes the office rollout completion
   claim only after validated completed pilot evidence reaches the threshold;
   production support still requires an explicit
-  `--production-support` request after private support review. It is not a
-  production support claim by default.
+  `--production-support` request plus
+  `--support-review docs/smoke/v6.0/<support-review>.md` after private support
+  review. The written status records `productionSupportReviewPath`; it is not
+  a production support claim by default.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable rollout status, minimum pilot count, completed pilot count,
   per-pilot evidence flags, public-safe repo-relative Markdown evidence packet
-  paths, and no-completion/no-production-support boundary.
+  paths, optional production support review summary path, and
+  no-completion/no-production-support boundary.
 - `workflow registry --output json` emits `workflow-registry.v1` without
   running workflow steps, writing files, or requiring Revit to be running.
 - Missing contract or gap-report files fail the gates.

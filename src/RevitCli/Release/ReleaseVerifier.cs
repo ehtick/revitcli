@@ -88,6 +88,14 @@ internal static partial class ReleaseVerifier
         "database-backed",
     };
 
+    private static readonly string[] V60ProductionSupportReviewPhrases =
+    {
+        "Production support review",
+        "private support review approved",
+        "office rollout completion",
+        "production support claim",
+    };
+
     public static ReleaseVerifyReport Verify(ReleaseVerifyOptions options)
     {
         var root = Path.GetFullPath(string.IsNullOrWhiteSpace(options.Root)
@@ -1124,6 +1132,10 @@ internal static partial class ReleaseVerifier
             "v6.0 gap report documents staged add-in commit evidence.", "docs/smoke/v6.0/gap-report.md");
         AddContains(report, "v6.0:wsl-staged-addin-path-gap-doc", gap, "stagedAddinPath",
             "v6.0 gap report documents staged add-in path evidence.", "docs/smoke/v6.0/gap-report.md");
+        AddContains(report, "v6.0:pilot-support-review-gap-doc", gap, "--support-review",
+            "v6.0 gap report documents support review evidence for production support claims.", "docs/smoke/v6.0/gap-report.md");
+        AddContains(report, "v6.0:pilot-support-review-status-gap-doc", gap, "productionSupportReviewPath",
+            "v6.0 gap report documents the production support review summary path.", "docs/smoke/v6.0/gap-report.md");
         AddContains(report, "v6.0:local-controlled-pilot-gap-doc", gap, "local controlled pilot packet",
             "v6.0 gap report records the local controlled pilot packet without claiming rollout completion.", "docs/smoke/v6.0/gap-report.md");
         AddContains(report, "v6.0:not-live-doc", gap, "not live verified",
@@ -1239,6 +1251,10 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence template requires project-copy owner signoff.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-support-review", pilotEvidence, "Support ticket review",
             "v6.0 pilot evidence template requires support ticket review.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-support-review-path", pilotEvidence, "--support-review",
+            "v6.0 pilot evidence template requires a support review path for production support claims.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-support-review-status-path", pilotEvidence, "productionSupportReviewPath",
+            "v6.0 pilot evidence template records the production support review summary path.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-postmortem", pilotEvidence, "Multi-user rollout postmortem",
             "v6.0 pilot evidence template requires multi-user rollout postmortem.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddGuardedContains(report, "v6.0:pilot-evidence-no-saas", pilotEvidence, "SaaS",
@@ -1828,6 +1844,8 @@ internal static partial class ReleaseVerifier
         var hasPilotCounts = minimumCount.HasValue && completedCount.HasValue;
         var completedPilotsComplete = completedCount.HasValue &&
             CompletedOfficePilotEvidenceComplete(root, status, completedCount.Value);
+        var productionSupportReviewComplete = supportClaim is not true ||
+            ProductionSupportReviewComplete(root, JsonString(status, "productionSupportReviewPath"));
         var requiredEvidenceComplete =
             JsonBoolEquals(status, "requiredEvidence.doctor", true) &&
             JsonBoolEquals(status, "requiredEvidence.status", true) &&
@@ -1859,9 +1877,9 @@ internal static partial class ReleaseVerifier
             path);
         AddJsonCheck(report, "v6.0:office-rollout-status-no-overclaim-json",
             (belowMinimum && completionClaim is false && supportClaim is false) ||
-            (reachedMinimum && completionClaim.HasValue && supportClaim.HasValue && requiredEvidenceComplete && completedPilotsComplete),
+            (reachedMinimum && completionClaim.HasValue && supportClaim.HasValue && requiredEvidenceComplete && completedPilotsComplete && productionSupportReviewComplete),
             "v6.0 office rollout status JSON is consistent with the pilot threshold and does not overclaim production support.",
-            $"Expected {path} to keep completion/support false below the pilot threshold, or require completed pilots with full per-pilot evidence when the threshold is reached.",
+            $"Expected {path} to keep completion/support false below the pilot threshold, require completed pilots with full per-pilot evidence when the threshold is reached, and require productionSupportReviewPath evidence when productionSupportClaim=true.",
             path);
         AddJsonCheck(report, "v6.0:office-rollout-status-required-evidence-json",
             requiredEvidenceComplete,
@@ -1872,6 +1890,11 @@ internal static partial class ReleaseVerifier
             completedPilotsComplete,
             "v6.0 office rollout status JSON has a completedPilots entry with complete evidence flags and a matching evidence packet Pilot identifier for each completed pilot.",
             $"Expected {path} completedPilots to contain one complete per-pilot evidence object and a matching packet Pilot identifier for each completed pilot.",
+            path);
+        AddJsonCheck(report, "v6.0:office-rollout-status-support-review-json",
+            productionSupportReviewComplete,
+            "v6.0 production support claims require a public-safe support review summary path.",
+            $"Expected {path} productionSupportClaim=true to include a repo-relative productionSupportReviewPath with support review approval evidence.",
             path);
     }
 
@@ -1966,6 +1989,39 @@ internal static partial class ReleaseVerifier
             "Support ticket review",
             "Multi-user rollout postmortem",
             "Boundary summary");
+    }
+
+    private static bool ProductionSupportReviewComplete(string root, string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return false;
+
+        var trimmed = relativePath.Trim();
+        if (trimmed.Contains('\\', StringComparison.Ordinal) ||
+            trimmed.Contains(':', StringComparison.Ordinal) ||
+            trimmed.StartsWith("/", StringComparison.Ordinal) ||
+            trimmed.Contains("../", StringComparison.Ordinal) ||
+            trimmed.Contains("/..", StringComparison.Ordinal) ||
+            !trimmed.StartsWith("docs/smoke/v6.0/", StringComparison.Ordinal) ||
+            !trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var fullPath = Path.Combine(root, ToNativePath(trimmed));
+        if (!File.Exists(fullPath))
+            return false;
+
+        try
+        {
+            var text = File.ReadAllText(fullPath);
+            return V60ProductionSupportReviewPhrases.All(phrase =>
+                text.Contains(phrase, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     private static bool ContainsPilotIdentifier(string text, string expectedPilotId)
