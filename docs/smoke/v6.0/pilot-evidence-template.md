@@ -16,9 +16,10 @@ and keep the result free of errors. Use
 for a dry-run status update, then repeat with `--yes` only after private
 evidence review is complete. Use
 `release pilot status --output json` to confirm remaining office pilots,
-registered packet validation, per-pilot `missingEvidence`, and the
-no-production-support boundary after registration. After the minimum completed
-pilot threshold is satisfied and private review is complete, run
+registered packet validation, per-pilot `missingEvidence`, aggregate
+`missingEvidenceSummary`, and the no-production-support boundary after
+registration. After the minimum completed pilot threshold is satisfied and
+private review is complete, run
 `release pilot claim --output json` first as a dry-run, then repeat with
 `--yes` only to write the office rollout completion claim. Add
 `--production-support` only after the private support review approves it.

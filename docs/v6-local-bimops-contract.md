@@ -403,7 +403,8 @@ The contract baseline is acceptable when:
   checks it before rollout status is updated. `release pilot register` dry-runs
   or writes the completed-pilot entry after validation. `release pilot status`
   reports the machine-readable office pilot rollout progress, registered packet
-  validation, and per-pilot `missingEvidence` flags without mutating status.
+  validation, per-pilot `missingEvidence`, and aggregate
+  `missingEvidenceSummary` flags without mutating status.
   `release pilot claim` is dry-run by default and writes the office rollout
   completion claim only after validated completed pilot evidence reaches the
   threshold; production support still requires an explicit

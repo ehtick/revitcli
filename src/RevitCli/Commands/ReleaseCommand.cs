@@ -1378,6 +1378,15 @@ public static class ReleaseCommand
             }
         }
 
+        if (result.MissingEvidenceSummary.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine($"{"Missing evidence",-36} {"Pilots",6} Pilot IDs");
+            writer.WriteLine(new string('-', 90));
+            foreach (var summary in result.MissingEvidenceSummary)
+                writer.WriteLine($"{Truncate(summary.Evidence, 36),-36} {summary.MissingPilotCount,6} {string.Join(", ", summary.PilotIds)}");
+        }
+
         if (result.Issues.Length > 0)
         {
             writer.WriteLine();
@@ -1421,6 +1430,24 @@ public static class ReleaseCommand
                     : string.Join(", ", pilot.MissingEvidence);
                 writer.WriteLine(
                     $"| {EscapeTableCell(pilot.PilotId)} | {EscapeTableCell(pilot.EvidencePacketPath)} | {(pilot.ValidationSuccess ? "PASS" : "FAIL")} | {pilot.ValidationErrorCount} | {pilot.ValidationWarningCount} | {EscapeTableCell(missing)} |");
+            }
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("## Missing Evidence Summary");
+        if (result.MissingEvidenceSummary.Length == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            writer.WriteLine();
+            writer.WriteLine("| Evidence | Missing pilots | Pilot IDs |");
+            writer.WriteLine("|---|---:|---|");
+            foreach (var summary in result.MissingEvidenceSummary)
+            {
+                writer.WriteLine(
+                    $"| {EscapeTableCell(summary.Evidence)} | {summary.MissingPilotCount} | {EscapeTableCell(string.Join(", ", summary.PilotIds))} |");
             }
         }
 
@@ -1618,6 +1645,7 @@ public static class ReleaseCommand
         int WarningCount,
         string Message,
         ReleasePilotStatusCompletedPilot[] CompletedPilots,
+        ReleasePilotMissingEvidenceSummary[] MissingEvidenceSummary,
         ReleasePilotValidateIssue[] Issues)
     {
         public static ReleasePilotStatusResult From(
@@ -1632,6 +1660,14 @@ public static class ReleaseCommand
             var completedOfficePilotCount = status?.CompletedOfficePilotCount ?? 0;
             var remainingOfficePilotCount = Math.Max(0, minimumOfficePilotCount - completedOfficePilotCount);
             var allPacketValidationsSucceeded = completedPilots.All(pilot => pilot.ValidationSuccess);
+            var missingEvidenceSummary = completedPilots
+                .SelectMany(pilot => pilot.MissingEvidence.Select(evidence => new { evidence, pilot.PilotId }))
+                .GroupBy(item => item.evidence, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => new ReleasePilotMissingEvidenceSummary(
+                    group.Key,
+                    group.Select(item => item.PilotId).OrderBy(pilotId => pilotId, StringComparer.Ordinal).ToArray()))
+                .ToArray();
             var canClaimOfficeRollout = status is not null &&
                 errorCount == 0 &&
                 completedOfficePilotCount >= minimumOfficePilotCount &&
@@ -1662,6 +1698,7 @@ public static class ReleaseCommand
                 warningCount,
                 message,
                 completedPilots.ToArray(),
+                missingEvidenceSummary,
                 issues.ToArray());
         }
     }
@@ -1675,6 +1712,13 @@ public static class ReleaseCommand
         string[] MissingEvidence)
     {
         public int MissingEvidenceCount => MissingEvidence.Length;
+    }
+
+    private sealed record ReleasePilotMissingEvidenceSummary(
+        string Evidence,
+        string[] PilotIds)
+    {
+        public int MissingPilotCount => PilotIds.Length;
     }
 
     private sealed record ReleasePilotClaimResult(

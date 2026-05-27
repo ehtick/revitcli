@@ -32,7 +32,7 @@ before listing it in `office-rollout-status.json`; use
 for the dry-run status update and repeat with `--yes` only after private
 review. Use `revitcli release pilot status --output json` to check the
 completed/remaining office pilot count, registered packet validation, and
-per-pilot `missingEvidence` flags.
+per-pilot `missingEvidence` plus aggregate `missingEvidenceSummary` flags.
 After the threshold is met, run `revitcli release pilot claim --output json`
 as a dry-run before any `--yes` completion write.
 Do not claim office rollout completion until 2-3 completed office pilots have
