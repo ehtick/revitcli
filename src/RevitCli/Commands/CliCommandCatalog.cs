@@ -116,6 +116,7 @@ internal static class CliCommandCatalog
         ("release pilot scaffold", "Create a public-safe v6 office pilot evidence packet scaffold"),
         ("release pilot validate", "Validate a public-safe v6 office pilot evidence packet"),
         ("release pilot register", "Register a validated v6 office pilot evidence packet in rollout status"),
+        ("release pilot status", "Show v6 office pilot rollout evidence status"),
         ("sheets verify", "Verify sheet numbering, required sheets, and placed-view counts"),
         ("sheets issue-meta", "Plan sheet issue metadata updates with frozen sheet ids"),
         ("sheets renumber", "Plan sheet number updates from numbering rules with frozen sheet ids"),

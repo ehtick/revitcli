@@ -234,7 +234,9 @@ Done means:
   public-safe per-pilot Markdown scaffold without changing rollout status, and
   `release pilot validate` checks a packet before it is listed as completed
   evidence. `release pilot register` dry-runs or writes the completed-pilot
-  status entry only after validation.
+  status entry only after validation. `release pilot status` reports current
+  completed/remaining office pilots and validates registered evidence packets
+  without changing rollout status.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable status as 0 completed office pilots and no office rollout
   completion claim. Future completion requires per-pilot evidence flags, not

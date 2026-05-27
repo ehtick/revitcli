@@ -1001,6 +1001,8 @@ internal static partial class ReleaseVerifier
             "v6.0 contract exposes local office pilot evidence packet validation.", "docs/v6-local-bimops-contract.md");
         AddContains(report, "v6.0:release-pilot-register-doc", contract, "release pilot register",
             "v6.0 contract exposes local office pilot rollout status registration.", "docs/v6-local-bimops-contract.md");
+        AddContains(report, "v6.0:release-pilot-status-doc", contract, "release pilot status",
+            "v6.0 contract exposes local office pilot rollout status reporting.", "docs/v6-local-bimops-contract.md");
         AddGuardedContains(report, "v6.0:no-saas-doc", contract, "SaaS",
             "v6.0 contract keeps SaaS out of the baseline.", "docs/v6-local-bimops-contract.md", V60SaasContradictions);
         AddGuardedContains(report, "v6.0:no-mcp-doc", contract, "MCP",
@@ -1098,9 +1100,11 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence intake exposes the local packet validation command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-register-command", pilotEvidence, "release pilot register",
             "v6.0 pilot evidence intake exposes the local status registration command.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-rollout-status-command", pilotEvidence, "release pilot status",
+            "v6.0 pilot evidence intake exposes the local rollout status reporting command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-doctor", pilotEvidence, "doctor --check-version 2026 --output json",
             "v6.0 pilot evidence requires doctor version proof.", "docs/smoke/v6.0/pilot-evidence-template.md");
-        AddContains(report, "v6.0:pilot-evidence-status", pilotEvidence, "status --output json",
+        AddContains(report, "v6.0:pilot-evidence-status", pilotEvidence, "`status --output json`",
             "v6.0 pilot evidence requires live status proof.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-workbench", pilotEvidence, "workbench verify --contract workbench-contract.v2",
             "v6.0 pilot evidence requires workbench gate proof.", "docs/smoke/v6.0/pilot-evidence-template.md");

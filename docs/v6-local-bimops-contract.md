@@ -391,8 +391,9 @@ The contract baseline is acceptable when:
   signoff, support ticket review, and multi-user rollout postmortem.
   `release pilot scaffold` creates the packet and `release pilot validate`
   checks it before rollout status is updated. `release pilot register` dry-runs
-  or writes the completed-pilot entry after validation. It is not a production
-  support claim.
+  or writes the completed-pilot entry after validation. `release pilot status`
+  reports the machine-readable office pilot rollout progress without mutating
+  status. It is not a production support claim.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable rollout status, minimum pilot count, completed pilot count,
   per-pilot evidence flags, public-safe repo-relative Markdown evidence packet
