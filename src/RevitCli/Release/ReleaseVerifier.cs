@@ -1096,6 +1096,8 @@ internal static partial class ReleaseVerifier
             "v6.0 office rollout pilot evidence packet is documented.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-project-copy", pilotEvidence, "controlled project-copy pilots",
             "v6.0 pilot evidence is scoped to controlled project copies.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-pilot-identifier", pilotEvidence, "Pilot identifier",
+            "v6.0 pilot evidence binds each packet to a registered pilot id.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-scaffold-command", pilotEvidence, "release pilot scaffold",
             "v6.0 pilot evidence intake exposes the local scaffold command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-validate-command", pilotEvidence, "release pilot validate",
@@ -1727,8 +1729,8 @@ internal static partial class ReleaseVerifier
             path);
         AddJsonCheck(report, "v6.0:office-rollout-status-completed-pilots-json",
             completedPilotsComplete,
-            "v6.0 office rollout status JSON has a completedPilots entry with complete evidence flags for each completed pilot.",
-            $"Expected {path} completedPilots to contain one complete per-pilot evidence object for each completed pilot.",
+            "v6.0 office rollout status JSON has a completedPilots entry with complete evidence flags and a matching evidence packet Pilot identifier for each completed pilot.",
+            $"Expected {path} completedPilots to contain one complete per-pilot evidence object and a matching packet Pilot identifier for each completed pilot.",
             path);
     }
 
@@ -1750,7 +1752,7 @@ internal static partial class ReleaseVerifier
             completedPilotIds.Contains(pilotId) &&
             evidencePilotIds.Add(pilotId) &&
             JsonPublicOfficePilotEvidencePacketPath(pilot, "evidencePacketPath") &&
-            CompletedOfficePilotEvidencePacketComplete(root, JsonString(pilot, "evidencePacketPath")) &&
+            CompletedOfficePilotEvidencePacketComplete(root, JsonString(pilot, "evidencePacketPath"), pilotId) &&
             JsonBoolEquals(pilot, "doctor", true) &&
             JsonBoolEquals(pilot, "status", true) &&
             JsonBoolEquals(pilot, "workbench", true) &&
@@ -1783,7 +1785,7 @@ internal static partial class ReleaseVerifier
             trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool CompletedOfficePilotEvidencePacketComplete(string root, string? relativePath)
+    private static bool CompletedOfficePilotEvidencePacketComplete(string root, string? relativePath, string expectedPilotId)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
             return false;
@@ -1802,7 +1804,9 @@ internal static partial class ReleaseVerifier
             return false;
         }
 
-        return ContainsAll(text,
+        return ContainsPilotIdentifier(text, expectedPilotId) &&
+            ContainsAll(text,
+            "Pilot identifier",
             "Required Commands",
             "doctor --check-version 2026 --output json",
             "status --output json",
@@ -1821,6 +1825,32 @@ internal static partial class ReleaseVerifier
             "Support ticket review",
             "Multi-user rollout postmortem",
             "Boundary summary");
+    }
+
+    private static bool ContainsPilotIdentifier(string text, string expectedPilotId)
+    {
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (!trimmed.StartsWith("- ", StringComparison.Ordinal))
+                continue;
+
+            var separator = trimmed.IndexOf(':', StringComparison.Ordinal);
+            if (separator < 0)
+                continue;
+
+            var label = trimmed[2..separator].Trim();
+            if (!string.Equals(label, "Pilot identifier", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return string.Equals(
+                trimmed[(separator + 1)..].Trim(),
+                expectedPilotId,
+                StringComparison.Ordinal);
+        }
+
+        return false;
     }
 
     private static bool ContainsAll(string text, params string[] values) =>

@@ -89,6 +89,8 @@ For each approved live operation, record:
 - Each completed pilot listed in the rollout status must include per-pilot
   evidence flags for the required commands, rollback, user review, signoffs,
   support review, and postmortem.
+- Each packet's `Pilot identifier` value must match the registered
+  `completedPilots[*].pilotId`.
 - Each completed pilot's `evidencePacketPath` must be a public-safe
   repo-relative Markdown path under `docs/smoke/v6.0/`; local absolute paths,
   backslashes, drive letters, and parent traversal are not valid release

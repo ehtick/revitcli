@@ -584,6 +584,32 @@ jobs:
     }
 
     [Fact]
+    public async Task PilotRegister_PacketPilotIdMismatch_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        WriteFile("docs/smoke/v6.0/pilot-01.md", CompletedPilotEvidencePacketContent("pilot-01"));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotRegisterAsync(
+            _root,
+            "pilot-02",
+            "docs/smoke/v6.0/pilot-01.md",
+            yes: true,
+            outputFormat: "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("wrote").GetBoolean());
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("id").GetString() == "pilot-id-mismatch");
+        using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
+        Assert.Equal(0, status.RootElement.GetProperty("completedOfficePilotCount").GetInt32());
+    }
+
+    [Fact]
     public async Task PilotStatus_Json_ReportsRemainingPilots()
     {
         WriteHealthyTree(_root);
@@ -693,6 +719,55 @@ jobs:
         Assert.True(root.GetProperty("completedPilots")[0].GetProperty("validationErrorCount").GetInt32() > 0);
         Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("id").GetString() == "packet-missing");
+    }
+
+    [Fact]
+    public async Task PilotStatus_PacketPilotIdMismatch_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        WriteFile("docs/smoke/v6.0/pilot-02.md", CompletedPilotEvidencePacketContent("pilot-01"));
+        WriteFile("docs/smoke/v6.0/office-rollout-status.json", $$"""
+{
+  "schemaVersion": "v6-office-rollout-status.v1",
+  "minimumOfficePilotCount": 2,
+  "completedOfficePilotCount": 1,
+  "completedPilotIds": ["pilot-02"],
+  "completedPilots": [{{CompletedPilotEvidenceJson("pilot-02")}}],
+  "officeRolloutCompletion": false,
+  "productionSupportClaim": false,
+  "requiredEvidence": {
+    "doctor": true,
+    "status": true,
+    "workbench": true,
+    "release": true,
+    "ledgerQuery": true,
+    "ledgerValidate": true,
+    "ledgerStatsAnalyticsSnapshot": true,
+    "ledgerTimelineAnalyticsSnapshot": true,
+    "journalVerify": true,
+    "rollbackResult": true,
+    "userReview": true,
+    "bimManagerSignoff": true,
+    "projectCopyOwnerSignoff": true,
+    "supportTicketReview": true,
+    "multiUserRolloutPostmortem": true
+  }
+}
+""");
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotStatusAsync(
+            _root,
+            "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("completedPilots")[0].GetProperty("validationSuccess").GetBoolean());
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("id").GetString() == "pilot-id-mismatch");
     }
 
     [Fact]
@@ -1210,6 +1285,26 @@ Run `release verify --strict`.
     }
 
     [Fact]
+    public async Task Verify_MissingV60PilotEvidencePilotIdentifier_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath).Replace("Pilot identifier", "Pilot marker", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-pilot-identifier" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
     public async Task Verify_MissingV60PilotEvidenceStatusCommand_ReturnsFailure()
     {
         WriteHealthyTree(_root);
@@ -1388,6 +1483,33 @@ Run `release verify --strict`.
                 .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
                 .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
                 .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:office-rollout-status-completed-pilots-json" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_V60OfficeRolloutStatusEvidencePacketPilotIdMismatch_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var statusPath = Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json");
+        File.WriteAllText(
+            statusPath,
+            File.ReadAllText(statusPath)
+                .Replace("\"completedOfficePilotCount\": 0", "\"completedOfficePilotCount\": 2", StringComparison.Ordinal)
+                .Replace("\"completedPilotIds\": []", "\"completedPilotIds\": [\"pilot-01\", \"pilot-02\"]", StringComparison.Ordinal)
+                .Replace("\"completedPilots\": []", "\"completedPilots\": [" + CompletedPilotEvidenceJson("pilot-01") + ", " + CompletedPilotEvidenceJson("pilot-02") + "]", StringComparison.Ordinal)
+                .Replace("\"officeRolloutCompletion\": false", "\"officeRolloutCompletion\": true", StringComparison.Ordinal)
+                .Replace("\"productionSupportClaim\": false", "\"productionSupportClaim\": true", StringComparison.Ordinal));
+        WriteCompletedPilotEvidencePackets(_root, "pilot-01");
+        WriteFile("docs/smoke/v6.0/pilot-02.md", CompletedPilotEvidencePacketContent("pilot-03"));
         var output = new StringWriter();
 
         var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
@@ -3138,6 +3260,7 @@ Run release pilot validate --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.m
 Dry-run release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json before using --yes.
 Check release pilot status --output json after registration to report remaining office pilots.
 Run release pilot claim --output json as a dry-run before using --yes for an office rollout completion claim.
+Each packet records a Pilot identifier that must match the registered pilot id.
 
 Required commands include doctor --check-version 2026 --output json, `status --output json`, workbench verify --contract workbench-contract.v2 --dir . --output json, release verify --strict --output json, ledger query --source ledger --output json, ledger validate --source ledger --output json, ledger stats --source ledger --analytics-snapshot .revitcli/analytics/ledger-stats.json --output json, ledger timeline --source ledger --analytics-snapshot .revitcli/analytics/ledger-timeline.json --output json, and journal verify --output json.
 Live evidence records Rollback result, final verification command, safe retry status, user-review notes, and go-forward decision.
@@ -3597,6 +3720,10 @@ Run `release verify --strict`.
 
     private static string CompletedPilotEvidencePacketContent(string pilotId) => $$"""
         # v6.0 Office Pilot {{pilotId}}
+
+        ## Scope
+
+        - Pilot identifier: {{pilotId}}
 
         ## Required Commands
 

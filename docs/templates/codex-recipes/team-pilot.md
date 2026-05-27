@@ -36,4 +36,5 @@ After the threshold is met, run `revitcli release pilot claim --output json`
 as a dry-run before any `--yes` completion write.
 Do not claim office rollout completion until 2-3 completed office pilots have
 BIM manager signoff, project-copy owner signoff, support ticket review, and
-multi-user rollout postmortems.
+multi-user rollout postmortems. Keep the packet `Pilot identifier` identical
+to the registered pilot id.

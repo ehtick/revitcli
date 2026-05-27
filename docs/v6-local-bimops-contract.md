@@ -388,7 +388,8 @@ The contract baseline is acceptable when:
   rollout pilot evidence packet for controlled project-copy pilots, including
   doctor, workbench, release, ledger, analytics snapshot, journal verify,
   rollback, user-review evidence, BIM manager signoff, project-copy owner
-  signoff, support ticket review, and multi-user rollout postmortem.
+  signoff, support ticket review, multi-user rollout postmortem, and a packet
+  `Pilot identifier` matching the registered pilot id.
   `release pilot scaffold` creates the packet and `release pilot validate`
   checks it before rollout status is updated. `release pilot register` dry-runs
   or writes the completed-pilot entry after validation. `release pilot status`

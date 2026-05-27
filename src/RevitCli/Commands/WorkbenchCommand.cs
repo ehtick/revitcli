@@ -4017,6 +4017,7 @@ public static class WorkbenchCommand
         {
             "v6.0 Office Rollout Pilot Evidence Packet",
             "controlled project-copy pilots",
+            "Pilot identifier",
             "release pilot scaffold",
             "release pilot validate",
             "release pilot register",
@@ -8006,7 +8007,7 @@ steps:
                 return "docs/smoke/v6.0/office-rollout-status.json must require all command, review, signoff, support-review, and postmortem evidence fields.";
 
             if (!completedPilotsComplete)
-                return "docs/smoke/v6.0/office-rollout-status.json completedPilots entries must include complete per-pilot evidence flags.";
+                return "docs/smoke/v6.0/office-rollout-status.json completedPilots entries must include complete per-pilot evidence flags and matching packet Pilot identifiers.";
 
             var belowMinimum = completedCount.GetValueOrDefault() < minimumCount.GetValueOrDefault();
             var reachedMinimum = completedCount.GetValueOrDefault() >= minimumCount.GetValueOrDefault();
@@ -8073,7 +8074,7 @@ steps:
             completedPilotIds.Contains(pilotId) &&
             evidencePilotIds.Add(pilotId) &&
             JsonPathPublicOfficePilotEvidencePacket(pilot, "evidencePacketPath") &&
-            CompletedOfficePilotEvidencePacketComplete(root, pilot.GetProperty("evidencePacketPath").GetString()) &&
+            CompletedOfficePilotEvidencePacketComplete(root, pilot.GetProperty("evidencePacketPath").GetString(), pilotId) &&
             JsonPathBoolEquals(pilot, "doctor", true) &&
             JsonPathBoolEquals(pilot, "status", true) &&
             JsonPathBoolEquals(pilot, "workbench", true) &&
@@ -8106,7 +8107,7 @@ steps:
             trimmed.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool CompletedOfficePilotEvidencePacketComplete(string root, string? relativePath)
+    private static bool CompletedOfficePilotEvidencePacketComplete(string root, string? relativePath, string expectedPilotId)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
             return false;
@@ -8125,7 +8126,9 @@ steps:
             return false;
         }
 
-        return ContainsAll(text,
+        return ContainsPilotIdentifier(text, expectedPilotId) &&
+            ContainsAll(text,
+            "Pilot identifier",
             "Required Commands",
             "doctor --check-version 2026 --output json",
             "status --output json",
@@ -8144,6 +8147,32 @@ steps:
             "Support ticket review",
             "Multi-user rollout postmortem",
             "Boundary summary");
+    }
+
+    private static bool ContainsPilotIdentifier(string text, string expectedPilotId)
+    {
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (!trimmed.StartsWith("- ", StringComparison.Ordinal))
+                continue;
+
+            var separator = trimmed.IndexOf(':', StringComparison.Ordinal);
+            if (separator < 0)
+                continue;
+
+            var label = trimmed[2..separator].Trim();
+            if (!string.Equals(label, "Pilot identifier", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return string.Equals(
+                trimmed[(separator + 1)..].Trim(),
+                expectedPilotId,
+                StringComparison.Ordinal);
+        }
+
+        return false;
     }
 
     private static bool TryReadUniqueStringArray(

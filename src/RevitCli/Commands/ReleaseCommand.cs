@@ -23,6 +23,7 @@ public static class ReleaseCommand
         "Do not add this pilot to office-rollout-status.json until every required command, live-operation, review, signoff, support-review, and postmortem item is complete.";
     private static readonly string[] RequiredPilotEvidencePacketPhrases =
     {
+        "Pilot identifier",
         "## Required Commands",
         "doctor --check-version 2026 --output json",
         "status --output json",
@@ -389,7 +390,7 @@ public static class ReleaseCommand
                 pilotId));
         }
 
-        var validation = await ValidatePilotEvidencePacketAsync(normalizedRoot, path);
+        var validation = await ValidatePilotEvidencePacketAsync(normalizedRoot, path, pilotId);
         issues.AddRange(validation.Issues);
 
         var statusPath = Path.Combine(normalizedRoot, OfficeRolloutStatusPath.Replace('/', Path.DirectorySeparatorChar));
@@ -523,7 +524,7 @@ public static class ReleaseCommand
             AddPilotStatusIssues(status, issues);
             foreach (var pilot in status.CompletedPilots)
             {
-                var validation = await ValidatePilotEvidencePacketAsync(normalizedRoot, pilot.EvidencePacketPath);
+                var validation = await ValidatePilotEvidencePacketAsync(normalizedRoot, pilot.EvidencePacketPath, pilot.PilotId);
                 issues.AddRange(validation.Issues);
                 completedPilots.Add(new ReleasePilotStatusCompletedPilot(
                     pilot.PilotId,
@@ -546,7 +547,8 @@ public static class ReleaseCommand
 
     private static async Task<ReleasePilotValidateResult> ValidatePilotEvidencePacketAsync(
         string root,
-        string evidencePacketPath)
+        string evidencePacketPath,
+        string? expectedPilotId = null)
     {
         var normalizedRoot = Path.GetFullPath(root);
         var path = evidencePacketPath.Trim();
@@ -576,7 +578,7 @@ public static class ReleaseCommand
 
         try
         {
-            AddPilotPacketContentIssues(await File.ReadAllTextAsync(fullPath), issues);
+            AddPilotPacketContentIssues(await File.ReadAllTextAsync(fullPath), expectedPilotId, issues);
         }
         catch (IOException ex)
         {
@@ -697,6 +699,7 @@ public static class ReleaseCommand
 
     private static void AddPilotPacketContentIssues(
         string packet,
+        string? expectedPilotId,
         List<ReleasePilotValidateIssue> issues)
     {
         foreach (var phrase in RequiredPilotEvidencePacketPhrases)
@@ -722,6 +725,29 @@ public static class ReleaseCommand
                 label));
         }
 
+        if (!string.IsNullOrWhiteSpace(expectedPilotId))
+        {
+            var (actualPilotId, lineNumber) = FindPilotIdentifier(packet);
+            if (string.IsNullOrWhiteSpace(actualPilotId))
+            {
+                issues.Add(new ReleasePilotValidateIssue(
+                    "pilot-id-missing",
+                    "error",
+                    "Evidence packet must include a non-empty Pilot identifier field.",
+                    lineNumber,
+                    expectedPilotId));
+            }
+            else if (!string.Equals(actualPilotId.Trim(), expectedPilotId.Trim(), StringComparison.Ordinal))
+            {
+                issues.Add(new ReleasePilotValidateIssue(
+                    "pilot-id-mismatch",
+                    "error",
+                    "Evidence packet Pilot identifier does not match the registered pilot id.",
+                    lineNumber,
+                    actualPilotId.Trim()));
+            }
+        }
+
         foreach (var (line, lineNumber) in FindPublicSafetyFindings(packet))
         {
             issues.Add(new ReleasePilotValidateIssue(
@@ -731,6 +757,29 @@ public static class ReleaseCommand
                 lineNumber,
                 line.Trim()));
         }
+    }
+
+    private static (string? Value, int? LineNumber) FindPilotIdentifier(string packet)
+    {
+        var lines = packet.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var trimmed = lines[i].Trim();
+            if (!trimmed.StartsWith("- ", StringComparison.Ordinal))
+                continue;
+
+            var separator = trimmed.IndexOf(':', StringComparison.Ordinal);
+            if (separator < 0)
+                continue;
+
+            var label = trimmed[2..separator].Trim();
+            if (!string.Equals(label, "Pilot identifier", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return (trimmed[(separator + 1)..].Trim(), i + 1);
+        }
+
+        return (null, null);
     }
 
     private static OfficeRolloutStatusDocument? ReadOfficeRolloutStatus(
