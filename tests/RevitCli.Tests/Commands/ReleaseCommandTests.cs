@@ -2381,6 +2381,11 @@ Run `release verify --strict`.
     [InlineData("ledger-timeline.md", "final file-tree snapshot evidence", "final snapshot evidence", "v6.0:ledger-timeline-final-snapshot-smoke-doc")]
     [InlineData("ledger-timeline.md", "projectDirectories", "project directory list", "v6.0:ledger-timeline-cross-project-smoke-doc")]
     [InlineData("ledger-timeline.md", "byProject", "per-project counts", "v6.0:ledger-timeline-by-project-smoke-doc")]
+    [InlineData("ledger-analytics.md", "ledger-analytics-bundle.v1", "ledger analytics bundle schema", "v6.0:ledger-analytics-schema-smoke-doc")]
+    [InlineData("ledger-analytics.md", "JSON/table/Markdown output formats", "bundle output formats", "v6.0:ledger-analytics-output-parity-smoke-doc")]
+    [InlineData("ledger-analytics.md", "localOnly=true", "localOnly=false", "v6.0:ledger-analytics-local-only-smoke-doc")]
+    [InlineData("ledger-analytics.md", "databaseRuntime=false", "databaseRuntime=true", "v6.0:ledger-analytics-no-db-flag-smoke-doc")]
+    [InlineData("ledger-analytics.md", "networkService=false", "networkService=true", "v6.0:ledger-analytics-no-network-flag-smoke-doc")]
     public async Task Verify_MissingV60LedgerSemanticEvidenceDoc_ReturnsFailure(
         string smokeFileName,
         string requiredPhrase,
@@ -3070,6 +3075,7 @@ Run `release verify --strict`.
             "issuePackageDryRun",
             "issuePreflight",
             "journalVerify",
+            "ledgerAnalytics",
             "ledgerAppend",
             "ledgerQueryValidate",
             "ledgerReplay",
@@ -3236,7 +3242,7 @@ No SaaS, no MCP, no dashboard-central, and no built-in LLM runtime is introduced
 The product phrase is BIM Release OS and the technical kernel is the Revit Model Operations Ledger.
 The contract is terminal-first, local-first, deterministic, dry-run first, and requires explicit approval.
 
-Required local behavior includes planHash, receiptHash, journalPath, rollbackPointer, checks, artifacts, deterministic receipt rules, rollback preconditions, current-value conflict checks, audit trail invariants, journal verify, standards runtime, project memory, workflow registry, workflow registry --output json, workflow-registry.v1, ledger append, ledger replay, ledger query, ledger validate, ledger stats, ledger timeline, release pilot validate, release pilot register, release pilot status, release pilot claim, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1, and ledger-timeline.v1.
+Required local behavior includes planHash, receiptHash, journalPath, rollbackPointer, checks, artifacts, deterministic receipt rules, rollback preconditions, current-value conflict checks, audit trail invariants, journal verify, standards runtime, project memory, workflow registry, workflow registry --output json, workflow-registry.v1, ledger append, ledger replay, ledger query, ledger validate, ledger stats, ledger timeline, ledger analytics, release pilot validate, release pilot register, release pilot status, release pilot claim, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1, ledger-timeline.v1, and ledger-analytics-bundle.v1.
 
 No SaaS, no MCP, no built-in LLM, no dashboard-central workflow state, and no database runtime are introduced.
 """);
@@ -3245,7 +3251,7 @@ No SaaS, no MCP, no built-in LLM, no dashboard-central workflow state, and no da
 
 This is a contract baseline for operations ledger behavior. It is not live verified.
 
-The Revit Model Operations Ledger has read-only standards validate, dry-run issue package, read-only deliverables verify, append-only ledger runtime, ledger replay preview, read-only ledger query, read-only ledger validate, read-only ledger stats, read-only ledger timeline, read-only workflow registry, a pilot evidence packet, and a local controlled pilot packet. Live ledger apply, live Revit ledger integration, real Revit pilots, and office rollout pilots remain future evidence. Supported command-spine paths document table summary and Markdown detail parity, including history list` JSON/table outputs.
+The Revit Model Operations Ledger has read-only standards validate, dry-run issue package, read-only deliverables verify, append-only ledger runtime, ledger replay preview, read-only ledger query, read-only ledger validate, read-only ledger stats, read-only ledger timeline, local ledger analytics bundle, read-only workflow registry, a pilot evidence packet, and a local controlled pilot packet. Live ledger apply, live Revit ledger integration, real Revit pilots, and office rollout pilots remain future evidence. Supported command-spine paths document table summary and Markdown detail parity, including history list` JSON/table outputs.
 Local audit spine docs include journal verify JSON/table validity/root-hash parity and history-list.v1 JSON count consistency and table row-order parity.
 
 No SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, and no database runtime are introduced.
@@ -3451,6 +3457,14 @@ No SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, and no d
 
 This read-only ledger timeline emits ledger-timeline.v1 from journal, history, delivery manifest, and workflow receipt files.
 It buckets project memory by day or hour and reports bucket, source, action, category counts per bucket, operator counts per bucket, receipt status, issue severity, JSON/table/Markdown timeline semantic parity, explicit UTC offset handling, and unbucketed timestamp warnings. Time filters preserve unbucketed timestamp warnings. Repeated --project roots emit projectDirectories and byProject counts for explicitly supplied local project roots. The command does not write files, start Revit, call a network service, or create a database. It includes event-level no-write evidence and final file-tree snapshot evidence, and uses no database.
+
+No SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, and no database runtime are introduced.
+""");
+        WriteFile(root, "docs/smoke/v6.0/ledger-analytics.md", """
+# RevitCli v6.0 Ledger Analytics Bundle Smoke
+
+This local ledger analytics bundle exposes ledger analytics and emits ledger-analytics-bundle.v1.
+It writes ledger-stats.v1 and ledger-timeline.v1 local snapshots. JSON/table/Markdown output formats describe the same bundle paths and operation counts. The payload declares localOnly=true, databaseRuntime=false, and networkService=false. It does not start Revit, does not call a network service, and does not create a database.
 
 No SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, and no database runtime are introduced.
 """);

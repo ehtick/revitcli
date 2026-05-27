@@ -82,6 +82,9 @@ public sealed class WorkbenchCommandTests
         Assert.Contains(
             ledger.GetProperty("commandPaths").EnumerateArray(),
             path => path.GetString() == "ledger timeline");
+        Assert.Contains(
+            ledger.GetProperty("commandPaths").EnumerateArray(),
+            path => path.GetString() == "ledger analytics");
         Assert.Contains("operations.jsonl", ledger.GetProperty("receipt").GetString()!);
         var schedule = commands.Single(command => command.GetProperty("name").GetString() == "schedule");
         Assert.Equal("mixed", schedule.GetProperty("risk").GetString());
@@ -543,6 +546,7 @@ public sealed class WorkbenchCommandTests
                 check.GetProperty("evidence").GetString()!.Contains("exact source/action/category/operator/receipt-status/issue-source/issue-severity sets", StringComparison.OrdinalIgnoreCase) &&
                 check.GetProperty("evidence").GetString()!.Contains("malformed journal, delivery, and workflow artifacts, final file-tree snapshot evidence, and event-level no-write evidence", StringComparison.OrdinalIgnoreCase) &&
                 check.GetProperty("evidence").GetString()!.Contains("ledger timeline runtime emits ledger-timeline.v1", StringComparison.OrdinalIgnoreCase) &&
+                check.GetProperty("evidence").GetString()!.Contains("ledger analytics runtime emits ledger-analytics-bundle.v1", StringComparison.OrdinalIgnoreCase) &&
                 check.GetProperty("evidence").GetString()!.Contains("ledger replay preview emits ledger-replay.v1", StringComparison.OrdinalIgnoreCase) &&
                 check.GetProperty("evidence").GetString()!.Contains("exact day-bucket source/action/category/operator/receipt-status counts", StringComparison.OrdinalIgnoreCase) &&
                 check.GetProperty("evidence").GetString()!.Contains("explicit UTC offset warning preservation under since/until/window time filters, final file-tree snapshot evidence, and event-level no-write evidence", StringComparison.OrdinalIgnoreCase) &&
@@ -570,6 +574,7 @@ public sealed class WorkbenchCommandTests
             "issuePackageDryRun",
             "issuePreflight",
             "journalVerify",
+            "ledgerAnalytics",
             "ledgerAppend",
             "ledgerQueryValidate",
             "ledgerReplay",
@@ -602,6 +607,7 @@ public sealed class WorkbenchCommandTests
         Assert.True(runtimeEvidence.GetProperty("ledgerReplay").GetBoolean());
         Assert.True(runtimeEvidence.GetProperty("ledgerStats").GetBoolean());
         Assert.True(runtimeEvidence.GetProperty("ledgerTimeline").GetBoolean());
+        Assert.True(runtimeEvidence.GetProperty("ledgerAnalytics").GetBoolean());
         Assert.True(runtimeEvidence.GetProperty("allRuntimeChecksPass").GetBoolean());
         var historyEvidence = runtimeEvidence.GetProperty("historyListEvidence");
         Assert.Equal(1, historyEvidence.GetProperty("jsonEntryCount").GetInt32());
@@ -2686,6 +2692,10 @@ journal verify
         Assert.Contains(outputs, contract =>
             contract.GetProperty("commandPath").GetString() == "ledger timeline" &&
             contract.GetProperty("jsonSchema").GetString() == "ledger-timeline.v1" &&
+            contract.GetProperty("supportsMarkdown").GetBoolean());
+        Assert.Contains(outputs, contract =>
+            contract.GetProperty("commandPath").GetString() == "ledger analytics" &&
+            contract.GetProperty("jsonSchema").GetString() == "ledger-analytics-bundle.v1" &&
             contract.GetProperty("supportsMarkdown").GetBoolean());
     }
 

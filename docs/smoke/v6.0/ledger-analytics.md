@@ -16,11 +16,11 @@ snapshot paths, stats summary, timeline summary, project roots, and explicit
 local-only boundary flags.
 
 `ledger analytics` is a packaging command for deterministic local evidence. It
-does not start Revit, call a network service, create a database, run a
-background analytics service, sync to a dashboard, or become the source of
-truth for the operations ledger. The source of truth remains local artifacts
-read by `ledger query`, `ledger validate`, `ledger stats`, and `ledger
-timeline`.
+does not start Revit, does not call a network service, and does not create a database.
+It does not run a background analytics service, does not sync to a dashboard,
+and does not become the source of truth for the operations ledger. The source
+of truth remains local artifacts read by `ledger query`, `ledger validate`,
+`ledger stats`, and `ledger timeline`.
 
 The command accepts the same local filtering scope as stats and timeline:
 
@@ -45,3 +45,4 @@ Acceptance evidence for this slice:
   operation counts;
 - the payload declares `localOnly=true`, `databaseRuntime=false`, and
   `networkService=false`.
+- no database runtime is introduced.

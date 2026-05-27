@@ -997,6 +997,10 @@ internal static partial class ReleaseVerifier
             "v6.0 contract exposes the read-only ledger timeline command.", "docs/v6-local-bimops-contract.md");
         AddContains(report, "v6.0:ledger-timeline-schema-doc", contract, "ledger-timeline.v1",
             "v6.0 contract documents the ledger timeline output schema.", "docs/v6-local-bimops-contract.md");
+        AddContains(report, "v6.0:ledger-analytics-doc", contract, "ledger analytics",
+            "v6.0 contract exposes the local ledger analytics bundle command.", "docs/v6-local-bimops-contract.md");
+        AddContains(report, "v6.0:ledger-analytics-schema-doc", contract, "ledger-analytics-bundle.v1",
+            "v6.0 contract documents the ledger analytics bundle output schema.", "docs/v6-local-bimops-contract.md");
         AddContains(report, "v6.0:release-pilot-validate-doc", contract, "release pilot validate",
             "v6.0 contract exposes local office pilot evidence packet validation.", "docs/v6-local-bimops-contract.md");
         AddContains(report, "v6.0:release-pilot-register-doc", contract, "release pilot register",
@@ -1595,6 +1599,46 @@ internal static partial class ReleaseVerifier
             "v6.0 ledger timeline smoke doc documents final file-tree snapshot evidence.", "docs/smoke/v6.0/ledger-timeline.md");
         AddGuardedContains(report, "v6.0:ledger-timeline-no-db-smoke-doc", ledgerTimeline, "database",
             "v6.0 ledger timeline smoke doc avoids a centralized ledger database claim.", "docs/smoke/v6.0/ledger-timeline.md", V60DatabaseContradictions);
+
+        var ledgerAnalyticsPath = Path.Combine(root, ToNativePath("docs/smoke/v6.0/ledger-analytics.md"));
+        if (!File.Exists(ledgerAnalyticsPath))
+        {
+            report.Add("v6.0:ledger-analytics-smoke-doc", ReleaseVerifyStatus.Error,
+                "Missing docs/smoke/v6.0/ledger-analytics.md; v6.0 ledger analytics bundle behavior is not documented.",
+                "docs/smoke/v6.0/ledger-analytics.md");
+            AddV60WorkbenchGate(root, report, workbenchVerify);
+            return;
+        }
+
+        var ledgerAnalytics = ReadText(ledgerAnalyticsPath, report, "v6.0:ledger-analytics-smoke-doc-readable");
+        if (ledgerAnalytics is null)
+        {
+            AddV60WorkbenchGate(root, report, workbenchVerify);
+            return;
+        }
+
+        AddContains(report, "v6.0:ledger-analytics-smoke-doc", ledgerAnalytics, "ledger analytics",
+            "v6.0 ledger analytics smoke doc exposes the bundle command.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddContains(report, "v6.0:ledger-analytics-schema-smoke-doc", ledgerAnalytics, "ledger-analytics-bundle.v1",
+            "v6.0 ledger analytics smoke doc documents the bundle output schema.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddContains(report, "v6.0:ledger-analytics-stats-schema-smoke-doc", ledgerAnalytics, "ledger-stats.v1",
+            "v6.0 ledger analytics smoke doc documents the stats snapshot schema.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddContains(report, "v6.0:ledger-analytics-timeline-schema-smoke-doc", ledgerAnalytics, "ledger-timeline.v1",
+            "v6.0 ledger analytics smoke doc documents the timeline snapshot schema.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddContains(report, "v6.0:ledger-analytics-output-parity-smoke-doc", ledgerAnalytics, "JSON/table/Markdown output formats",
+            "v6.0 ledger analytics smoke doc documents output-format semantic parity.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddContains(report, "v6.0:ledger-analytics-local-only-smoke-doc", ledgerAnalytics, "localOnly=true",
+            "v6.0 ledger analytics smoke doc documents the local-only boundary flag.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddContains(report, "v6.0:ledger-analytics-no-db-flag-smoke-doc", ledgerAnalytics, "databaseRuntime=false",
+            "v6.0 ledger analytics smoke doc documents the no-database boundary flag.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddContains(report, "v6.0:ledger-analytics-no-network-flag-smoke-doc", ledgerAnalytics, "networkService=false",
+            "v6.0 ledger analytics smoke doc documents the no-network-service boundary flag.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddGuardedContains(report, "v6.0:ledger-analytics-no-revit-smoke-doc", ledgerAnalytics, "start Revit",
+            "v6.0 ledger analytics smoke doc avoids starting Revit.", "docs/smoke/v6.0/ledger-analytics.md", V60RevitRuntimeContradictions);
+        AddContains(report, "v6.0:ledger-analytics-no-network-smoke-doc", ledgerAnalytics, "does not call a network service",
+            "v6.0 ledger analytics smoke doc avoids a network service claim.", "docs/smoke/v6.0/ledger-analytics.md");
+        AddGuardedContains(report, "v6.0:ledger-analytics-no-db-smoke-doc", ledgerAnalytics, "database",
+            "v6.0 ledger analytics smoke doc avoids a database runtime claim.", "docs/smoke/v6.0/ledger-analytics.md", V60DatabaseContradictions);
 
         var workflowRegistryPath = Path.Combine(root, ToNativePath("docs/smoke/v6.0/workflow-registry.md"));
         if (!File.Exists(workflowRegistryPath))
@@ -2244,6 +2288,7 @@ internal static partial class ReleaseVerifier
         var ledgerQueryValidate = ReadBoolean(evidence, "ledgerQueryValidate");
         var ledgerStats = ReadBoolean(evidence, "ledgerStats");
         var ledgerTimeline = ReadBoolean(evidence, "ledgerTimeline");
+        var ledgerAnalytics = ReadBoolean(evidence, "ledgerAnalytics");
         var ledgerReplay = ReadBoolean(evidence, "ledgerReplay");
         var standardsValidate = ReadBoolean(evidence, "standardsValidate");
         var issuePreflight = ReadBoolean(evidence, "issuePreflight");
@@ -2273,6 +2318,7 @@ internal static partial class ReleaseVerifier
         AddRuntimeEvidenceFlag(presentRuntimeEvidence, "issuePreflight", issuePreflight);
         AddRuntimeEvidenceFlag(presentRuntimeEvidence, "journalVerify", journalVerify);
         AddRuntimeEvidenceFlag(presentRuntimeEvidence, "ledgerAppend", ledgerAppend);
+        AddRuntimeEvidenceFlag(presentRuntimeEvidence, "ledgerAnalytics", ledgerAnalytics);
         AddRuntimeEvidenceFlag(presentRuntimeEvidence, "ledgerQueryValidate", ledgerQueryValidate);
         AddRuntimeEvidenceFlag(presentRuntimeEvidence, "ledgerReplay", ledgerReplay);
         AddRuntimeEvidenceFlag(presentRuntimeEvidence, "ledgerStats", ledgerStats);
@@ -2307,9 +2353,10 @@ internal static partial class ReleaseVerifier
             ledgerReplay == true &&
             ledgerStats == true &&
             ledgerTimeline == true &&
+            ledgerAnalytics == true &&
             allRuntimeChecksPass == true;
         status =
-            $"commandSpine={FormatRuntimeFlag(commandSpine)}, commandSpineOutputParity={FormatRuntimeFlag(commandSpineOutputParity)}, commandSpineNoWrites={FormatRuntimeFlag(commandSpineNoWrites)}, standardsValidate={FormatRuntimeFlag(standardsValidate)}, issuePreflight={FormatRuntimeFlag(issuePreflight)}, issuePackageDryRun={FormatRuntimeFlag(issuePackageDryRun)}, deliverablesVerify={FormatRuntimeFlag(deliverablesVerify)}, journalVerify={FormatRuntimeFlag(journalVerify)}, historyList={FormatRuntimeFlag(historyList)}, historyListCountConsistency={FormatRuntimeFlag(historyListCountConsistency)}, historyListRowOrder={FormatRuntimeFlag(historyListRowOrder)}, historyListEvidence={FormatRuntimeFlag(historyListEvidence)}, rollbackDryRun={FormatRuntimeFlag(rollbackDryRun)}, rollbackDryRunPreview={FormatRuntimeFlag(rollbackDryRunPreview)}, rollbackNoMutatingSetRequest={FormatRuntimeFlag(rollbackNoMutatingSetRequest)}, rollbackDryRunEvidence={FormatRuntimeFlag(rollbackDryRunEvidence)}, workflowRegistry={FormatRuntimeFlag(workflowRegistry)}, ledgerAppend={FormatRuntimeFlag(ledgerAppend)}, ledgerQueryValidate={FormatRuntimeFlag(ledgerQueryValidate)}, ledgerReplay={FormatRuntimeFlag(ledgerReplay)}, ledgerStats={FormatRuntimeFlag(ledgerStats)}, ledgerTimeline={FormatRuntimeFlag(ledgerTimeline)}, allRuntimeChecksPass={FormatRuntimeFlag(allRuntimeChecksPass)}";
+            $"commandSpine={FormatRuntimeFlag(commandSpine)}, commandSpineOutputParity={FormatRuntimeFlag(commandSpineOutputParity)}, commandSpineNoWrites={FormatRuntimeFlag(commandSpineNoWrites)}, standardsValidate={FormatRuntimeFlag(standardsValidate)}, issuePreflight={FormatRuntimeFlag(issuePreflight)}, issuePackageDryRun={FormatRuntimeFlag(issuePackageDryRun)}, deliverablesVerify={FormatRuntimeFlag(deliverablesVerify)}, journalVerify={FormatRuntimeFlag(journalVerify)}, historyList={FormatRuntimeFlag(historyList)}, historyListCountConsistency={FormatRuntimeFlag(historyListCountConsistency)}, historyListRowOrder={FormatRuntimeFlag(historyListRowOrder)}, historyListEvidence={FormatRuntimeFlag(historyListEvidence)}, rollbackDryRun={FormatRuntimeFlag(rollbackDryRun)}, rollbackDryRunPreview={FormatRuntimeFlag(rollbackDryRunPreview)}, rollbackNoMutatingSetRequest={FormatRuntimeFlag(rollbackNoMutatingSetRequest)}, rollbackDryRunEvidence={FormatRuntimeFlag(rollbackDryRunEvidence)}, workflowRegistry={FormatRuntimeFlag(workflowRegistry)}, ledgerAppend={FormatRuntimeFlag(ledgerAppend)}, ledgerAnalytics={FormatRuntimeFlag(ledgerAnalytics)}, ledgerQueryValidate={FormatRuntimeFlag(ledgerQueryValidate)}, ledgerReplay={FormatRuntimeFlag(ledgerReplay)}, ledgerStats={FormatRuntimeFlag(ledgerStats)}, ledgerTimeline={FormatRuntimeFlag(ledgerTimeline)}, allRuntimeChecksPass={FormatRuntimeFlag(allRuntimeChecksPass)}";
         return ok;
 
         static void AddRuntimeEvidenceFlag(IDictionary<string, object?> values, string propertyName, bool? value)

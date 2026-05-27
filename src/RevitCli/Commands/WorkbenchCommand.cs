@@ -813,7 +813,14 @@ public static class WorkbenchCommand
             SupportsTable: true,
             "ledger-timeline.v1",
             SupportsMarkdown: true,
-            "Read-only local operations ledger project-memory timeline with bucket, source, action, category, operator, receipt status, issue severity, and unbucketed timestamp evidence.")
+            "Read-only local operations ledger project-memory timeline with bucket, source, action, category, operator, receipt status, issue severity, and unbucketed timestamp evidence."),
+        new(
+            "ledger-analytics",
+            "ledger analytics",
+            SupportsTable: true,
+            "ledger-analytics-bundle.v1",
+            SupportsMarkdown: true,
+            "Local operations ledger analytics bundle that writes stats and timeline snapshot evidence without a service or database runtime.")
     };
 
     private static readonly WorkbenchSafeguardContract[] SafeguardContracts =
@@ -3893,6 +3900,7 @@ public static class WorkbenchCommand
             "ledger validate",
             "ledger stats",
             "ledger timeline",
+            "ledger analytics",
             "release pilot validate",
             "release pilot register",
             "release pilot status",
@@ -3903,6 +3911,7 @@ public static class WorkbenchCommand
             "ledger-validate.v1",
             "ledger-stats.v1",
             "ledger-timeline.v1",
+            "ledger-analytics-bundle.v1",
             "no SaaS",
             "MCP",
             "built-in LLM",
@@ -4353,6 +4362,41 @@ public static class WorkbenchCommand
                 $"docs/smoke/v6.0/ledger-timeline.md is missing ledger timeline smoke disclosures: {string.Join(", ", missingLedgerTimeline)}.");
         }
 
+        var ledgerAnalyticsPath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-analytics.md");
+        var ledgerAnalyticsText = TryReadText(ledgerAnalyticsPath);
+        if (string.IsNullOrWhiteSpace(ledgerAnalyticsText))
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                "docs/smoke/v6.0/ledger-analytics.md is missing or unreadable; v6.0 ledger analytics bundle behavior is not disclosed.");
+        }
+
+        var ledgerAnalyticsPhrases = new[]
+        {
+            "ledger analytics",
+            "ledger-analytics-bundle.v1",
+            "ledger-stats.v1",
+            "ledger-timeline.v1",
+            "JSON/table/Markdown output formats",
+            "localOnly=true",
+            "databaseRuntime=false",
+            "networkService=false",
+            "does not start Revit",
+            "does not call a network service",
+            "does not create a database",
+        };
+        var missingLedgerAnalytics = ledgerAnalyticsPhrases
+            .Where(phrase => !ledgerAnalyticsText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingLedgerAnalytics.Length > 0)
+        {
+            return Check(
+                "v60LocalBimOpsContractGate",
+                false,
+                $"docs/smoke/v6.0/ledger-analytics.md is missing ledger analytics bundle smoke disclosures: {string.Join(", ", missingLedgerAnalytics)}.");
+        }
+
         var ledgerAppendPath = Path.Combine(docsRoot, "smoke", "v6.0", "ledger-append.md");
         var ledgerAppendText = TryReadText(ledgerAppendPath);
         if (string.IsNullOrWhiteSpace(ledgerAppendText))
@@ -4475,6 +4519,7 @@ public static class WorkbenchCommand
         var ledgerQueryValidateRuntimeReady = RunLedgerQueryValidateRuntimeCheck(out var ledgerQueryValidateRuntimeEvidence);
         var ledgerStatsRuntimeReady = RunLedgerStatsRuntimeCheck(out var ledgerStatsRuntimeEvidence);
         var ledgerTimelineRuntimeReady = RunLedgerTimelineRuntimeCheck(out var ledgerTimelineRuntimeEvidence);
+        var ledgerAnalyticsRuntimeReady = RunLedgerAnalyticsRuntimeCheck(out var ledgerAnalyticsRuntimeEvidence);
         var ledgerAppendRuntimeReady = RunLedgerAppendRuntimeCheck(out var ledgerAppendRuntimeEvidence);
         var ledgerReplayRuntimeReady = RunLedgerReplayRuntimeCheck(out var ledgerReplayRuntimeEvidence);
         var runtimeEvidence = new WorkbenchRuntimeEvidence(
@@ -4486,6 +4531,7 @@ public static class WorkbenchCommand
             ledgerQueryValidateRuntimeReady,
             ledgerStatsRuntimeReady,
             ledgerTimelineRuntimeReady,
+            ledgerAnalyticsRuntimeReady,
             ledgerReplayRuntimeReady,
             commandSpineRuntimeDetails.StandardsValidate,
             commandSpineRuntimeDetails.IssuePreflight,
@@ -4506,6 +4552,7 @@ public static class WorkbenchCommand
             ledgerQueryValidateRuntimeReady &&
             ledgerStatsRuntimeReady &&
             ledgerTimelineRuntimeReady &&
+            ledgerAnalyticsRuntimeReady &&
             ledgerReplayRuntimeReady);
         var surfaceReady =
             commandPaths.Contains("doctor") &&
@@ -4523,6 +4570,7 @@ public static class WorkbenchCommand
             commandPaths.Contains("ledger validate") &&
             commandPaths.Contains("ledger stats") &&
             commandPaths.Contains("ledger timeline") &&
+            commandPaths.Contains("ledger analytics") &&
             commandPaths.Contains("workflow registry") &&
             commandPaths.Contains("rollback") &&
             outputSchemas.Contains("workbench-verify-report.v2") &&
@@ -4532,6 +4580,7 @@ public static class WorkbenchCommand
             outputSchemas.Contains("ledger-validate.v1") &&
             outputSchemas.Contains("ledger-stats.v1") &&
             outputSchemas.Contains("ledger-timeline.v1") &&
+            outputSchemas.Contains("ledger-analytics-bundle.v1") &&
             outputSchemas.Contains("workflow-registry.v1") &&
             receiptSchemas.Contains("plan-receipt.v1") &&
             receiptSchemas.Contains("issue-package-receipt.v1") &&
@@ -4546,14 +4595,15 @@ public static class WorkbenchCommand
             ledgerQueryValidateRuntimeReady &&
             ledgerStatsRuntimeReady &&
             ledgerTimelineRuntimeReady &&
+            ledgerAnalyticsRuntimeReady &&
             ledgerReplayRuntimeReady;
 
         return Check(
             "v60LocalBimOpsContractGate",
             surfaceReady,
             surfaceReady
-                ? $"v6.0 Local BIMOps contract baseline is docs/contract-first with staged local runtime: command spine, deterministic receipts, rollback preconditions, local audit trail, standards runtime, project memory, workflow registry, append-only ledger runtime, preview-only ledger replay, and non-goals are gated without SaaS, MCP, dashboard-central, built-in LLM, database, or live Revit ledger apply; {commandSpineRuntimeEvidence}; {workflowRegistryRuntimeEvidence}; {ledgerAppendRuntimeEvidence}; {ledgerReplayRuntimeEvidence}; {ledgerQueryValidateRuntimeEvidence}; {ledgerStatsRuntimeEvidence}; {ledgerTimelineRuntimeEvidence}."
-                : $"v6.0 Local BIMOps contract baseline is missing command spine paths, command-spine runtime evidence, ledger append/replay/query/validate/stats/timeline output schemas, workflow-registry.v1, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1 or ledger-timeline.v1 runtime evidence, receipt schemas, rollback/package safeguards, or workbench v2 output schema. Command spine runtime evidence: {commandSpineRuntimeEvidence}. Workflow registry runtime evidence: {workflowRegistryRuntimeEvidence}. Ledger append runtime evidence: {ledgerAppendRuntimeEvidence}. Ledger replay runtime evidence: {ledgerReplayRuntimeEvidence}. Ledger query/validate runtime evidence: {ledgerQueryValidateRuntimeEvidence}. Ledger stats runtime evidence: {ledgerStatsRuntimeEvidence}. Ledger timeline runtime evidence: {ledgerTimelineRuntimeEvidence}",
+                ? $"v6.0 Local BIMOps contract baseline is docs/contract-first with staged local runtime: command spine, deterministic receipts, rollback preconditions, local audit trail, standards runtime, project memory, workflow registry, append-only ledger runtime, preview-only ledger replay, local ledger analytics bundle, and non-goals are gated without SaaS, MCP, dashboard-central, built-in LLM, database, or live Revit ledger apply; {commandSpineRuntimeEvidence}; {workflowRegistryRuntimeEvidence}; {ledgerAppendRuntimeEvidence}; {ledgerReplayRuntimeEvidence}; {ledgerQueryValidateRuntimeEvidence}; {ledgerStatsRuntimeEvidence}; {ledgerTimelineRuntimeEvidence}; {ledgerAnalyticsRuntimeEvidence}."
+                : $"v6.0 Local BIMOps contract baseline is missing command spine paths, command-spine runtime evidence, ledger append/replay/query/validate/stats/timeline/analytics output schemas, workflow-registry.v1, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1, ledger-timeline.v1 or ledger-analytics-bundle.v1 runtime evidence, receipt schemas, rollback/package safeguards, or workbench v2 output schema. Command spine runtime evidence: {commandSpineRuntimeEvidence}. Workflow registry runtime evidence: {workflowRegistryRuntimeEvidence}. Ledger append runtime evidence: {ledgerAppendRuntimeEvidence}. Ledger replay runtime evidence: {ledgerReplayRuntimeEvidence}. Ledger query/validate runtime evidence: {ledgerQueryValidateRuntimeEvidence}. Ledger stats runtime evidence: {ledgerStatsRuntimeEvidence}. Ledger timeline runtime evidence: {ledgerTimelineRuntimeEvidence}. Ledger analytics runtime evidence: {ledgerAnalyticsRuntimeEvidence}",
             runtimeEvidence);
     }
 
@@ -7423,6 +7473,163 @@ steps:
         return true;
     }
 
+    private static bool RunLedgerAnalyticsRuntimeCheck(out string evidence)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-ledger-analytics-check-{Guid.NewGuid():N}");
+        try
+        {
+            var historyStore = HistoryStore.ForProject(root);
+            historyStore.InitAsync().GetAwaiter().GetResult();
+            historyStore.AppendAsync(
+                    new ModelSnapshot
+                    {
+                        SchemaVersion = 1,
+                        TakenAt = "2026-05-22T22:15:00Z",
+                        Revit = new SnapshotRevit
+                        {
+                            Version = "2026",
+                            Document = "LedgerAnalytics.rvt",
+                            DocumentPath = "C:/models/LedgerAnalytics.rvt",
+                        },
+                        Summary = new SnapshotSummary
+                        {
+                            ElementCounts = new Dictionary<string, int> { ["walls"] = 1 },
+                            SheetCount = 1,
+                            ScheduleCount = 1,
+                        },
+                    },
+                    "analytics-baseline",
+                    DateTimeOffset.Parse("2026-05-22T22:15:00Z", CultureInfo.InvariantCulture))
+                .GetAwaiter()
+                .GetResult();
+
+            var before = SnapshotLocalFiles(root);
+            var output = new StringWriter();
+            var markdownOutput = new StringWriter();
+            var tableOutput = new StringWriter();
+            var generatedAt = DateTimeOffset.Parse("2026-05-23T00:00:00Z", CultureInfo.InvariantCulture);
+            var snapshotDir = Path.Combine(".revitcli", "analytics");
+            var exitCode = LedgerCommand.ExecuteAnalyticsAsync(
+                    root,
+                    "history",
+                    since: null,
+                    until: null,
+                    window: null,
+                    action: null,
+                    category: null,
+                    operatorFilter: null,
+                    receiptStatus: "all",
+                    bucket: "day",
+                    outputDirectory: snapshotDir,
+                    outputFormat: "json",
+                    output,
+                    generatedAt)
+                .GetAwaiter()
+                .GetResult();
+            var markdownExitCode = LedgerCommand.ExecuteAnalyticsAsync(
+                    root,
+                    "history",
+                    since: null,
+                    until: null,
+                    window: null,
+                    action: null,
+                    category: null,
+                    operatorFilter: null,
+                    receiptStatus: "all",
+                    bucket: "day",
+                    outputDirectory: snapshotDir,
+                    outputFormat: "markdown",
+                    markdownOutput,
+                    generatedAt)
+                .GetAwaiter()
+                .GetResult();
+            var tableExitCode = LedgerCommand.ExecuteAnalyticsAsync(
+                    root,
+                    "history",
+                    since: null,
+                    until: null,
+                    window: null,
+                    action: null,
+                    category: null,
+                    operatorFilter: null,
+                    receiptStatus: "all",
+                    bucket: "day",
+                    outputDirectory: snapshotDir,
+                    outputFormat: "table",
+                    tableOutput,
+                    generatedAt)
+                .GetAwaiter()
+                .GetResult();
+
+            if (exitCode != 0 || markdownExitCode != 0 || tableExitCode != 0)
+            {
+                evidence = $"ledger analytics runtime exited json={exitCode.ToString(CultureInfo.InvariantCulture)} markdown={markdownExitCode.ToString(CultureInfo.InvariantCulture)} table={tableExitCode.ToString(CultureInfo.InvariantCulture)}";
+                return false;
+            }
+
+            var after = SnapshotLocalFiles(root);
+            var addedPaths = after.Keys.Except(before.Keys, StringComparer.Ordinal).OrderBy(path => path, StringComparer.Ordinal).ToArray();
+            using var document = JsonDocument.Parse(output.ToString());
+            var bundle = document.RootElement;
+            if (bundle.GetProperty("schemaVersion").GetString() != "ledger-analytics-bundle.v1")
+            {
+                evidence = "ledger analytics runtime did not emit ledger-analytics-bundle.v1";
+                return false;
+            }
+
+            var statsPath = Path.Combine(root, ".revitcli", "analytics", "ledger-stats.json");
+            var timelinePath = Path.Combine(root, ".revitcli", "analytics", "ledger-timeline.json");
+            using var statsDocument = JsonDocument.Parse(File.ReadAllText(statsPath));
+            using var timelineDocument = JsonDocument.Parse(File.ReadAllText(timelinePath));
+            var stats = statsDocument.RootElement;
+            var timeline = timelineDocument.RootElement;
+            var operationCount = bundle.GetProperty("statsSummary").GetProperty("operationCount").GetInt32();
+            var timelineOperationCount = bundle.GetProperty("timelineSummary").GetProperty("operationCount").GetInt32();
+            var outputFormatParityReady = AnalyticsBundleOutputFormatParityReady(
+                bundle,
+                markdownOutput.ToString(),
+                tableOutput.ToString());
+            var boundedWriteReady = addedPaths.SequenceEqual(
+                new[]
+                {
+                    ".revitcli/analytics/",
+                    ".revitcli/analytics/ledger-stats.json",
+                    ".revitcli/analytics/ledger-timeline.json",
+                },
+                StringComparer.Ordinal);
+            var ok =
+                boundedWriteReady &&
+                outputFormatParityReady &&
+                operationCount == 1 &&
+                timelineOperationCount == 1 &&
+                bundle.GetProperty("localOnly").GetBoolean() &&
+                !bundle.GetProperty("databaseRuntime").GetBoolean() &&
+                !bundle.GetProperty("networkService").GetBoolean() &&
+                stats.GetProperty("schemaVersion").GetString() == "ledger-stats.v1" &&
+                timeline.GetProperty("schemaVersion").GetString() == "ledger-timeline.v1";
+
+            evidence = ok
+                ? "ledger analytics runtime emits ledger-analytics-bundle.v1, writes exactly local ledger-stats.v1 and ledger-timeline.v1 snapshot evidence under .revitcli/analytics, preserves JSON/table/Markdown bundle semantic parity, and declares localOnly=true with no database or network service runtime"
+                : $"ledger analytics runtime payload or bounded writes failed (operationCount={operationCount.ToString(CultureInfo.InvariantCulture)}, timelineOperationCount={timelineOperationCount.ToString(CultureInfo.InvariantCulture)}, outputParity={outputFormatParityReady.ToString().ToLowerInvariant()}, boundedWrite={boundedWriteReady.ToString().ToLowerInvariant()}, added={string.Join(",", addedPaths)})";
+            return ok;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            evidence = $"ledger analytics runtime check failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
     private static bool TimelineBucketCountsEqual(
         JsonElement[] buckets,
         string bucketStartUtc,
@@ -7570,6 +7777,29 @@ steps:
                CountsRendered(stats.GetProperty("byReceiptStatus"), markdown, table) &&
                CountsRendered(stats.GetProperty("issuesBySource"), markdown, table) &&
                CountsRendered(stats.GetProperty("issuesBySeverity"), markdown, table);
+    }
+
+    private static bool AnalyticsBundleOutputFormatParityReady(JsonElement bundle, string markdown, string table)
+    {
+        var statsSummary = bundle.GetProperty("statsSummary");
+        var timelineSummary = bundle.GetProperty("timelineSummary");
+        var operations = statsSummary.GetProperty("operationCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var statsIssues = statsSummary.GetProperty("issueCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var timelineBuckets = timelineSummary.GetProperty("bucketCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var timelineIssues = timelineSummary.GetProperty("issueCount").GetInt32().ToString(CultureInfo.InvariantCulture);
+        var localOnly = bundle.GetProperty("localOnly").GetBoolean().ToString().ToLowerInvariant();
+        var databaseRuntime = bundle.GetProperty("databaseRuntime").GetBoolean().ToString().ToLowerInvariant();
+        var networkService = bundle.GetProperty("networkService").GetBoolean().ToString().ToLowerInvariant();
+
+        return markdown.Contains($"- Operations: `{operations}`", StringComparison.Ordinal) &&
+               markdown.Contains($"- Stats issues: `{statsIssues}`", StringComparison.Ordinal) &&
+               markdown.Contains($"- Timeline buckets: `{timelineBuckets}`", StringComparison.Ordinal) &&
+               markdown.Contains($"- Timeline issues: `{timelineIssues}`", StringComparison.Ordinal) &&
+               markdown.Contains($"- Local only: `{localOnly}`", StringComparison.Ordinal) &&
+               markdown.Contains($"- Database runtime: `{databaseRuntime}`", StringComparison.Ordinal) &&
+               markdown.Contains($"- Network service: `{networkService}`", StringComparison.Ordinal) &&
+               table.Contains($"Operations: {operations}; statsIssues={statsIssues}; timelineBuckets={timelineBuckets}; timelineIssues={timelineIssues}", StringComparison.Ordinal) &&
+               table.Contains($"Local only: {localOnly}; databaseRuntime={databaseRuntime}; networkService={networkService}", StringComparison.Ordinal);
     }
 
     private static bool TimelineOutputFormatParityReady(JsonElement timeline, string markdown, string table)
@@ -9455,7 +9685,7 @@ schedules:
             "history" => new[] { "history capture", "history list", "history prune", "history diff", "history trend" },
             "journal" => new[] { "journal show", "journal stats", "journal review", "journal sign", "journal verify" },
             "report" => new[] { "report weekly", "report knowledge" },
-            "ledger" => new[] { "ledger append", "ledger replay", "ledger query", "ledger validate", "ledger stats", "ledger timeline" },
+            "ledger" => new[] { "ledger append", "ledger replay", "ledger query", "ledger validate", "ledger stats", "ledger timeline", "ledger analytics" },
             _ => new[] { name }
         };
 
@@ -9743,6 +9973,7 @@ schedules:
         bool LedgerQueryValidate,
         bool LedgerStats,
         bool LedgerTimeline,
+        bool LedgerAnalytics,
         bool LedgerReplay,
         bool StandardsValidate,
         bool IssuePreflight,
