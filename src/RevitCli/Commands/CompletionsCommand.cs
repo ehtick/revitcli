@@ -52,9 +52,9 @@ public static class CompletionsCommand
     private static readonly string[] ReportSubcommands = { "weekly", "knowledge" };
     private static readonly string[] ReportOptions = { "--window", "--dir", "--history-dir", "--journal", "--output", "--report" };
     private static readonly string[] ReportOutputFormats = { "table", "json", "markdown" };
-    private static readonly string[] LedgerSubcommands = { "append", "replay", "query", "validate", "stats", "timeline" };
+    private static readonly string[] LedgerSubcommands = { "append", "replay", "query", "validate", "stats", "timeline", "analytics" };
     private static readonly string[] LedgerOptions =
-        { "--dir", "--project", "--source", "--since", "--until", "--window", "--action", "--category", "--operator", "--status", "--summary", "--timestamp", "--model", "--model-path", "--revit-version", "--plan-hash", "--artifact-path", "--receipt", "--receipt-hash", "--rollback-pointer", "--evidence", "--apply", "--yes", "--receipt-status", "--limit", "--fail-on", "--bucket", "--output" };
+        { "--dir", "--project", "--source", "--since", "--until", "--window", "--action", "--category", "--operator", "--status", "--summary", "--timestamp", "--model", "--model-path", "--revit-version", "--plan-hash", "--artifact-path", "--receipt", "--receipt-hash", "--rollback-pointer", "--evidence", "--apply", "--yes", "--receipt-status", "--limit", "--fail-on", "--bucket", "--output-dir", "--output" };
     private static readonly string[] LedgerOutputFormats = { "table", "json", "markdown" };
     private static readonly string[] LedgerSources = { "all", "ledger", "journal", "history", "deliveries", "workflows" };
     private static readonly string[] LedgerAppendStatuses = { "planned", "succeeded", "failed", "blocked" };
@@ -2215,7 +2215,7 @@ public static class CompletionsCommand
             "                return",
             "            }",
             "            if (($tokens.Count -eq 2 -or ($tokens.Count -eq 3 -and -not $endsWithSpace)) -and -not $wordToComplete.StartsWith('-')) {",
-            "                New-RevitCliCompletionResults -Values @('append', 'replay', 'query', 'validate', 'stats', 'timeline') -ToolTip 'Ledger subcommand'",
+            "                New-RevitCliCompletionResults -Values @('append', 'replay', 'query', 'validate', 'stats', 'timeline', 'analytics') -ToolTip 'Ledger subcommand'",
             "                return",
             "            }",
             "",

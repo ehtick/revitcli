@@ -33,6 +33,7 @@ The v6.0 contract builds on visible shell commands only:
 - `ledger validate --source all --output json`
 - `ledger stats --source all --output json`
 - `ledger timeline --source all --bucket day --output json`
+- `ledger analytics --source all --bucket day --output-dir .revitcli/analytics --output json`
 - `workflow registry --output json`
 - `rollback <receipt> --dry-run`
 
@@ -52,8 +53,8 @@ control, dashboard-central state, or built-in LLM behavior.
 `ledger append` is the first scoped write-capable v6.0 runtime path. It writes
 only local JSONL records under `.revitcli/ledger/operations.jsonl`, defaults to
 dry-run unless `--yes` is supplied, and is consumed by `ledger query`,
-`ledger replay`, `ledger validate`, `ledger stats`, and `ledger timeline`
-through the `ledger` source. Default `ledger replay` is preview-only: it emits
+`ledger replay`, `ledger validate`, `ledger stats`, `ledger timeline`, and
+`ledger analytics` through the `ledger` source. Default `ledger replay` is preview-only: it emits
 `ledger-replay.v1` with `dryRun=true`, per-step `canApply`/`blockReason`
 evidence, no file writes, no Revit startup, no database, and no replacement for
 command-specific receipts.
@@ -288,6 +289,10 @@ commands plus an append-only local ledger writer:
   `projectDirectories` and `byProject` counts, without creating a database or
   dashboard state source. `--analytics-snapshot` persists the same JSON as a
   local file, and `--from-analytics-snapshot` reads the snapshot back.
+- `ledger analytics` emits `ledger-analytics-bundle.v1`, writes a local
+  stats/timeline snapshot pair under the requested `--output-dir`, and reports
+  explicit local-only boundary flags. It packages deterministic evidence only;
+  it does not start a network service or create a database runtime.
 
 They do not create a database, call a network service, infer Revit writes, or
 repair artifacts. Ledger replay applies only the explicit bounded
@@ -384,6 +389,10 @@ The contract baseline is acceptable when:
 - `ledger timeline --dir project-a --project project-b --output json` emits
   `projectDirectories` and `byProject` from explicitly supplied local roots
   without creating a database or dashboard state source.
+- `ledger analytics --output-dir .revitcli/analytics --output json` emits
+  `ledger-analytics-bundle.v1` and writes local `ledger-stats.v1` plus
+  `ledger-timeline.v1` snapshots without creating a database, network service,
+  or dashboard state source.
 - `docs/smoke/v6.0/pilot-evidence-template.md` documents the v6.0 office
   rollout pilot evidence packet for controlled project-copy pilots, including
   doctor, workbench, release, ledger, analytics snapshot, journal verify,

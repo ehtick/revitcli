@@ -26,6 +26,7 @@ public static class LedgerCommand
         command.AddCommand(CreateValidateCommand());
         command.AddCommand(CreateStatsCommand());
         command.AddCommand(CreateTimelineCommand());
+        command.AddCommand(CreateAnalyticsCommand());
         return command;
     }
 
@@ -374,6 +375,64 @@ public static class LedgerCommand
                 ctx.ParseResult.GetValueForOption(failOnOpt)!,
                 ctx.ParseResult.GetValueForOption(outputOpt)!,
                 Console.Out);
+        });
+
+        return cmd;
+    }
+
+    private static Command CreateAnalyticsCommand()
+    {
+        var dirOpt = new Option<string?>("--dir", "Project directory; defaults to current directory");
+        var projectOpt = new Option<string[]>("--project", "Additional project directory to include; can be repeated")
+        {
+            AllowMultipleArgumentsPerToken = false,
+        };
+        var sourceOpt = new Option<string>("--source", () => "all", "Source: all|ledger|journal|history|deliveries|workflows");
+        var sinceOpt = new Option<string?>("--since", "Only include operations at or after this ISO timestamp");
+        var untilOpt = new Option<string?>("--until", "Only include operations at or before this ISO timestamp");
+        var windowOpt = new Option<string?>("--window", "Recent window ending at now, e.g. 7d, 24h, 60m");
+        var actionOpt = new Option<string?>("--action", "Only include matching action");
+        var categoryOpt = new Option<string?>("--category", "Only include matching category");
+        var operatorOpt = new Option<string?>("--operator", "Only include matching operator");
+        var receiptStatusOpt = new Option<string>("--receipt-status", () => "all", "Receipt status: all|valid|missing|unreadable");
+        var bucketOpt = new Option<string>("--bucket", () => "day", "Timeline bucket: day|hour");
+        var outputDirOpt = new Option<string>("--output-dir", () => Path.Combine(".revitcli", "analytics"), "Local directory for ledger analytics snapshots");
+        var outputOpt = new Option<string>("--output", () => "table", "Output format: table|json|markdown");
+
+        var cmd = new Command("analytics", "Write a local ledger stats and timeline analytics snapshot bundle")
+        {
+            dirOpt,
+            projectOpt,
+            sourceOpt,
+            sinceOpt,
+            untilOpt,
+            windowOpt,
+            actionOpt,
+            categoryOpt,
+            operatorOpt,
+            receiptStatusOpt,
+            bucketOpt,
+            outputDirOpt,
+            outputOpt,
+        };
+
+        cmd.SetHandler(async ctx =>
+        {
+            Environment.ExitCode = await ExecuteAnalyticsAsync(
+                ctx.ParseResult.GetValueForOption(dirOpt),
+                ctx.ParseResult.GetValueForOption(sourceOpt)!,
+                ctx.ParseResult.GetValueForOption(sinceOpt),
+                ctx.ParseResult.GetValueForOption(untilOpt),
+                ctx.ParseResult.GetValueForOption(windowOpt),
+                ctx.ParseResult.GetValueForOption(actionOpt),
+                ctx.ParseResult.GetValueForOption(categoryOpt),
+                ctx.ParseResult.GetValueForOption(operatorOpt),
+                ctx.ParseResult.GetValueForOption(receiptStatusOpt)!,
+                ctx.ParseResult.GetValueForOption(bucketOpt)!,
+                ctx.ParseResult.GetValueForOption(outputDirOpt)!,
+                ctx.ParseResult.GetValueForOption(outputOpt)!,
+                Console.Out,
+                projectDirectories: ctx.ParseResult.GetValueForOption(projectOpt));
         });
 
         return cmd;
@@ -1106,6 +1165,113 @@ public static class LedgerCommand
         }
 
         await output.WriteLineAsync(RenderTimeline(timeline, normalizedOutput));
+        return 0;
+    }
+
+    public static async Task<int> ExecuteAnalyticsAsync(
+        string? projectDirectory,
+        string source,
+        string? since,
+        string? until,
+        string? window,
+        string? action,
+        string? category,
+        string? operatorFilter,
+        string receiptStatus,
+        string bucket,
+        string outputDirectory,
+        string outputFormat,
+        TextWriter output,
+        DateTimeOffset? now = null,
+        IReadOnlyList<string>? projectDirectories = null)
+    {
+        if (!TryNormalizeOutput(outputFormat, out var normalizedOutput))
+        {
+            await output.WriteLineAsync("Error: --output must be 'table', 'json', or 'markdown'.");
+            return 1;
+        }
+
+        if (string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            await output.WriteLineAsync("Error: --output-dir is required.");
+            return 1;
+        }
+
+        var projectRoot = string.IsNullOrWhiteSpace(projectDirectory)
+            ? Directory.GetCurrentDirectory()
+            : Path.GetFullPath(projectDirectory!);
+        var generatedAt = (now ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        var statsSnapshotPath = Path.Combine(outputDirectory, "ledger-stats.json");
+        var timelineSnapshotPath = Path.Combine(outputDirectory, "ledger-timeline.json");
+
+        var statsOutput = new StringWriter(CultureInfo.InvariantCulture);
+        var statsExitCode = await ExecuteStatsAsync(
+            projectRoot,
+            source,
+            since,
+            until,
+            window,
+            action,
+            category,
+            operatorFilter,
+            receiptStatus,
+            "json",
+            statsOutput,
+            generatedAt,
+            projectDirectories,
+            analyticsSnapshotPath: statsSnapshotPath);
+        if (statsExitCode != 0)
+        {
+            await output.WriteAsync(statsOutput.ToString());
+            return statsExitCode;
+        }
+
+        var timelineOutput = new StringWriter(CultureInfo.InvariantCulture);
+        var timelineExitCode = await ExecuteTimelineAsync(
+            projectRoot,
+            source,
+            since,
+            until,
+            window,
+            action,
+            category,
+            operatorFilter,
+            receiptStatus,
+            bucket,
+            "json",
+            timelineOutput,
+            generatedAt,
+            projectDirectories,
+            analyticsSnapshotPath: timelineSnapshotPath);
+        if (timelineExitCode != 0)
+        {
+            await output.WriteAsync(timelineOutput.ToString());
+            return timelineExitCode;
+        }
+
+        var stats = await TryLoadStatsSnapshotAsync(projectRoot, statsSnapshotPath, output);
+        if (stats is null)
+            return 1;
+        var timeline = await TryLoadTimelineSnapshotAsync(projectRoot, timelineSnapshotPath, output);
+        if (timeline is null)
+            return 1;
+
+        var bundle = new LedgerAnalyticsBundleReport
+        {
+            GeneratedAt = generatedAt.ToString("o", CultureInfo.InvariantCulture),
+            ProjectDirectory = projectRoot,
+            OutputDirectory = ResolveProjectPath(projectRoot, outputDirectory),
+            StatsSnapshotPath = ResolveProjectPath(projectRoot, statsSnapshotPath),
+            TimelineSnapshotPath = ResolveProjectPath(projectRoot, timelineSnapshotPath),
+            StatsSummary = stats.Summary,
+            TimelineSummary = timeline.Summary,
+            ProjectDirectories = stats.ProjectDirectories,
+            LocalOnly = true,
+            DatabaseRuntime = false,
+            NetworkService = false,
+        };
+
+        await output.WriteLineAsync(RenderAnalyticsBundle(bundle, normalizedOutput));
         return 0;
     }
 
@@ -2692,6 +2858,50 @@ public static class LedgerCommand
             _ => RenderTimelineTable(report),
         };
 
+    private static string RenderAnalyticsBundle(LedgerAnalyticsBundleReport report, string format) =>
+        format switch
+        {
+            "json" => JsonSerializer.Serialize(report, TerminalJsonOptions.PrettyCamel),
+            "markdown" => RenderAnalyticsBundleMarkdown(report),
+            _ => RenderAnalyticsBundleTable(report),
+        };
+
+    private static string RenderAnalyticsBundleTable(LedgerAnalyticsBundleReport report)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Ledger analytics bundle");
+        sb.AppendLine($"Project: {report.ProjectDirectory}");
+        if (report.ProjectDirectories.Count > 1)
+            sb.AppendLine($"Projects: {report.ProjectDirectories.Count.ToString(CultureInfo.InvariantCulture)}");
+        sb.AppendLine($"Output: {report.OutputDirectory}");
+        sb.AppendLine($"Stats snapshot: {report.StatsSnapshotPath}");
+        sb.AppendLine($"Timeline snapshot: {report.TimelineSnapshotPath}");
+        sb.AppendLine($"Operations: {report.StatsSummary.OperationCount}; statsIssues={report.StatsSummary.IssueCount}; timelineBuckets={report.TimelineSummary.BucketCount}; timelineIssues={report.TimelineSummary.IssueCount}");
+        sb.AppendLine($"Local only: {report.LocalOnly.ToString().ToLowerInvariant()}; databaseRuntime={report.DatabaseRuntime.ToString().ToLowerInvariant()}; networkService={report.NetworkService.ToString().ToLowerInvariant()}");
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string RenderAnalyticsBundleMarkdown(LedgerAnalyticsBundleReport report)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# RevitCli Ledger Analytics Bundle");
+        sb.AppendLine();
+        sb.AppendLine($"- Project: `{EscapeInlineCode(report.ProjectDirectory)}`");
+        if (report.ProjectDirectories.Count > 1)
+            sb.AppendLine($"- Projects: `{report.ProjectDirectories.Count.ToString(CultureInfo.InvariantCulture)}`");
+        sb.AppendLine($"- Output: `{EscapeInlineCode(report.OutputDirectory)}`");
+        sb.AppendLine($"- Stats snapshot: `{EscapeInlineCode(report.StatsSnapshotPath)}`");
+        sb.AppendLine($"- Timeline snapshot: `{EscapeInlineCode(report.TimelineSnapshotPath)}`");
+        sb.AppendLine($"- Operations: `{report.StatsSummary.OperationCount}`");
+        sb.AppendLine($"- Stats issues: `{report.StatsSummary.IssueCount}`");
+        sb.AppendLine($"- Timeline buckets: `{report.TimelineSummary.BucketCount}`");
+        sb.AppendLine($"- Timeline issues: `{report.TimelineSummary.IssueCount}`");
+        sb.AppendLine($"- Local only: `{report.LocalOnly.ToString().ToLowerInvariant()}`");
+        sb.AppendLine($"- Database runtime: `{report.DatabaseRuntime.ToString().ToLowerInvariant()}`");
+        sb.AppendLine($"- Network service: `{report.NetworkService.ToString().ToLowerInvariant()}`");
+        return sb.ToString().TrimEnd();
+    }
+
     private static string RenderTimelineTable(LedgerTimelineReport report)
     {
         var sb = new StringBuilder();
@@ -3705,6 +3915,45 @@ public sealed class LedgerStatsSummary
 public sealed record LedgerStatsCount(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("count")] int Count);
+
+public sealed class LedgerAnalyticsBundleReport
+{
+    [JsonPropertyName("schemaVersion")]
+    public string SchemaVersion { get; set; } = "ledger-analytics-bundle.v1";
+
+    [JsonPropertyName("generatedAt")]
+    public string GeneratedAt { get; set; } = "";
+
+    [JsonPropertyName("projectDirectory")]
+    public string ProjectDirectory { get; set; } = "";
+
+    [JsonPropertyName("projectDirectories")]
+    public List<string> ProjectDirectories { get; set; } = new();
+
+    [JsonPropertyName("outputDirectory")]
+    public string OutputDirectory { get; set; } = "";
+
+    [JsonPropertyName("statsSnapshotPath")]
+    public string StatsSnapshotPath { get; set; } = "";
+
+    [JsonPropertyName("timelineSnapshotPath")]
+    public string TimelineSnapshotPath { get; set; } = "";
+
+    [JsonPropertyName("statsSummary")]
+    public LedgerStatsSummary StatsSummary { get; set; } = new();
+
+    [JsonPropertyName("timelineSummary")]
+    public LedgerTimelineSummary TimelineSummary { get; set; } = new();
+
+    [JsonPropertyName("localOnly")]
+    public bool LocalOnly { get; set; } = true;
+
+    [JsonPropertyName("databaseRuntime")]
+    public bool DatabaseRuntime { get; set; }
+
+    [JsonPropertyName("networkService")]
+    public bool NetworkService { get; set; }
+}
 
 public sealed class LedgerReplayReport
 {

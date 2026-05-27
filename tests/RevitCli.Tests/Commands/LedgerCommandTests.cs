@@ -2318,6 +2318,26 @@ public sealed class LedgerCommandTests : IDisposable
     }
 
     [Fact]
+    public void Analytics_Parser_AcceptsBundleOptions()
+    {
+        var command = LedgerCommand.Create();
+        var parser = new Parser(command);
+
+        var parseResult = parser.Parse(new[]
+        {
+            "analytics",
+            "--dir", _root,
+            "--project", Path.Combine(_root, "a"),
+            "--source", "journal",
+            "--bucket", "hour",
+            "--output-dir", ".revitcli/analytics",
+            "--output", "json",
+        });
+
+        Assert.Empty(parseResult.Errors);
+    }
+
+    [Fact]
     public async Task Stats_AnalyticsSnapshot_WritesAndReadsLocalJson()
     {
         SeedJournal(("set", "sheets", "alice", _now.AddHours(-3), 2));
@@ -2419,6 +2439,51 @@ public sealed class LedgerCommandTests : IDisposable
         using var readJson = JsonDocument.Parse(readOutput.ToString());
         Assert.Equal("ledger-timeline.v1", readJson.RootElement.GetProperty("schemaVersion").GetString());
         Assert.Equal(1, readJson.RootElement.GetProperty("summary").GetProperty("operationCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Analytics_Json_WritesStatsAndTimelineBundle()
+    {
+        SeedJournal(
+            ("set", "sheets", "alice", _now.AddHours(-3), 2),
+            ("publish", "issue", "bob", _now.AddHours(-2), 1));
+        var output = new StringWriter();
+
+        var exitCode = await LedgerCommand.ExecuteAnalyticsAsync(
+            _root,
+            source: "journal",
+            since: null,
+            until: null,
+            window: null,
+            action: null,
+            category: null,
+            operatorFilter: null,
+            receiptStatus: "all",
+            bucket: "day",
+            outputDirectory: Path.Combine(".revitcli", "analytics"),
+            outputFormat: "json",
+            output,
+            _now);
+
+        Assert.Equal(0, exitCode);
+        var statsSnapshot = Path.Combine(_root, ".revitcli", "analytics", "ledger-stats.json");
+        var timelineSnapshot = Path.Combine(_root, ".revitcli", "analytics", "ledger-timeline.json");
+        Assert.True(File.Exists(statsSnapshot));
+        Assert.True(File.Exists(timelineSnapshot));
+
+        using var bundleJson = JsonDocument.Parse(output.ToString());
+        var bundle = bundleJson.RootElement;
+        Assert.Equal("ledger-analytics-bundle.v1", bundle.GetProperty("schemaVersion").GetString());
+        Assert.Equal(2, bundle.GetProperty("statsSummary").GetProperty("operationCount").GetInt32());
+        Assert.Equal(2, bundle.GetProperty("timelineSummary").GetProperty("operationCount").GetInt32());
+        Assert.True(bundle.GetProperty("localOnly").GetBoolean());
+        Assert.False(bundle.GetProperty("databaseRuntime").GetBoolean());
+        Assert.False(bundle.GetProperty("networkService").GetBoolean());
+
+        using var statsJson = JsonDocument.Parse(File.ReadAllText(statsSnapshot));
+        Assert.Equal("ledger-stats.v1", statsJson.RootElement.GetProperty("schemaVersion").GetString());
+        using var timelineJson = JsonDocument.Parse(File.ReadAllText(timelineSnapshot));
+        Assert.Equal("ledger-timeline.v1", timelineJson.RootElement.GetProperty("schemaVersion").GetString());
     }
 
     [Fact]

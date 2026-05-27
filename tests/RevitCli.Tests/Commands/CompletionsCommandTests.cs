@@ -102,7 +102,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("table json markdown", script);
         Assert.Contains("init validate simulate review registry run suggest examples receipts --dir --journal --output --dry-run --yes --continue-on-error --timeout-ms --force --min-count --max-steps --limit --failed-only --name --min-duration-ms --sort --window", script);
         Assert.Contains("weekly knowledge --window --dir --history-dir --journal --output --report", script);
-        Assert.Contains("append replay query validate stats timeline --dir --project --source --since --until --window --action --category --operator --status --summary --timestamp --model --model-path --revit-version --plan-hash --artifact-path --receipt --receipt-hash --rollback-pointer --evidence --apply --yes --receipt-status --limit --fail-on --bucket --output", script);
+        Assert.Contains("append replay query validate stats timeline analytics --dir --project --source --since --until --window --action --category --operator --status --summary --timestamp --model --model-path --revit-version --plan-hash --artifact-path --receipt --receipt-hash --rollback-pointer --evidence --apply --yes --receipt-status --limit --fail-on --bucket --output-dir --output", script);
         Assert.Contains("compgen -W \"all ledger journal history deliveries workflows\" -- \"$cur\"", script);
         Assert.Contains("compgen -W \"planned succeeded failed blocked\" -- \"$cur\"", script);
         Assert.Contains("compgen -W \"all valid missing unreadable\" -- \"$cur\"", script);
@@ -175,7 +175,7 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("--sort[Sort workflow receipts]:sort:(completed duration)", script);
         Assert.Contains("--window[Only show workflow receipts in a recent window]:window:", script);
         Assert.Contains("weekly", script);
-        Assert.Contains("_values 'subcommand' append replay query validate stats timeline", script);
+        Assert.Contains("_values 'subcommand' append replay query validate stats timeline analytics", script);
         Assert.Contains("--project[Additional project directory]:dir:_directories", script);
         Assert.Contains("--bucket[Timeline bucket]:bucket:(day hour)", script);
         Assert.Contains("--source[Ledger source]:source:(all ledger journal history deliveries workflows)", script);
@@ -272,8 +272,8 @@ public class CompletionsCommandTests : IDisposable
         Assert.Contains("$workflowSuggestOutputFormats = @('table', 'json', 'yaml')", script);
         Assert.Contains("'weekly', 'knowledge', '--window', '--dir', '--history-dir', '--journal', '--output', '--report'", script);
         Assert.Contains("$reportOutputFormats = @('table', 'json', 'markdown')", script);
-        Assert.Contains("'ledger' = @('append', 'replay', 'query', 'validate', 'stats', 'timeline', '--dir', '--project', '--source', '--since', '--until', '--window', '--action', '--category', '--operator', '--status', '--summary', '--timestamp', '--model', '--model-path', '--revit-version', '--plan-hash', '--artifact-path', '--receipt', '--receipt-hash', '--rollback-pointer', '--evidence', '--apply', '--yes', '--receipt-status', '--limit', '--fail-on', '--bucket', '--output')", script);
-        Assert.Contains("New-RevitCliCompletionResults -Values @('append', 'replay', 'query', 'validate', 'stats', 'timeline') -ToolTip 'Ledger subcommand'", script);
+        Assert.Contains("'ledger' = @('append', 'replay', 'query', 'validate', 'stats', 'timeline', 'analytics', '--dir', '--project', '--source', '--since', '--until', '--window', '--action', '--category', '--operator', '--status', '--summary', '--timestamp', '--model', '--model-path', '--revit-version', '--plan-hash', '--artifact-path', '--receipt', '--receipt-hash', '--rollback-pointer', '--evidence', '--apply', '--yes', '--receipt-status', '--limit', '--fail-on', '--bucket', '--output-dir', '--output')", script);
+        Assert.Contains("New-RevitCliCompletionResults -Values @('append', 'replay', 'query', 'validate', 'stats', 'timeline', 'analytics') -ToolTip 'Ledger subcommand'", script);
         Assert.Contains("$ledgerOutputFormats = @('table', 'json', 'markdown')", script);
         Assert.Contains("$ledgerSources = @('all', 'ledger', 'journal', 'history', 'deliveries', 'workflows')", script);
         Assert.Contains("$ledgerAppendStatuses = @('planned', 'succeeded', 'failed', 'blocked')", script);

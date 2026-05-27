@@ -23,7 +23,7 @@ public static class WorkflowValidator
             ["inspect"] = Values("categories", "params", "schedules", "sheets", "workflows", "plans"),
             ["issue"] = Values("preflight", "diff", "package"),
             ["journal"] = Values("show", "stats", "review", "sign", "verify"),
-            ["ledger"] = Values("append", "replay", "query", "validate", "stats", "timeline"),
+            ["ledger"] = Values("append", "replay", "query", "validate", "stats", "timeline", "analytics"),
             ["links"] = Values("audit", "repair"),
             ["marks"] = Values("assign", "verify"),
             ["model"] = Values("map-check", "map-fix"),

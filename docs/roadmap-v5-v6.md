@@ -225,7 +225,9 @@ Done means:
 - Standards runtime, project memory, and workflow registry remain local files
   and reports.
 - Ledger stats/timeline can persist and read back local single-file analytics
-  snapshots; no analytics service or database runtime is introduced.
+  snapshots, and `ledger analytics` packages the stats/timeline pair as a
+  local evidence bundle; no analytics service or database runtime is
+  introduced.
 - `docs/smoke/v6.0/pilot-evidence-template.md` defines the office rollout
   evidence packet needed for controlled project-copy pilots, without claiming
   production support before 2-3 completed office pilots have command evidence,

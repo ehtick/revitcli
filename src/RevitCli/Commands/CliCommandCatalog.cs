@@ -102,6 +102,7 @@ internal static class CliCommandCatalog
         ("ledger validate", "Validate local ledger artifact references without writing"),
         ("ledger stats", "Summarize local ledger operation counts without writing"),
         ("ledger timeline", "Bucket local ledger operations into a read-only project-memory timeline"),
+        ("ledger analytics", "Write a local stats and timeline analytics snapshot bundle"),
         ("deliverables list", "List delivery manifest entries and receipt status"),
         ("deliverables stats", "Summarize delivery manifest kinds, outcomes, and receipt status"),
         ("deliverables verify", "Verify delivery manifest entries point to readable receipts"),
