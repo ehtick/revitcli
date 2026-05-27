@@ -6,6 +6,22 @@ Scope: live Revit 2026 identity, query, dry-run set preview, approved set,
 confirm, restore, local ledger recording, and bounded ledger replay apply on
 the controlled `revit_cli.rvt` smoke model.
 
+Refresh: on 2026-05-27, the same open Revit 2026 model was reachable from WSL
+by invoking the installed Windows CLI through `scripts/smoke-revit-wsl.sh`.
+That helper records `doctor --check-version 2026 --output json`,
+`status --output json`, `query --id`, filtered `query`, and a `set --dry-run`
+preview into `.artifacts/live-smoke/revit2026-wsl-*` without passing `--yes`
+or mutating the model. The refresh is live-environment evidence only: it also
+records the source `HEAD`, so installed Windows CLI/add-in version drift stays
+visible instead of being treated as current-source validation.
+
+The 2026-05-27 WSL helper run wrote
+`.artifacts/live-smoke/revit2026-wsl-20260527-current/` with all five steps
+passing. It recorded source `HEAD=38ad41774a3d4f68e6b81e8ce4fdb5338ea8ca4f`,
+Windows CLI/add-in/live add-in `2.3.0+05c6d927bcff23777995fbfff7226ecfc55aac3f`,
+`revitYear=2026`, document `revit_cli`, element `337596`, filter
+`标记 = TEST`, and a one-element dry-run preview for parameter `注释`.
+
 Environment:
 
 - Revit process: `D:\revit2026\Revit 2026\Revit.exe`

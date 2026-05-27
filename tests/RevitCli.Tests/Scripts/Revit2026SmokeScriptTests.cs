@@ -84,6 +84,22 @@ public sealed class Revit2026SmokeScriptTests
     }
 
     [Fact]
+    public void WslSmokeScript_UsesInstalledWindowsCliAndDryRunOnly()
+    {
+        var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "smoke-revit-wsl.sh"));
+
+        Assert.Contains("REVITCLI_WINDOWS_EXE", script);
+        Assert.Contains("RevitCli.exe", script);
+        Assert.Contains("doctor --check-version 2026 --output json", script);
+        Assert.Contains("status --output json", script);
+        Assert.Contains("query --id", script);
+        Assert.Contains("set-dry-run", script);
+        Assert.Contains("--dry-run", script);
+        Assert.Contains("It does not pass --yes", script);
+        Assert.DoesNotContain("\"--yes\"", script);
+    }
+
+    [Fact]
     public void Legacy2026SmokeScript_ExposesV5IssueClosureGate()
     {
         var script = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "scripts", "smoke-revit2026.ps1"));
