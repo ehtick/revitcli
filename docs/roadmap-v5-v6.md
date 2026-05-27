@@ -242,8 +242,8 @@ Done means:
   path. `release pilot register` dry-runs or writes the completed-pilot
   status entry only after validation and reports
   `completedOfficePilotCountBefore`, `completedOfficePilotCountAfter`, and
-  register nextActions for validation failures, dry-run writes, and post-write
-  status checks. `release pilot status` reports current
+  register nextActions for validation failures, duplicate register attempts,
+  dry-run writes, and post-write status checks. `release pilot status` reports current
   completed/remaining office pilots, validates registered evidence packets,
   and surfaces per-pilot `missingEvidence` plus aggregate
   `missingEvidenceSummary` flags without changing rollout status. It reports

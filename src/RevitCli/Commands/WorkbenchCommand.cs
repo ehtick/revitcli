@@ -3906,6 +3906,7 @@ public static class WorkbenchCommand
             "completedOfficePilotCountBefore",
             "completedOfficePilotCountAfter",
             "register nextActions",
+            "duplicate register attempts",
             "release pilot status",
             "missingEvidence",
             "missingEvidenceSummary",

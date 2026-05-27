@@ -823,8 +823,17 @@ jobs:
 
         Assert.Equal(1, exitCode);
         using var json = JsonDocument.Parse(output.ToString());
-        Assert.Contains(json.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+        var root = json.RootElement;
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("id").GetString() == "pilot-duplicate");
+        var nextActions = root.GetProperty("nextActions").EnumerateArray()
+            .Select(action => action.GetString())
+            .ToArray();
+        Assert.Contains("release pilot status --output json", nextActions);
+        Assert.Contains("release pilot scaffold --pilot-id <new-public-id> --output json", nextActions);
+        Assert.Contains("release pilot validate --path docs/smoke/v6.0/<new-public-id>.md --output json", nextActions);
+        Assert.Contains("release pilot register --pilot-id <new-public-id> --path docs/smoke/v6.0/<new-public-id>.md --output json", nextActions);
+        Assert.DoesNotContain("release pilot validate --path docs/smoke/v6.0/pilot-01.md --output json", nextActions);
     }
 
     [Fact]
@@ -2016,6 +2025,26 @@ Run `release verify --strict`.
         Assert.False(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:pilot-evidence-register-next-actions" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60PilotEvidenceRegisterDuplicateNextActions_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath).Replace("duplicate register attempts", "duplicate attempts", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-register-duplicate-next-actions" &&
             check.GetProperty("status").GetString() == "error");
     }
 

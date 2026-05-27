@@ -406,8 +406,8 @@ The contract baseline is acceptable when:
   missing packets route to scaffold with the requested safe path. `release pilot register` dry-runs
   or writes the completed-pilot entry after validation and reports
   `completedOfficePilotCountBefore`, `completedOfficePilotCountAfter`, and
-  register nextActions for validation failures, dry-run writes, and post-write
-  status checks. `release pilot status` reports the machine-readable office pilot rollout progress, registered packet
+  register nextActions for validation failures, duplicate register attempts,
+  dry-run writes, and post-write status checks. `release pilot status` reports the machine-readable office pilot rollout progress, registered packet
   validation, per-pilot `missingEvidence`, and aggregate
   `missingEvidenceSummary` flags without mutating status. It also reports
   `evidenceCompleteOfficePilotCount` and

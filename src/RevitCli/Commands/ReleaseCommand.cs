@@ -1954,7 +1954,7 @@ public static class ReleaseCommand
                 wrote,
                 minimumOfficePilotCount,
                 completedOfficePilotCountAfter,
-                errorCount);
+                issues);
             return new ReleasePilotRegisterResult(
                 PilotRegisterSchemaVersion,
                 success && errorCount == 0,
@@ -1983,11 +1983,20 @@ public static class ReleaseCommand
             bool wrote,
             int minimumOfficePilotCount,
             int completedOfficePilotCount,
-            int errorCount)
+            List<ReleasePilotValidateIssue> issues)
         {
             var actions = new List<string>();
-            if (!success || errorCount > 0)
+            if (!success || issues.Any(issue => issue.Severity == "error"))
             {
+                if (issues.Any(issue => issue.Id is "pilot-duplicate" or "pilot-path-duplicate"))
+                {
+                    actions.Add("release pilot status --output json");
+                    actions.Add("release pilot scaffold --pilot-id <new-public-id> --output json");
+                    actions.Add("release pilot validate --path docs/smoke/v6.0/<new-public-id>.md --output json");
+                    actions.Add("release pilot register --pilot-id <new-public-id> --path docs/smoke/v6.0/<new-public-id>.md --output json");
+                    return actions.Distinct(StringComparer.Ordinal).ToArray();
+                }
+
                 actions.Add($"release pilot validate --path {evidencePacketPath} --output json");
                 actions.Add("release pilot status --output json");
                 return actions.Distinct(StringComparer.Ordinal).ToArray();

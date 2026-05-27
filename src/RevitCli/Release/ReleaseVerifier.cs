@@ -1215,6 +1215,8 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence intake exposes the local status registration command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-register-next-actions", pilotEvidence, "register nextActions",
             "v6.0 pilot register reports machine-readable next actions after validation or writes.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-register-duplicate-next-actions", pilotEvidence, "duplicate register attempts",
+            "v6.0 pilot register duplicate failures route back to status and a new public-id intake path.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-register-before-after-counts", pilotEvidence, "completedOfficePilotCountBefore",
             "v6.0 pilot register reports the completed pilot count before a dry-run or write.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-register-after-count", pilotEvidence, "completedOfficePilotCountAfter",
