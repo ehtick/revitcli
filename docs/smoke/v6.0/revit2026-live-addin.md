@@ -39,12 +39,13 @@ follow-up summary run wrote
 `sourceInstalledDrift=true`, and `mutatesModel=false`.
 
 After staging the current source from WSL, the helper wrote
-`.artifacts/live-smoke/revit2026-wsl-staged-evidence-653f7e5/summary.json` with
+`.artifacts/live-smoke/revit2026-wsl-doc-gated-staged-evidence-82a54be/summary.json`
+with
 `success=false`, `currentSourceInstalled=false`,
 `currentSourceDriftKind=restart-required`,
-`cliCommit=653f7e5d3f769e90777132d90cdf460b883cf920`,
-`installedAddinCommit=653f7e5d3f769e90777132d90cdf460b883cf920`,
-`stagedAddinCommit=653f7e5d3f769e90777132d90cdf460b883cf920`,
+`cliCommit=82a54bed84b66c8df0826af32de60f33c0dcab3b`,
+`installedAddinCommit=82a54bed84b66c8df0826af32de60f33c0dcab3b`,
+`stagedAddinCommit=82a54bed84b66c8df0826af32de60f33c0dcab3b`,
 `liveAddinCommit=05c6d927bcff23777995fbfff7226ecfc55aac3f`,
 `statusAddinCommit=05c6d927bcff23777995fbfff7226ecfc55aac3f`, and
 `mutatesModel=false`. That evidence proves the installer staged the current
