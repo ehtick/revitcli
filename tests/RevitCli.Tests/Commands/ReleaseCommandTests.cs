@@ -886,9 +886,93 @@ jobs:
         Assert.False(root.GetProperty("wrote").GetBoolean());
         Assert.False(root.GetProperty("canClaimOfficeRollout").GetBoolean());
         Assert.Equal(2, root.GetProperty("remainingOfficePilotCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("evidenceCompleteOfficePilotCount").GetInt32());
+        Assert.Equal(2, root.GetProperty("remainingEvidenceCompleteOfficePilotCount").GetInt32());
+        var blockers = root.GetProperty("claimBlockers").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+        Assert.Contains("completedOfficePilotCount", blockers);
+        Assert.Contains("evidenceCompleteOfficePilotCount", blockers);
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
         Assert.False(status.RootElement.GetProperty("officeRolloutCompletion").GetBoolean());
         Assert.False(status.RootElement.GetProperty("productionSupportClaim").GetBoolean());
+    }
+
+    [Fact]
+    public async Task PilotClaim_IncompleteRegisteredEvidence_ReportsClaimBlockers()
+    {
+        WriteHealthyTree(_root);
+        WriteFile("docs/smoke/v6.0/pilot-01.md", CompletedPilotEvidencePacketContent("pilot-01"));
+        WriteFile("docs/smoke/v6.0/office-rollout-status.json", $$"""
+{
+  "schemaVersion": "v6-office-rollout-status.v1",
+  "minimumOfficePilotCount": 2,
+  "completedOfficePilotCount": 1,
+  "completedPilotIds": ["pilot-01"],
+  "completedPilots": [
+    {
+      "pilotId": "pilot-01",
+      "evidencePacketPath": "docs/smoke/v6.0/pilot-01.md",
+      "doctor": true,
+      "status": true,
+      "workbench": true,
+      "release": true,
+      "ledgerQuery": true,
+      "ledgerValidate": true,
+      "ledgerStatsAnalyticsSnapshot": true,
+      "ledgerTimelineAnalyticsSnapshot": true,
+      "journalVerify": true,
+      "rollbackResult": false,
+      "userReview": true,
+      "bimManagerSignoff": true,
+      "projectCopyOwnerSignoff": true,
+      "supportTicketReview": true,
+      "multiUserRolloutPostmortem": true
+    }
+  ],
+  "officeRolloutCompletion": false,
+  "productionSupportClaim": false,
+  "requiredEvidence": {
+    "doctor": true,
+    "status": true,
+    "workbench": true,
+    "release": true,
+    "ledgerQuery": true,
+    "ledgerValidate": true,
+    "ledgerStatsAnalyticsSnapshot": true,
+    "ledgerTimelineAnalyticsSnapshot": true,
+    "journalVerify": true,
+    "rollbackResult": true,
+    "userReview": true,
+    "bimManagerSignoff": true,
+    "projectCopyOwnerSignoff": true,
+    "supportTicketReview": true,
+    "multiUserRolloutPostmortem": true
+  }
+}
+""");
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotClaimAsync(
+            _root,
+            yes: true,
+            productionSupport: false,
+            outputFormat: "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("wrote").GetBoolean());
+        Assert.Equal(0, root.GetProperty("evidenceCompleteOfficePilotCount").GetInt32());
+        var blockers = root.GetProperty("claimBlockers").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+        Assert.Contains("statusValidation", blockers);
+        Assert.Contains("completedOfficePilotCount", blockers);
+        Assert.Contains("evidenceCompleteOfficePilotCount", blockers);
+        Assert.Contains("missingEvidence", blockers);
     }
 
     [Fact]
@@ -913,9 +997,13 @@ jobs:
         Assert.True(root.GetProperty("dryRun").GetBoolean());
         Assert.False(root.GetProperty("wrote").GetBoolean());
         Assert.True(root.GetProperty("canClaimOfficeRollout").GetBoolean());
+        Assert.Equal(2, root.GetProperty("evidenceCompleteOfficePilotCount").GetInt32());
+        Assert.Equal(0, root.GetProperty("remainingEvidenceCompleteOfficePilotCount").GetInt32());
+        Assert.Empty(root.GetProperty("claimBlockers").EnumerateArray());
         Assert.False(root.GetProperty("officeRolloutCompletionBefore").GetBoolean());
         Assert.True(root.GetProperty("officeRolloutCompletionAfter").GetBoolean());
         Assert.False(root.GetProperty("productionSupportClaimAfter").GetBoolean());
+        Assert.Empty(root.GetProperty("claimBlockers").EnumerateArray());
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
         Assert.False(status.RootElement.GetProperty("officeRolloutCompletion").GetBoolean());
         Assert.False(status.RootElement.GetProperty("productionSupportClaim").GetBoolean());
@@ -971,6 +1059,7 @@ jobs:
         Assert.True(root.GetProperty("requestedProductionSupportClaim").GetBoolean());
         Assert.True(root.GetProperty("officeRolloutCompletionAfter").GetBoolean());
         Assert.True(root.GetProperty("productionSupportClaimAfter").GetBoolean());
+        Assert.Empty(root.GetProperty("claimBlockers").EnumerateArray());
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
         Assert.True(status.RootElement.GetProperty("officeRolloutCompletion").GetBoolean());
         Assert.True(status.RootElement.GetProperty("productionSupportClaim").GetBoolean());
@@ -1582,6 +1671,26 @@ Run `release verify --strict`.
         Assert.False(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:pilot-evidence-claim-command" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60PilotEvidenceClaimBlockers_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath).Replace("claimBlockers", "claim blockers", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-claim-blockers" &&
             check.GetProperty("status").GetString() == "error");
     }
 
@@ -3403,7 +3512,7 @@ No SaaS, no MCP, no dashboard-central, and no built-in LLM runtime is introduced
 The product phrase is BIM Release OS and the technical kernel is the Revit Model Operations Ledger.
 The contract is terminal-first, local-first, deterministic, dry-run first, and requires explicit approval.
 
-Required local behavior includes planHash, receiptHash, journalPath, rollbackPointer, checks, artifacts, deterministic receipt rules, rollback preconditions, current-value conflict checks, audit trail invariants, journal verify, standards runtime, project memory, workflow registry, workflow registry --output json, workflow-registry.v1, ledger append, ledger replay, ledger query, ledger validate, ledger stats, ledger timeline, ledger analytics, release pilot validate, release pilot register, release pilot status, missingEvidence, missingEvidenceSummary, evidenceCompleteOfficePilotCount, remainingEvidenceCompleteOfficePilotCount, release pilot claim, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1, ledger-timeline.v1, and ledger-analytics-bundle.v1.
+Required local behavior includes planHash, receiptHash, journalPath, rollbackPointer, checks, artifacts, deterministic receipt rules, rollback preconditions, current-value conflict checks, audit trail invariants, journal verify, standards runtime, project memory, workflow registry, workflow registry --output json, workflow-registry.v1, ledger append, ledger replay, ledger query, ledger validate, ledger stats, ledger timeline, ledger analytics, release pilot validate, release pilot register, release pilot status, missingEvidence, missingEvidenceSummary, evidenceCompleteOfficePilotCount, remainingEvidenceCompleteOfficePilotCount, release pilot claim, claimBlockers, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1, ledger-timeline.v1, and ledger-analytics-bundle.v1.
 
 No SaaS, no MCP, no built-in LLM, no dashboard-central workflow state, and no database runtime are introduced.
 """);
@@ -3426,7 +3535,7 @@ Create packets with release pilot scaffold --pilot-id v6-pilot-2026-office-copy-
 Run release pilot validate --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json before listing a packet as complete.
 Dry-run release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json before using --yes.
 Check release pilot status --output json after registration to report remaining office pilots, missingEvidence, missingEvidenceSummary, evidenceCompleteOfficePilotCount, and remainingEvidenceCompleteOfficePilotCount.
-Run release pilot claim --output json as a dry-run before using --yes for an office rollout completion claim.
+Run release pilot claim --output json as a dry-run and inspect claimBlockers before using --yes for an office rollout completion claim.
 Each packet records a Pilot identifier that must match the registered pilot id.
 
 Required commands include doctor --check-version 2026 --output json, `status --output json`, workbench verify --contract workbench-contract.v2 --dir . --output json, release verify --strict --output json, ledger query --source ledger --output json, ledger validate --source ledger --output json, ledger stats --source ledger --analytics-snapshot .revitcli/analytics/ledger-stats.json --output json, ledger timeline --source ledger --analytics-snapshot .revitcli/analytics/ledger-timeline.json --output json, and journal verify --output json.

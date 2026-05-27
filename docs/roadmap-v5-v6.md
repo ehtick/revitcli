@@ -245,9 +245,9 @@ Done means:
   `remainingEvidenceCompleteOfficePilotCount` separately from the registered
   status count so incomplete pilot entries do not inflate evidence-complete
   rollout progress.
-  `release pilot claim` is the dry-run-first
-  explicit completion claim path once validated completed pilots reach the
-  threshold.
+  `release pilot claim` is the dry-run-first explicit completion claim path
+  with machine-readable `claimBlockers` until validated completed pilots reach
+  the threshold.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
   machine-readable status as 0 completed office pilots and no office rollout
   completion claim. Future completion requires per-pilot evidence flags, not

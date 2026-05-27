@@ -22,7 +22,9 @@ registered packet validation, per-pilot `missingEvidence`, aggregate
 boundary after registration. After the minimum completed pilot threshold is
 satisfied and private review is complete, run
 `release pilot claim --output json` first as a dry-run, then repeat with
-`--yes` only to write the office rollout completion claim. Add
+`--yes` only to write the office rollout completion claim. The dry-run claim
+result must include machine-readable `claimBlockers` before any completion
+write. Add
 `--production-support` only after the private support review approves it.
 
 - Pilot identifier:

@@ -1482,10 +1482,20 @@ public static class ReleaseCommand
         writer.WriteLine($"Wrote:        {result.Wrote.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Completed:    {result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}");
         writer.WriteLine($"Remaining:    {result.RemainingOfficePilotCount}");
+        writer.WriteLine($"Evidence complete: {result.EvidenceCompleteOfficePilotCount}/{result.MinimumOfficePilotCount}");
+        writer.WriteLine($"Evidence remaining: {result.RemainingEvidenceCompleteOfficePilotCount}");
         writer.WriteLine($"Can claim:    {result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Rollout:      {result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()} -> {result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Support:      {result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()} -> {result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Message:      {result.Message}");
+        if (result.ClaimBlockers.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("Claim blockers:");
+            foreach (var blocker in result.ClaimBlockers)
+                writer.WriteLine($"- {blocker}");
+        }
+
         if (result.Issues.Length > 0)
         {
             writer.WriteLine();
@@ -1509,10 +1519,24 @@ public static class ReleaseCommand
         writer.WriteLine($"- Wrote: `{result.Wrote.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Completed pilots: `{result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}`");
         writer.WriteLine($"- Remaining pilots: `{result.RemainingOfficePilotCount}`");
+        writer.WriteLine($"- Evidence-complete pilots: `{result.EvidenceCompleteOfficePilotCount}/{result.MinimumOfficePilotCount}`");
+        writer.WriteLine($"- Evidence-complete remaining pilots: `{result.RemainingEvidenceCompleteOfficePilotCount}`");
         writer.WriteLine($"- Can claim office rollout: `{result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Office rollout completion: `{result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()}` -> `{result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()}` -> `{result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Message: {result.Message}");
+        writer.WriteLine();
+        writer.WriteLine("## Claim Blockers");
+        if (result.ClaimBlockers.Length == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var blocker in result.ClaimBlockers)
+                writer.WriteLine($"- `{EscapeInlineCode(blocker)}`");
+        }
+
         writer.WriteLine();
         writer.WriteLine("## Issues");
         if (result.Issues.Length == 0)
@@ -1743,6 +1767,8 @@ public static class ReleaseCommand
         int MinimumOfficePilotCount,
         int CompletedOfficePilotCount,
         int RemainingOfficePilotCount,
+        int EvidenceCompleteOfficePilotCount,
+        int RemainingEvidenceCompleteOfficePilotCount,
         bool CanClaimOfficeRollout,
         bool OfficeRolloutCompletionBefore,
         bool ProductionSupportClaimBefore,
@@ -1751,6 +1777,7 @@ public static class ReleaseCommand
         int ErrorCount,
         int WarningCount,
         string Message,
+        string[] ClaimBlockers,
         ReleasePilotValidateIssue[] Issues)
     {
         public static ReleasePilotClaimResult From(
@@ -1764,6 +1791,7 @@ public static class ReleaseCommand
             bool productionSupportClaimAfter)
         {
             var success = status.Success && status.CanClaimOfficeRollout;
+            var claimBlockers = BuildClaimBlockers(status);
             var message = success
                 ? yes
                     ? requestedProductionSupportClaim
@@ -1784,6 +1812,8 @@ public static class ReleaseCommand
                 status.MinimumOfficePilotCount,
                 status.CompletedOfficePilotCount,
                 status.RemainingOfficePilotCount,
+                status.EvidenceCompleteOfficePilotCount,
+                status.RemainingEvidenceCompleteOfficePilotCount,
                 status.CanClaimOfficeRollout,
                 officeRolloutCompletionBefore,
                 productionSupportClaimBefore,
@@ -1792,7 +1822,30 @@ public static class ReleaseCommand
                 status.ErrorCount,
                 status.WarningCount,
                 message,
+                claimBlockers,
                 status.Issues);
+        }
+
+        private static string[] BuildClaimBlockers(ReleasePilotStatusResult status)
+        {
+            if (status.CanClaimOfficeRollout)
+                return Array.Empty<string>();
+
+            var blockers = new List<string>();
+            if (!status.Success || status.ErrorCount > 0)
+                blockers.Add("statusValidation");
+            if (status.CompletedOfficePilotCount < status.MinimumOfficePilotCount)
+                blockers.Add("completedOfficePilotCount");
+            if (status.EvidenceCompleteOfficePilotCount < status.MinimumOfficePilotCount)
+                blockers.Add("evidenceCompleteOfficePilotCount");
+            if (status.CompletedPilots.Any(pilot => !pilot.ValidationSuccess))
+                blockers.Add("packetValidation");
+            if (status.MissingEvidenceSummary.Length > 0)
+                blockers.Add("missingEvidence");
+
+            return blockers.Count == 0
+                ? new[] { "officeRolloutReadiness" }
+                : blockers.Distinct(StringComparer.Ordinal).ToArray();
         }
     }
 

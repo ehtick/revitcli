@@ -408,9 +408,10 @@ The contract baseline is acceptable when:
   `evidenceCompleteOfficePilotCount` and
   `remainingEvidenceCompleteOfficePilotCount` so registered-but-incomplete
   pilots are not confused with evidence-complete rollout progress.
-  `release pilot claim` is dry-run by default and writes the office rollout
-  completion claim only after validated completed pilot evidence reaches the
-  threshold; production support still requires an explicit
+  `release pilot claim` is dry-run by default, reports machine-readable
+  `claimBlockers`, and writes the office rollout completion claim only after
+  validated completed pilot evidence reaches the threshold; production support
+  still requires an explicit
   `--production-support` request after private support review. It is not a
   production support claim by default.
 - `docs/smoke/v6.0/office-rollout-status.json` records the current
