@@ -90,10 +90,15 @@ public sealed class Revit2026SmokeScriptTests
 
         Assert.Contains("REVITCLI_WINDOWS_EXE", script);
         Assert.Contains("RevitCli.exe", script);
+        Assert.Contains("jq is required", script);
         Assert.Contains("doctor --check-version 2026 --output json", script);
         Assert.Contains("status --output json", script);
         Assert.Contains("query --id", script);
         Assert.Contains("set-dry-run", script);
+        Assert.Contains("summary.json", script);
+        Assert.Contains("revitcli-wsl-live-smoke.v1", script);
+        Assert.Contains("sourceInstalledDrift", script);
+        Assert.Contains("mutatesModel: false", script);
         Assert.Contains("--dry-run", script);
         Assert.Contains("It does not pass --yes", script);
         Assert.DoesNotContain("\"--yes\"", script);

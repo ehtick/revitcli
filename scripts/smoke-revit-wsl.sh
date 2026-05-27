@@ -86,6 +86,11 @@ if [[ ! -x "$revitcli" ]]; then
   exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required to build the WSL live smoke summary.json." >&2
+  exit 1
+fi
+
 mkdir -p "$output_dir"
 
 run_step() {
@@ -117,11 +122,110 @@ run_step query-id query --id "$element_id" --output json
 run_step query-filter query "$category" --filter "$filter" --output json
 run_step set-dry-run set "$category" --filter "$filter" --param "$param" --value "$value" --dry-run
 
+source_head="$(cat "${output_dir}/source-head.txt")"
+doctor_success="$(jq -r '.success == true' "${output_dir}/doctor.out")"
+doctor_target_year="$(jq -r '.targetRevitYear // empty' "${output_dir}/doctor.out")"
+cli_version="$(jq -r '[.checks[] | select(.name == "CLI version")][0].message // "" | sub("^CLI version: "; "")' "${output_dir}/doctor.out")"
+installed_addin_version="$(jq -r '[.checks[] | select(.name == "Installed Add-in version")][0].message // "" | sub("^Installed Add-in version: "; "")' "${output_dir}/doctor.out")"
+live_addin_version="$(jq -r '[.checks[] | select(.name == "Live Add-in version")][0].message // "" | sub("^Live Add-in version: "; "")' "${output_dir}/doctor.out")"
+status_revit_year="$(jq -r '.revitYear // empty' "${output_dir}/status.out")"
+status_document="$(jq -r '.documentName // empty' "${output_dir}/status.out")"
+status_addin_version="$(jq -r '.addinVersion // empty' "${output_dir}/status.out")"
+query_id_count="$(jq -r 'length' "${output_dir}/query-id.out")"
+query_filter_count="$(jq -r 'length' "${output_dir}/query-filter.out")"
+query_id_first="$(jq -r '.[0].id // empty' "${output_dir}/query-id.out")"
+query_filter_first="$(jq -r '.[0].id // empty' "${output_dir}/query-filter.out")"
+dry_run_preview_count="$(sed -n 's/^Dry run: \([0-9][0-9]*\) element(s) would be modified\..*/\1/p' "${output_dir}/set-dry-run.out" | head -n 1)"
+dry_run_preview_count="${dry_run_preview_count:-0}"
+installed_commit=""
+if [[ "$cli_version" == *"+"* ]]; then
+  installed_commit="${cli_version##*+}"
+fi
+source_installed_drift=false
+if [[ -n "$installed_commit" && "$installed_commit" != "$source_head" ]]; then
+  source_installed_drift=true
+fi
+overall_success=false
+if [[ "$doctor_success" == "true" &&
+      "$status_revit_year" == "2026" &&
+      "$query_id_count" == "1" &&
+      "$query_filter_count" == "1" &&
+      "$query_id_first" == "$query_filter_first" &&
+      "$dry_run_preview_count" == "1" ]]; then
+  overall_success=true
+fi
+
+jq -n \
+  --arg schemaVersion "revitcli-wsl-live-smoke.v1" \
+  --arg sourceHead "$source_head" \
+  --arg windowsCliPath "$revitcli" \
+  --arg cliVersion "$cli_version" \
+  --arg installedAddinVersion "$installed_addin_version" \
+  --arg liveAddinVersion "$live_addin_version" \
+  --arg statusAddinVersion "$status_addin_version" \
+  --arg installedCommit "$installed_commit" \
+  --arg documentName "$status_document" \
+  --arg category "$category" \
+  --arg filter "$filter" \
+  --arg param "$param" \
+  --arg value "$value" \
+  --argjson success "$overall_success" \
+  --argjson doctorSuccess "$doctor_success" \
+  --argjson targetRevitYear "${doctor_target_year:-0}" \
+  --argjson revitYear "${status_revit_year:-0}" \
+  --argjson sourceInstalledDrift "$source_installed_drift" \
+  --argjson elementId "$element_id" \
+  --argjson queryIdCount "$query_id_count" \
+  --argjson queryFilterCount "$query_filter_count" \
+  --arg queryIdFirst "$query_id_first" \
+  --arg queryFilterFirst "$query_filter_first" \
+  --argjson dryRunPreviewCount "$dry_run_preview_count" \
+  '{
+    schemaVersion: $schemaVersion,
+    success: $success,
+    sourceHead: $sourceHead,
+    windowsCliPath: $windowsCliPath,
+    versions: {
+      cli: $cliVersion,
+      installedAddin: $installedAddinVersion,
+      liveAddin: $liveAddinVersion,
+      statusAddin: $statusAddinVersion,
+      installedCommit: $installedCommit,
+      sourceInstalledDrift: $sourceInstalledDrift
+    },
+    revit: {
+      doctorSuccess: $doctorSuccess,
+      targetRevitYear: $targetRevitYear,
+      statusRevitYear: $revitYear,
+      documentName: $documentName
+    },
+    query: {
+      elementId: $elementId,
+      category: $category,
+      filter: $filter,
+      queryIdCount: $queryIdCount,
+      queryFilterCount: $queryFilterCount,
+      queryIdFirst: $queryIdFirst,
+      queryFilterFirst: $queryFilterFirst
+    },
+    dryRun: {
+      param: $param,
+      value: $value,
+      previewCount: $dryRunPreviewCount
+    },
+    boundary: {
+      noYesArgument: true,
+      mutatesModel: false,
+      currentSourceInstalled: ($sourceInstalledDrift | not)
+    }
+  }' > "${output_dir}/summary.json"
+
 cat > "${output_dir}/README.md" <<EOF
 # RevitCli WSL Live Smoke Evidence
 
 - Source HEAD: $(cat "${output_dir}/source-head.txt")
 - Windows CLI: ${revitcli}
+- Summary: summary.json
 - Element: ${element_id}
 - Category: ${category}
 - Filter: ${filter}
