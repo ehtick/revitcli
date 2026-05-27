@@ -11,15 +11,19 @@ by invoking the installed Windows CLI through `scripts/smoke-revit-wsl.sh`.
 That helper records `doctor --check-version 2026 --output json`,
 `status --output json`, `query --id`, filtered `query`, and a `set --dry-run`
 preview into `.artifacts/live-smoke/revit2026-wsl-*`, plus
-`summary.json` with the pass/fail rollup and `sourceInstalledDrift`, without
-passing `--yes` or mutating the model. The refresh is live-environment
-evidence only: it also records the source `HEAD`, so installed Windows CLI/add-in
-version drift stays visible instead of being treated as current-source
-validation. Use `scripts/smoke-revit-wsl.sh --require-current-source` when the
-claim needs the currently checked-out source to be installed; the helper then
-fails on drift and writes `nextActions` plus a generated
-`install-current-source.ps1` handoff for reinstall/restart/rerun. For a stable
-repo-tracked Windows entrypoint, run
+`summary.json` with the pass/fail rollup, `sourceInstalledDrift`,
+`currentSourceDriftKind`, `stagedAddinCommit`, and `stagedAddinPath`, without
+passing `--yes` or mutating the model. The refresh is live-environment evidence
+only: it also records the source `HEAD`, so installed Windows CLI/add-in version
+drift stays visible instead of being treated as current-source validation. Use
+`scripts/smoke-revit-wsl.sh --require-current-source` when the claim needs the
+currently checked-out source to be installed. The helper fails with
+`install-required` when the staged install is not current and writes
+`nextActions` plus a generated `install-current-source.ps1` handoff for
+reinstall/restart/rerun. It fails with `restart-required` when the staged
+install is current but the open Revit process is still running an older loaded
+add-in; in that case it writes restart/rerun `nextActions` without generating an
+install handoff. For a stable repo-tracked Windows entrypoint, run
 `scripts\install-current-source-revit2026.ps1`, restart Revit if the Add-in was
 staged, then rerun the WSL helper with `--require-current-source`.
 
@@ -33,6 +37,19 @@ follow-up summary run wrote
 `.artifacts/live-smoke/revit2026-wsl-20260527-summary/summary.json` with
 `success=true`, `queryIdCount=1`, `queryFilterCount=1`, `previewCount=1`,
 `sourceInstalledDrift=true`, and `mutatesModel=false`.
+
+After staging the current source from WSL, the helper wrote
+`.artifacts/live-smoke/revit2026-wsl-staged-evidence-653f7e5/summary.json` with
+`success=false`, `currentSourceInstalled=false`,
+`currentSourceDriftKind=restart-required`,
+`cliCommit=653f7e5d3f769e90777132d90cdf460b883cf920`,
+`installedAddinCommit=653f7e5d3f769e90777132d90cdf460b883cf920`,
+`stagedAddinCommit=653f7e5d3f769e90777132d90cdf460b883cf920`,
+`liveAddinCommit=05c6d927bcff23777995fbfff7226ecfc55aac3f`,
+`statusAddinCommit=05c6d927bcff23777995fbfff7226ecfc55aac3f`, and
+`mutatesModel=false`. That evidence proves the installer staged the current
+add-in source, but the already-open Revit process still needs a restart before
+the live add-in/source alignment claim can pass.
 
 Environment:
 

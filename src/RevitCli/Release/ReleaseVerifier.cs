@@ -1110,6 +1110,16 @@ internal static partial class ReleaseVerifier
             "v6.0 gap report keeps real Revit pilots explicit.", "docs/smoke/v6.0/gap-report.md");
         AddContains(report, "v6.0:office-pilot-gap-doc", gap, "office rollout pilots",
             "v6.0 gap report keeps office rollout pilots explicit.", "docs/smoke/v6.0/gap-report.md");
+        AddContains(report, "v6.0:wsl-current-source-drift-kind-gap-doc", gap, "currentSourceDriftKind",
+            "v6.0 gap report documents the WSL current-source drift kind.", "docs/smoke/v6.0/gap-report.md");
+        AddContains(report, "v6.0:wsl-current-source-install-gap-doc", gap, "install-required",
+            "v6.0 gap report documents install-required current-source drift.", "docs/smoke/v6.0/gap-report.md");
+        AddContains(report, "v6.0:wsl-current-source-restart-gap-doc", gap, "restart-required",
+            "v6.0 gap report documents restart-required current-source drift.", "docs/smoke/v6.0/gap-report.md");
+        AddContains(report, "v6.0:wsl-staged-addin-commit-gap-doc", gap, "stagedAddinCommit",
+            "v6.0 gap report documents staged add-in commit evidence.", "docs/smoke/v6.0/gap-report.md");
+        AddContains(report, "v6.0:wsl-staged-addin-path-gap-doc", gap, "stagedAddinPath",
+            "v6.0 gap report documents staged add-in path evidence.", "docs/smoke/v6.0/gap-report.md");
         AddContains(report, "v6.0:local-controlled-pilot-gap-doc", gap, "local controlled pilot packet",
             "v6.0 gap report records the local controlled pilot packet without claiming rollout completion.", "docs/smoke/v6.0/gap-report.md");
         AddContains(report, "v6.0:not-live-doc", gap, "not live verified",

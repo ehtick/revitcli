@@ -1604,6 +1604,27 @@ Run `release verify --strict`.
     }
 
     [Fact]
+    public async Task Verify_MissingV60StagedAddinCommitGap_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var gapPath = Path.Combine(_root, "docs", "smoke", "v6.0", "gap-report.md");
+        File.WriteAllText(
+            gapPath,
+            File.ReadAllText(gapPath).Replace("stagedAddinCommit", "stagedCommit", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:wsl-staged-addin-commit-gap-doc" &&
+            check.GetProperty("status").GetString() == "error" &&
+            check.GetProperty("message").GetString()!.Contains("stagedAddinCommit", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task Verify_MissingV60PilotEvidenceTemplate_ReturnsFailure()
     {
         WriteHealthyTree(_root);
@@ -3758,7 +3779,7 @@ This is a contract baseline for operations ledger behavior. It is not live verif
 
 The Revit Model Operations Ledger has read-only standards validate, dry-run issue package, read-only deliverables verify, append-only ledger runtime, ledger replay preview, read-only ledger query, read-only ledger validate, read-only ledger stats, read-only ledger timeline, local ledger analytics bundle, read-only workflow registry, a pilot evidence packet, and a local controlled pilot packet. Live ledger apply, live Revit ledger integration, real Revit pilots, and office rollout pilots remain future evidence. Supported command-spine paths document table summary and Markdown detail parity, including history list` JSON/table outputs.
 Local audit spine docs include journal verify JSON/table validity/root-hash parity and history-list.v1 JSON count consistency and table row-order parity.
-Current-source Revit proof uses scripts\install-current-source-revit2026.ps1 and scripts/smoke-revit-wsl.sh --require-current-source before claiming live add-in/source alignment.
+Current-source Revit proof uses scripts\install-current-source-revit2026.ps1 and scripts/smoke-revit-wsl.sh --require-current-source before claiming live add-in/source alignment. It records currentSourceDriftKind, install-required, restart-required, stagedAddinCommit, and stagedAddinPath.
 
 No SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, and no database runtime are introduced.
 """);

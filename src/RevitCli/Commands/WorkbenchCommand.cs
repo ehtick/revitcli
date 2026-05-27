@@ -3979,6 +3979,11 @@ public static class WorkbenchCommand
             "read-only deliverables verify",
             @"scripts\install-current-source-revit2026.ps1",
             "--require-current-source",
+            "currentSourceDriftKind",
+            "install-required",
+            "restart-required",
+            "stagedAddinCommit",
+            "stagedAddinPath",
         };
         var missingGap = gapPhrases
             .Where(phrase => !gapText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
