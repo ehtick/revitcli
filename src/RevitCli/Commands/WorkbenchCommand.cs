@@ -4050,6 +4050,8 @@ public static class WorkbenchCommand
             "scaffold `nextActions`",
             "release pilot validate",
             "validate `nextActions`",
+            "unsafe paths route back to a public-safe scaffold path",
+            "missing packets route to scaffold with the requested safe path",
             "release pilot register",
             "register nextActions",
             "release pilot status",

@@ -657,8 +657,38 @@ jobs:
 
         Assert.Equal(1, exitCode);
         using var json = JsonDocument.Parse(output.ToString());
-        Assert.Contains(json.RootElement.GetProperty("issues").EnumerateArray(), issue =>
+        var root = json.RootElement;
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("id").GetString() == "path-safety");
+        var nextActions = root.GetProperty("nextActions").EnumerateArray()
+            .Select(action => action.GetString())
+            .ToArray();
+        Assert.DoesNotContain(nextActions, action => action!.Contains("../pilot-01.md", StringComparison.Ordinal));
+        Assert.Contains("release pilot scaffold --pilot-id <public-id> --output json", nextActions);
+        Assert.Contains("release pilot validate --path docs/smoke/v6.0/<public-id>.md --output json", nextActions);
+    }
+
+    [Fact]
+    public async Task PilotValidate_MissingPacket_NextActionsScaffoldRequestedPath()
+    {
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecutePilotValidateAsync(
+            _root,
+            "docs/smoke/v6.0/pilot-01.md",
+            "json",
+            output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.Contains(root.GetProperty("issues").EnumerateArray(), issue =>
+            issue.GetProperty("id").GetString() == "packet-missing");
+        var nextActions = root.GetProperty("nextActions").EnumerateArray()
+            .Select(action => action.GetString())
+            .ToArray();
+        Assert.Contains("release pilot scaffold --pilot-id pilot-01 --path docs/smoke/v6.0/pilot-01.md --output json", nextActions);
+        Assert.Contains("release pilot validate --path docs/smoke/v6.0/pilot-01.md --output json", nextActions);
     }
 
     [Fact]
@@ -1921,6 +1951,31 @@ Run `release verify --strict`.
         Assert.False(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:pilot-evidence-validate-next-actions" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60PilotEvidenceValidateSafePathNextActions_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath)
+                .Replace("unsafe paths route back to a public-safe scaffold path", "unsafe paths repeat", StringComparison.Ordinal)
+                .Replace("missing packets route to scaffold with the requested safe path", "missing packets repeat", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-validate-safe-path-next-actions" &&
+            check.GetProperty("status").GetString() == "error");
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-validate-missing-packet-next-actions" &&
             check.GetProperty("status").GetString() == "error");
     }
 

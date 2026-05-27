@@ -1207,6 +1207,10 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot evidence intake exposes the local packet validation command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-validate-next-actions", pilotEvidence, "validate `nextActions`",
             "v6.0 pilot validate reports machine-readable next actions for repair or registration.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-validate-safe-path-next-actions", pilotEvidence, "unsafe paths route back to a public-safe scaffold path",
+            "v6.0 pilot validate next actions do not repeat unsafe paths.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-validate-missing-packet-next-actions", pilotEvidence, "missing packets route to scaffold with the requested safe path",
+            "v6.0 pilot validate next actions can repair missing safe packet paths.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-register-command", pilotEvidence, "release pilot register",
             "v6.0 pilot evidence intake exposes the local status registration command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-register-next-actions", pilotEvidence, "register nextActions",

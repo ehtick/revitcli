@@ -1846,7 +1846,7 @@ public static class ReleaseCommand
         {
             var errorCount = issues.Count(issue => issue.Severity == "error");
             var warningCount = issues.Count(issue => issue.Severity == "warning");
-            var nextActions = BuildNextActions(evidencePacketPath, pilotId, errorCount);
+            var nextActions = BuildNextActions(evidencePacketPath, pilotId, errorCount, issues);
             return new ReleasePilotValidateResult(
                 PilotValidateSchemaVersion,
                 errorCount == 0,
@@ -1857,13 +1857,39 @@ public static class ReleaseCommand
                 issues.ToArray());
         }
 
-        private static string[] BuildNextActions(string evidencePacketPath, string? pilotId, int errorCount)
+        private static string[] BuildNextActions(
+            string evidencePacketPath,
+            string? pilotId,
+            int errorCount,
+            List<ReleasePilotValidateIssue> issues)
         {
             if (errorCount == 0 && IsPublicSafePilotId(pilotId ?? ""))
             {
                 return new[]
                 {
                     $"release pilot register --pilot-id {pilotId!.Trim()} --path {evidencePacketPath} --output json",
+                };
+            }
+
+            if (issues.Any(issue => issue.Id == "path-safety"))
+            {
+                return new[]
+                {
+                    "release pilot scaffold --pilot-id <public-id> --output json",
+                    "release pilot validate --path docs/smoke/v6.0/<public-id>.md --output json",
+                };
+            }
+
+            if (issues.Any(issue => issue.Id == "packet-missing"))
+            {
+                var scaffoldPilotId = Path.GetFileNameWithoutExtension(evidencePacketPath.Trim());
+                if (!IsPublicSafePilotId(scaffoldPilotId))
+                    scaffoldPilotId = "<public-id>";
+
+                return new[]
+                {
+                    $"release pilot scaffold --pilot-id {scaffoldPilotId} --path {evidencePacketPath} --output json",
+                    $"release pilot validate --path {evidencePacketPath} --output json",
                 };
             }
 

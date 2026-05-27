@@ -402,7 +402,8 @@ The contract baseline is acceptable when:
   `release pilot scaffold` creates the packet and reports scaffold
   `nextActions` for validate/register intake. `release pilot validate`
   checks it before rollout status is updated and reports validate
-  `nextActions`. `release pilot register` dry-runs
+  `nextActions`; unsafe paths route back to a public-safe scaffold path and
+  missing packets route to scaffold with the requested safe path. `release pilot register` dry-runs
   or writes the completed-pilot entry after validation and reports
   `completedOfficePilotCountBefore`, `completedOfficePilotCountAfter`, and
   register nextActions for validation failures, dry-run writes, and post-write
