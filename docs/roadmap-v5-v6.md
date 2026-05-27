@@ -240,7 +240,11 @@ Done means:
   status entry only after validation. `release pilot status` reports current
   completed/remaining office pilots, validates registered evidence packets,
   and surfaces per-pilot `missingEvidence` plus aggregate
-  `missingEvidenceSummary` flags without changing rollout status.
+  `missingEvidenceSummary` flags without changing rollout status. It reports
+  `evidenceCompleteOfficePilotCount` and
+  `remainingEvidenceCompleteOfficePilotCount` separately from the registered
+  status count so incomplete pilot entries do not inflate evidence-complete
+  rollout progress.
   `release pilot claim` is the dry-run-first
   explicit completion claim path once validated completed pilots reach the
   threshold.

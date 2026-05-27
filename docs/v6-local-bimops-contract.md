@@ -404,7 +404,10 @@ The contract baseline is acceptable when:
   or writes the completed-pilot entry after validation. `release pilot status`
   reports the machine-readable office pilot rollout progress, registered packet
   validation, per-pilot `missingEvidence`, and aggregate
-  `missingEvidenceSummary` flags without mutating status.
+  `missingEvidenceSummary` flags without mutating status. It also reports
+  `evidenceCompleteOfficePilotCount` and
+  `remainingEvidenceCompleteOfficePilotCount` so registered-but-incomplete
+  pilots are not confused with evidence-complete rollout progress.
   `release pilot claim` is dry-run by default and writes the office rollout
   completion claim only after validated completed pilot evidence reaches the
   threshold; production support still requires an explicit

@@ -1361,6 +1361,8 @@ public static class ReleaseCommand
         writer.WriteLine($"Status:     {result.StatusPath}");
         writer.WriteLine($"Completed:  {result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}");
         writer.WriteLine($"Remaining:  {result.RemainingOfficePilotCount}");
+        writer.WriteLine($"Evidence complete: {result.EvidenceCompleteOfficePilotCount}/{result.MinimumOfficePilotCount}");
+        writer.WriteLine($"Evidence remaining: {result.RemainingEvidenceCompleteOfficePilotCount}");
         writer.WriteLine($"Rollout:    {result.OfficeRolloutCompletion.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Support:    {result.ProductionSupportClaim.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Can claim:  {result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}");
@@ -1408,6 +1410,8 @@ public static class ReleaseCommand
         writer.WriteLine($"- Rollout status: `{EscapeInlineCode(result.StatusPath)}`");
         writer.WriteLine($"- Completed pilots: `{result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}`");
         writer.WriteLine($"- Remaining pilots: `{result.RemainingOfficePilotCount}`");
+        writer.WriteLine($"- Evidence-complete pilots: `{result.EvidenceCompleteOfficePilotCount}/{result.MinimumOfficePilotCount}`");
+        writer.WriteLine($"- Evidence-complete remaining pilots: `{result.RemainingEvidenceCompleteOfficePilotCount}`");
         writer.WriteLine($"- Office rollout completion claim: `{result.OfficeRolloutCompletion.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaim.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Can claim office rollout: `{result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}`");
@@ -1638,6 +1642,8 @@ public static class ReleaseCommand
         int MinimumOfficePilotCount,
         int CompletedOfficePilotCount,
         int RemainingOfficePilotCount,
+        int EvidenceCompleteOfficePilotCount,
+        int RemainingEvidenceCompleteOfficePilotCount,
         bool OfficeRolloutCompletion,
         bool ProductionSupportClaim,
         bool CanClaimOfficeRollout,
@@ -1660,6 +1666,9 @@ public static class ReleaseCommand
             var completedOfficePilotCount = status?.CompletedOfficePilotCount ?? 0;
             var remainingOfficePilotCount = Math.Max(0, minimumOfficePilotCount - completedOfficePilotCount);
             var allPacketValidationsSucceeded = completedPilots.All(pilot => pilot.ValidationSuccess);
+            var evidenceCompleteOfficePilotCount = completedPilots.Count(pilot =>
+                pilot.ValidationSuccess && pilot.MissingEvidence.Length == 0);
+            var remainingEvidenceCompleteOfficePilotCount = Math.Max(0, minimumOfficePilotCount - evidenceCompleteOfficePilotCount);
             var missingEvidenceSummary = completedPilots
                 .SelectMany(pilot => pilot.MissingEvidence.Select(evidence => new { evidence, pilot.PilotId }))
                 .GroupBy(item => item.evidence, StringComparer.Ordinal)
@@ -1671,6 +1680,7 @@ public static class ReleaseCommand
             var canClaimOfficeRollout = status is not null &&
                 errorCount == 0 &&
                 completedOfficePilotCount >= minimumOfficePilotCount &&
+                evidenceCompleteOfficePilotCount >= minimumOfficePilotCount &&
                 RequiredEvidenceComplete(status.RequiredEvidence) &&
                 status.CompletedPilots.All(CompletedPilotEvidenceComplete) &&
                 allPacketValidationsSucceeded;
@@ -1691,6 +1701,8 @@ public static class ReleaseCommand
                 minimumOfficePilotCount,
                 completedOfficePilotCount,
                 remainingOfficePilotCount,
+                evidenceCompleteOfficePilotCount,
+                remainingEvidenceCompleteOfficePilotCount,
                 status?.OfficeRolloutCompletion ?? false,
                 status?.ProductionSupportClaim ?? false,
                 canClaimOfficeRollout,

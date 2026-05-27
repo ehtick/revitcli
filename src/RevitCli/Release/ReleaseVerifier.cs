@@ -1114,6 +1114,10 @@ internal static partial class ReleaseVerifier
             "v6.0 pilot status reports per-pilot missing evidence flags.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-rollout-status-missing-evidence-summary", pilotEvidence, "missingEvidenceSummary",
             "v6.0 pilot status reports aggregate missing evidence summary by evidence field.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-rollout-status-evidence-complete-count", pilotEvidence, "evidenceCompleteOfficePilotCount",
+            "v6.0 pilot status distinguishes registered pilot count from evidence-complete pilot count.", "docs/smoke/v6.0/pilot-evidence-template.md");
+        AddContains(report, "v6.0:pilot-evidence-rollout-status-evidence-complete-remaining", pilotEvidence, "remainingEvidenceCompleteOfficePilotCount",
+            "v6.0 pilot status reports remaining evidence-complete pilots needed before rollout completion.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-claim-command", pilotEvidence, "release pilot claim",
             "v6.0 pilot evidence intake exposes an explicit completion claim command.", "docs/smoke/v6.0/pilot-evidence-template.md");
         AddContains(report, "v6.0:pilot-evidence-doctor", pilotEvidence, "doctor --check-version 2026 --output json",
