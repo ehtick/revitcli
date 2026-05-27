@@ -98,6 +98,11 @@ public sealed class Revit2026SmokeScriptTests
         Assert.Contains("summary.json", script);
         Assert.Contains("revitcli-wsl-live-smoke.v1", script);
         Assert.Contains("sourceInstalledDrift", script);
+        Assert.Contains("--require-current-source", script);
+        Assert.Contains("nextActions", script);
+        Assert.Contains("scripts/install.ps1", script);
+        Assert.Contains("currentSourceInstalled", script);
+        Assert.Contains("requireCurrentSource", script);
         Assert.Contains("mutatesModel: false", script);
         Assert.Contains("--dry-run", script);
         Assert.Contains("It does not pass --yes", script);

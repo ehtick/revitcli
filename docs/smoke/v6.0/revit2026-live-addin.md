@@ -15,7 +15,9 @@ preview into `.artifacts/live-smoke/revit2026-wsl-*`, plus
 passing `--yes` or mutating the model. The refresh is live-environment
 evidence only: it also records the source `HEAD`, so installed Windows CLI/add-in
 version drift stays visible instead of being treated as current-source
-validation.
+validation. Use `scripts/smoke-revit-wsl.sh --require-current-source` when the
+claim needs the currently checked-out source to be installed; the helper then
+fails on drift and writes `nextActions` for reinstall/restart/rerun.
 
 The 2026-05-27 WSL helper run wrote
 `.artifacts/live-smoke/revit2026-wsl-20260527-current/` with all five steps

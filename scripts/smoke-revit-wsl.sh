@@ -16,6 +16,9 @@ Options:
   --param <name>         Writable text parameter used for dry-run preview
   --value <value>        Dry-run value
   --output-dir <path>    Evidence directory
+  --require-current-source
+                         Fail when installed Windows CLI/add-in commit differs
+                         from the current source HEAD
   -h, --help             Show this help
 
 Environment overrides:
@@ -38,6 +41,7 @@ filter="${REVITCLI_SMOKE_FILTER:-标记 = TEST}"
 param="${REVITCLI_SMOKE_PARAM:-注释}"
 value="${REVITCLI_SMOKE_VALUE:-revitcli-v6-wsl-smoke-${timestamp}}"
 output_dir="${REVITCLI_WSL_SMOKE_OUTPUT_DIR:-${repo_root}/.artifacts/live-smoke/revit2026-wsl-${timestamp}}"
+require_current_source=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,6 +72,10 @@ while [[ $# -gt 0 ]]; do
     --output-dir)
       output_dir="$2"
       shift 2
+      ;;
+    --require-current-source)
+      require_current_source=true
+      shift
       ;;
     -h|--help)
       usage
@@ -145,6 +153,15 @@ source_installed_drift=false
 if [[ -n "$installed_commit" && "$installed_commit" != "$source_head" ]]; then
   source_installed_drift=true
 fi
+next_actions_json='[]'
+if [[ "$source_installed_drift" == "true" ]]; then
+  next_actions_json='[
+    "close Revit when convenient",
+    "run powershell.exe -ExecutionPolicy Bypass -File scripts/install.ps1 -RevitYears 2026 -Revit2026InstallDir \"D:\\revit2026\\Revit 2026\" -Force",
+    "restart Revit 2026 to activate any staged add-in",
+    "rerun scripts/smoke-revit-wsl.sh --require-current-source"
+  ]'
+fi
 overall_success=false
 if [[ "$doctor_success" == "true" &&
       "$status_revit_year" == "2026" &&
@@ -153,6 +170,9 @@ if [[ "$doctor_success" == "true" &&
       "$query_id_first" == "$query_filter_first" &&
       "$dry_run_preview_count" == "1" ]]; then
   overall_success=true
+fi
+if [[ "$require_current_source" == "true" && "$source_installed_drift" == "true" ]]; then
+  overall_success=false
 fi
 
 jq -n \
@@ -170,6 +190,7 @@ jq -n \
   --arg param "$param" \
   --arg value "$value" \
   --argjson success "$overall_success" \
+  --argjson requireCurrentSource "$require_current_source" \
   --argjson doctorSuccess "$doctor_success" \
   --argjson targetRevitYear "${doctor_target_year:-0}" \
   --argjson revitYear "${status_revit_year:-0}" \
@@ -180,6 +201,7 @@ jq -n \
   --arg queryIdFirst "$query_id_first" \
   --arg queryFilterFirst "$query_filter_first" \
   --argjson dryRunPreviewCount "$dry_run_preview_count" \
+  --argjson nextActions "$next_actions_json" \
   '{
     schemaVersion: $schemaVersion,
     success: $success,
@@ -216,9 +238,19 @@ jq -n \
     boundary: {
       noYesArgument: true,
       mutatesModel: false,
-      currentSourceInstalled: ($sourceInstalledDrift | not)
-    }
+      currentSourceInstalled: ($sourceInstalledDrift | not),
+      requireCurrentSource: $requireCurrentSource
+    },
+    nextActions: $nextActions
   }' > "${output_dir}/summary.json"
+
+if [[ "$overall_success" != "true" ]]; then
+  echo "WSL live smoke summary reported success=false: ${output_dir}/summary.json" >&2
+  if [[ "$require_current_source" == "true" && "$source_installed_drift" == "true" ]]; then
+    echo "Installed Windows CLI/add-in commit differs from source HEAD." >&2
+  fi
+  exit 1
+fi
 
 cat > "${output_dir}/README.md" <<EOF
 # RevitCli WSL Live Smoke Evidence
