@@ -1309,6 +1309,14 @@ public static class ReleaseCommand
         writer.WriteLine($"Wrote:     {result.Wrote.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Completed: {result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}");
         writer.WriteLine($"Message:   {result.Message}");
+        if (result.NextActions.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("Next actions:");
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- {action}");
+        }
+
         if (result.Issues.Length > 0)
         {
             writer.WriteLine();
@@ -1336,6 +1344,18 @@ public static class ReleaseCommand
         writer.WriteLine($"- Office rollout completion claim: `{result.OfficeRolloutCompletion.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaim.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Message: {result.Message}");
+        writer.WriteLine();
+        writer.WriteLine("## Next Actions");
+        if (result.NextActions.Length == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- `{EscapeInlineCode(action)}`");
+        }
+
         writer.WriteLine();
         writer.WriteLine("## Issues");
         if (result.Issues.Length == 0)
@@ -1662,6 +1682,7 @@ public static class ReleaseCommand
         int ErrorCount,
         int WarningCount,
         string Message,
+        string[] NextActions,
         ReleasePilotValidateIssue[] Issues)
     {
         public static ReleasePilotRegisterResult From(
@@ -1680,6 +1701,15 @@ public static class ReleaseCommand
         {
             var errorCount = issues.Count(issue => issue.Severity == "error");
             var warningCount = issues.Count(issue => issue.Severity == "warning");
+            var nextActions = BuildNextActions(
+                success && errorCount == 0,
+                pilotId,
+                evidencePacketPath,
+                dryRun,
+                wrote,
+                minimumOfficePilotCount,
+                completedOfficePilotCount,
+                errorCount);
             return new ReleasePilotRegisterResult(
                 PilotRegisterSchemaVersion,
                 success && errorCount == 0,
@@ -1695,7 +1725,50 @@ public static class ReleaseCommand
                 errorCount,
                 warningCount,
                 message,
+                nextActions,
                 issues.ToArray());
+        }
+
+        private static string[] BuildNextActions(
+            bool success,
+            string pilotId,
+            string evidencePacketPath,
+            bool dryRun,
+            bool wrote,
+            int minimumOfficePilotCount,
+            int completedOfficePilotCount,
+            int errorCount)
+        {
+            var actions = new List<string>();
+            if (!success || errorCount > 0)
+            {
+                actions.Add($"release pilot validate --path {evidencePacketPath} --output json");
+                actions.Add("release pilot status --output json");
+                return actions.Distinct(StringComparer.Ordinal).ToArray();
+            }
+
+            if (dryRun)
+            {
+                actions.Add($"release pilot register --pilot-id {pilotId} --path {evidencePacketPath} --yes --output json");
+                return actions.Distinct(StringComparer.Ordinal).ToArray();
+            }
+
+            if (wrote)
+            {
+                actions.Add("release pilot status --output json");
+                if (completedOfficePilotCount < minimumOfficePilotCount)
+                {
+                    actions.Add("release pilot scaffold --pilot-id <public-id> --output json");
+                    actions.Add("release pilot validate --path docs/smoke/v6.0/<public-id>.md --output json");
+                    actions.Add("release pilot register --pilot-id <public-id> --path docs/smoke/v6.0/<public-id>.md --output json");
+                }
+                else
+                {
+                    actions.Add("release pilot claim --output json");
+                }
+            }
+
+            return actions.Distinct(StringComparer.Ordinal).ToArray();
         }
     }
 

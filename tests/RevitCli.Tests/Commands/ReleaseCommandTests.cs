@@ -484,6 +484,8 @@ jobs:
         Assert.False(root.GetProperty("wrote").GetBoolean());
         Assert.Equal(1, root.GetProperty("completedOfficePilotCount").GetInt32());
         Assert.Equal(2, root.GetProperty("minimumOfficePilotCount").GetInt32());
+        Assert.Contains(root.GetProperty("nextActions").EnumerateArray(), action =>
+            action.GetString() == "release pilot register --pilot-id pilot-01 --path docs/smoke/v6.0/pilot-01.md --yes --output json");
 
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
         Assert.Equal(0, status.RootElement.GetProperty("completedOfficePilotCount").GetInt32());
@@ -510,6 +512,10 @@ jobs:
         Assert.True(json.RootElement.GetProperty("success").GetBoolean());
         Assert.False(json.RootElement.GetProperty("dryRun").GetBoolean());
         Assert.True(json.RootElement.GetProperty("wrote").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("nextActions").EnumerateArray(), action =>
+            action.GetString() == "release pilot status --output json");
+        Assert.Contains(json.RootElement.GetProperty("nextActions").EnumerateArray(), action =>
+            action.GetString() == "release pilot scaffold --pilot-id <public-id> --output json");
 
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
         var statusRoot = status.RootElement;
@@ -551,6 +557,8 @@ jobs:
         Assert.False(json.RootElement.GetProperty("wrote").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("issues").EnumerateArray(), issue =>
             issue.GetProperty("id").GetString() == "blank-scaffold-field");
+        Assert.Contains(json.RootElement.GetProperty("nextActions").EnumerateArray(), action =>
+            action.GetString() == "release pilot validate --path docs/smoke/v6.0/pilot-01.md --output json");
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
         Assert.Equal(0, status.RootElement.GetProperty("completedOfficePilotCount").GetInt32());
     }
@@ -1585,6 +1593,26 @@ Run `release verify --strict`.
         Assert.False(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:pilot-evidence-register-command" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60PilotEvidenceRegisterNextActions_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath).Replace("register nextActions", "register next steps", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-register-next-actions" &&
             check.GetProperty("status").GetString() == "error");
     }
 
@@ -3552,7 +3580,7 @@ No SaaS, no MCP, no dashboard-central, and no built-in LLM runtime is introduced
 The product phrase is BIM Release OS and the technical kernel is the Revit Model Operations Ledger.
 The contract is terminal-first, local-first, deterministic, dry-run first, and requires explicit approval.
 
-Required local behavior includes planHash, receiptHash, journalPath, rollbackPointer, checks, artifacts, deterministic receipt rules, rollback preconditions, current-value conflict checks, audit trail invariants, journal verify, standards runtime, project memory, workflow registry, workflow registry --output json, workflow-registry.v1, ledger append, ledger replay, ledger query, ledger validate, ledger stats, ledger timeline, ledger analytics, release pilot validate, release pilot register, release pilot status, missingEvidence, missingEvidenceSummary, evidenceCompleteOfficePilotCount, remainingEvidenceCompleteOfficePilotCount, release pilot claim, claimBlockers, nextActions, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1, ledger-timeline.v1, and ledger-analytics-bundle.v1.
+Required local behavior includes planHash, receiptHash, journalPath, rollbackPointer, checks, artifacts, deterministic receipt rules, rollback preconditions, current-value conflict checks, audit trail invariants, journal verify, standards runtime, project memory, workflow registry, workflow registry --output json, workflow-registry.v1, ledger append, ledger replay, ledger query, ledger validate, ledger stats, ledger timeline, ledger analytics, release pilot validate, release pilot register, register nextActions, release pilot status, missingEvidence, missingEvidenceSummary, evidenceCompleteOfficePilotCount, remainingEvidenceCompleteOfficePilotCount, release pilot claim, claimBlockers, nextActions, ledger-append.v1, ledger-replay.v1, ledger-query.v1, ledger-validate.v1, ledger-stats.v1, ledger-timeline.v1, and ledger-analytics-bundle.v1.
 
 No SaaS, no MCP, no built-in LLM, no dashboard-central workflow state, and no database runtime are introduced.
 """);
@@ -3573,7 +3601,7 @@ Use this packet only for controlled project-copy pilots. It is not a production 
 
 Create packets with release pilot scaffold --pilot-id v6-pilot-2026-office-copy-01 --output json before collecting private office evidence.
 Run release pilot validate --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json before listing a packet as complete.
-Dry-run release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json before using --yes.
+Dry-run release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json before using --yes and inspect register nextActions.
 Check release pilot status --output json after registration to report remaining office pilots, missingEvidence, missingEvidenceSummary, evidenceCompleteOfficePilotCount, remainingEvidenceCompleteOfficePilotCount, and nextActions.
 Run release pilot claim --output json as a dry-run and inspect claimBlockers and nextActions before using --yes for an office rollout completion claim.
 Each packet records a Pilot identifier that must match the registered pilot id.

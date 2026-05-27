@@ -30,7 +30,8 @@ check it with `revitcli release pilot validate --path docs/smoke/v6.0/<public-id
 before listing it in `office-rollout-status.json`; use
 `revitcli release pilot register --pilot-id <public-id> --path docs/smoke/v6.0/<public-id>.md`
 for the dry-run status update and repeat with `--yes` only after private
-review. Use `revitcli release pilot status --output json` to check the
+review. Inspect register nextActions before rerunning with `--yes` or moving
+back to validation/status checks. Use `revitcli release pilot status --output json` to check the
 completed/remaining office pilot count, registered packet validation, and
 per-pilot `missingEvidence` plus aggregate `missingEvidenceSummary` flags.
 Compare `completedOfficePilotCount` with `evidenceCompleteOfficePilotCount`

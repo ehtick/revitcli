@@ -14,7 +14,9 @@ before collecting private office evidence. Before adding the packet to
 and keep the result free of errors. Use
 `release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json`
 for a dry-run status update, then repeat with `--yes` only after private
-evidence review is complete. Use
+evidence review is complete. Register outputs include machine-readable
+`register nextActions` for validation failures, dry-run writes, and post-write
+status checks. Use
 `release pilot status --output json` to confirm remaining office pilots,
 registered packet validation, per-pilot `missingEvidence`, aggregate
 `missingEvidenceSummary`, `evidenceCompleteOfficePilotCount`,
