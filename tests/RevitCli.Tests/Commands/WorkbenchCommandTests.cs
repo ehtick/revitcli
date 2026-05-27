@@ -931,6 +931,87 @@ Post-rollback evidence
     }
 
     [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60CurrentSourceInstallHandoffIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-current-source-handoff-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var gapPath = Path.Combine(root, "docs", "smoke", "v6.0", "gap-report.md");
+            File.WriteAllText(
+                gapPath,
+                File.ReadAllText(gapPath).Replace(
+                    @"scripts\install-current-source-revit2026.ps1",
+                    @"scripts\install-revit2026.ps1",
+                    StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains(@"scripts\install-current-source-revit2026.ps1", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Verify_Json_WithContractV2_FailsWhenV60CurrentSourceSmokeRequirementIsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-current-source-requirement-{Guid.NewGuid():N}");
+        var previousDirectory = Directory.GetCurrentDirectory();
+        try
+        {
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "docs"), Path.Combine(root, "docs"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "office-standard"), Path.Combine(root, "profiles", "office-standard"));
+            CopyDirectory(Path.Combine(FindRepositoryRoot(), "profiles", "team-pilot"), Path.Combine(root, "profiles", "team-pilot"));
+            var gapPath = Path.Combine(root, "docs", "smoke", "v6.0", "gap-report.md");
+            File.WriteAllText(
+                gapPath,
+                File.ReadAllText(gapPath).Replace("--require-current-source", "--current-source", StringComparison.Ordinal));
+            Directory.SetCurrentDirectory(FindRepositoryRoot());
+            var output = new StringWriter();
+
+            var exitCode = await WorkbenchCommand.ExecuteVerifyAsync(
+                output,
+                "json",
+                projectDirectory: root,
+                contractSchema: "workbench-contract.v2");
+
+            Assert.Equal(1, exitCode);
+            using var document = JsonDocument.Parse(output.ToString());
+            Assert.Contains(
+                document.RootElement.GetProperty("checks").EnumerateArray(),
+                check => check.GetProperty("id").GetString() == "v60LocalBimOpsContractGate" &&
+                    check.GetProperty("status").GetString() == "fail" &&
+                    check.GetProperty("evidence").GetString()!.Contains("--require-current-source", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Verify_Json_WithContractV2_FailsWhenV60PilotEvidenceTemplateIsMissing()
     {
         var root = Path.Combine(Path.GetTempPath(), $"revitcli-workbench-v60-missing-pilot-template-{Guid.NewGuid():N}");

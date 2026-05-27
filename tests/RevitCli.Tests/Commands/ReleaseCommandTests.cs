@@ -3629,6 +3629,7 @@ This is a contract baseline for operations ledger behavior. It is not live verif
 
 The Revit Model Operations Ledger has read-only standards validate, dry-run issue package, read-only deliverables verify, append-only ledger runtime, ledger replay preview, read-only ledger query, read-only ledger validate, read-only ledger stats, read-only ledger timeline, local ledger analytics bundle, read-only workflow registry, a pilot evidence packet, and a local controlled pilot packet. Live ledger apply, live Revit ledger integration, real Revit pilots, and office rollout pilots remain future evidence. Supported command-spine paths document table summary and Markdown detail parity, including history list` JSON/table outputs.
 Local audit spine docs include journal verify JSON/table validity/root-hash parity and history-list.v1 JSON count consistency and table row-order parity.
+Current-source Revit proof uses scripts\install-current-source-revit2026.ps1 and scripts/smoke-revit-wsl.sh --require-current-source before claiming live add-in/source alignment.
 
 No SaaS, no MCP, no dashboard-central workflow, no built-in LLM parser, and no database runtime are introduced.
 """);

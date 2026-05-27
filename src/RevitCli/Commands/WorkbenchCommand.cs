@@ -3977,6 +3977,8 @@ public static class WorkbenchCommand
             "read-only standards validate",
             "dry-run issue package",
             "read-only deliverables verify",
+            @"scripts\install-current-source-revit2026.ps1",
+            "--require-current-source",
         };
         var missingGap = gapPhrases
             .Where(phrase => !gapText.Contains(phrase, StringComparison.OrdinalIgnoreCase))
