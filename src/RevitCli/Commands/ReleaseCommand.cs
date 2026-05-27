@@ -1367,6 +1367,14 @@ public static class ReleaseCommand
         writer.WriteLine($"Support:    {result.ProductionSupportClaim.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Can claim:  {result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Message:    {result.Message}");
+        if (result.NextActions.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("Next actions:");
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- {action}");
+        }
+
         if (result.CompletedPilots.Length > 0)
         {
             writer.WriteLine();
@@ -1416,6 +1424,18 @@ public static class ReleaseCommand
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaim.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Can claim office rollout: `{result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Message: {result.Message}");
+        writer.WriteLine();
+        writer.WriteLine("## Next Actions");
+        if (result.NextActions.Length == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- `{EscapeInlineCode(action)}`");
+        }
+
         writer.WriteLine();
         writer.WriteLine("## Completed Pilots");
         if (result.CompletedPilots.Length == 0)
@@ -1488,6 +1508,14 @@ public static class ReleaseCommand
         writer.WriteLine($"Rollout:      {result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()} -> {result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Support:      {result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()} -> {result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Message:      {result.Message}");
+        if (result.NextActions.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("Next actions:");
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- {action}");
+        }
+
         if (result.ClaimBlockers.Length > 0)
         {
             writer.WriteLine();
@@ -1525,6 +1553,18 @@ public static class ReleaseCommand
         writer.WriteLine($"- Office rollout completion: `{result.OfficeRolloutCompletionBefore.ToString().ToLowerInvariant()}` -> `{result.OfficeRolloutCompletionAfter.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaimBefore.ToString().ToLowerInvariant()}` -> `{result.ProductionSupportClaimAfter.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Message: {result.Message}");
+        writer.WriteLine();
+        writer.WriteLine("## Next Actions");
+        if (result.NextActions.Length == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- `{EscapeInlineCode(action)}`");
+        }
+
         writer.WriteLine();
         writer.WriteLine("## Claim Blockers");
         if (result.ClaimBlockers.Length == 0)
@@ -1676,6 +1716,7 @@ public static class ReleaseCommand
         string Message,
         ReleasePilotStatusCompletedPilot[] CompletedPilots,
         ReleasePilotMissingEvidenceSummary[] MissingEvidenceSummary,
+        string[] NextActions,
         ReleasePilotValidateIssue[] Issues)
     {
         public static ReleasePilotStatusResult From(
@@ -1717,6 +1758,14 @@ public static class ReleaseCommand
                         : canClaimOfficeRollout
                             ? "Minimum completed office pilot evidence is present; private review is still required before changing support posture."
                             : "Pilot rollout status is readable, but office rollout cannot be claimed yet.";
+            var nextActions = BuildNextActions(
+                status,
+                canClaimOfficeRollout,
+                completedOfficePilotCount,
+                remainingOfficePilotCount,
+                evidenceCompleteOfficePilotCount,
+                missingEvidenceSummary,
+                errorCount);
 
             return new ReleasePilotStatusResult(
                 PilotStatusSchemaVersion,
@@ -1735,7 +1784,40 @@ public static class ReleaseCommand
                 message,
                 completedPilots.ToArray(),
                 missingEvidenceSummary,
+                nextActions,
                 issues.ToArray());
+        }
+
+        private static string[] BuildNextActions(
+            OfficeRolloutStatusDocument? status,
+            bool canClaimOfficeRollout,
+            int completedOfficePilotCount,
+            int remainingOfficePilotCount,
+            int evidenceCompleteOfficePilotCount,
+            ReleasePilotMissingEvidenceSummary[] missingEvidenceSummary,
+            int errorCount)
+        {
+            if (status is null)
+                return new[] { "restore docs/smoke/v6.0/office-rollout-status.json" };
+
+            var actions = new List<string>();
+            if (errorCount > 0)
+                actions.Add("release pilot status --output json");
+            if (missingEvidenceSummary.Length > 0)
+                actions.Add("complete missingEvidence for registered pilots");
+            if (completedOfficePilotCount == 0 || remainingOfficePilotCount > 0 || evidenceCompleteOfficePilotCount < status.MinimumOfficePilotCount)
+            {
+                actions.Add("release pilot scaffold --pilot-id <public-id> --output json");
+                actions.Add("release pilot validate --path docs/smoke/v6.0/<public-id>.md --output json");
+                actions.Add("release pilot register --pilot-id <public-id> --path docs/smoke/v6.0/<public-id>.md --output json");
+            }
+            if (canClaimOfficeRollout)
+            {
+                actions.Add("release pilot claim --output json");
+                actions.Add("release pilot claim --yes --output json");
+            }
+
+            return actions.Distinct(StringComparer.Ordinal).ToArray();
         }
     }
 
@@ -1778,6 +1860,7 @@ public static class ReleaseCommand
         int WarningCount,
         string Message,
         string[] ClaimBlockers,
+        string[] NextActions,
         ReleasePilotValidateIssue[] Issues)
     {
         public static ReleasePilotClaimResult From(
@@ -1823,6 +1906,7 @@ public static class ReleaseCommand
                 status.WarningCount,
                 message,
                 claimBlockers,
+                status.NextActions,
                 status.Issues);
         }
 

@@ -19,8 +19,10 @@ evidence review is complete. Use
 registered packet validation, per-pilot `missingEvidence`, aggregate
 `missingEvidenceSummary`, `evidenceCompleteOfficePilotCount`,
 `remainingEvidenceCompleteOfficePilotCount`, and the no-production-support
-boundary after registration. After the minimum completed pilot threshold is
-satisfied and private review is complete, run
+boundary after registration. Status and claim outputs must include
+machine-readable `nextActions` so the remaining pilot intake steps can be
+scripted. After the minimum completed pilot threshold is satisfied and private
+review is complete, run
 `release pilot claim --output json` first as a dry-run, then repeat with
 `--yes` only to write the office rollout completion claim. The dry-run claim
 result must include machine-readable `claimBlockers` before any completion
