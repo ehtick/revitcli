@@ -103,6 +103,10 @@ public sealed class Revit2026SmokeScriptTests
         Assert.Contains("liveAddinCommit", script);
         Assert.Contains("statusAddinCommit", script);
         Assert.Contains("current_source_installed=false", script);
+        Assert.Contains("currentSourceDriftKind", script);
+        Assert.Contains("restart-required", script);
+        Assert.Contains("install-required", script);
+        Assert.Contains("restart Revit 2026 to load the staged current-source add-in", script);
         Assert.Contains("Installed Windows CLI/add-in or live Revit add-in commit differs from source HEAD.", script);
         Assert.Contains("--require-current-source", script);
         Assert.Contains("nextActions", script);

@@ -66,6 +66,9 @@ public sealed class ReleaseCommandTests : IDisposable
             check.GetProperty("id").GetString() == "smoke-script-wsl:repair-handoff" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:restart-required" &&
+            check.GetProperty("status").GetString() == "ok");
+        Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "installer-current-source-handoff:verify" &&
             check.GetProperty("status").GetString() == "ok");
         Assert.Contains(root.GetProperty("checks").EnumerateArray(), check =>
@@ -322,6 +325,25 @@ jobs:
         using var json = JsonDocument.Parse(output.ToString());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "smoke-script-wsl:live-addin-commit" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_WslCurrentSourceSmokeWithoutDriftKind_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var path = Path.Combine(_root, "scripts", "smoke-revit-wsl.sh");
+        File.WriteAllText(
+            path,
+            File.ReadAllText(path).Replace("currentSourceDriftKind", "sourceDrift", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "smoke-script-wsl:drift-kind" &&
             check.GetProperty("status").GetString() == "error");
     }
 
@@ -4018,10 +4040,13 @@ Write-Host "scripts/smoke-revit-wsl.sh --require-current-source"
 set -euo pipefail
 require_current_source=false
 current_source_installed=false
+currentSourceDriftKind="restart-required"
 cliCommit="abc"
 installedAddinCommit="abc"
 liveAddinCommit="abc"
 statusAddinCommit="abc"
+echo "restart-required"
+echo "install-required"
 sourceInstalledDrift=true
 postRestartCommand="scripts/smoke-revit-wsl.sh --require-current-source"
 cat > install-current-source.ps1 <<'EOF'

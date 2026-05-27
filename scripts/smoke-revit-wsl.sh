@@ -164,15 +164,38 @@ installed_addin_commit="$(extract_commit "$installed_addin_version")"
 live_addin_commit="$(extract_commit "$live_addin_version")"
 status_addin_commit="$(extract_commit "$status_addin_version")"
 current_source_installed=false
-if [[ "$cli_commit" == "$source_head" &&
-      "$installed_addin_commit" == "$source_head" &&
-      "$live_addin_commit" == "$source_head" &&
-      "$status_addin_commit" == "$source_head" ]]; then
+cli_current=false
+installed_addin_current=false
+live_addin_current=false
+status_addin_current=false
+if [[ "$cli_commit" == "$source_head" ]]; then
+  cli_current=true
+fi
+if [[ "$installed_addin_commit" == "$source_head" ]]; then
+  installed_addin_current=true
+fi
+if [[ "$live_addin_commit" == "$source_head" ]]; then
+  live_addin_current=true
+fi
+if [[ "$status_addin_commit" == "$source_head" ]]; then
+  status_addin_current=true
+fi
+if [[ "$cli_current" == "true" &&
+      "$installed_addin_current" == "true" &&
+      "$live_addin_current" == "true" &&
+      "$status_addin_current" == "true" ]]; then
   current_source_installed=true
 fi
 source_installed_drift=false
+current_source_drift_kind="none"
 if [[ "$current_source_installed" != "true" ]]; then
   source_installed_drift=true
+  current_source_drift_kind="install-required"
+  if [[ "$cli_current" == "true" &&
+        "$installed_addin_current" == "true" &&
+        ("$live_addin_current" != "true" || "$status_addin_current" != "true") ]]; then
+    current_source_drift_kind="restart-required"
+  fi
 fi
 repo_root_windows="$repo_root"
 if command -v wslpath >/dev/null 2>&1; then
@@ -182,7 +205,7 @@ install_handoff_path=""
 install_handoff_windows_path=""
 post_restart_command="scripts/smoke-revit-wsl.sh --require-current-source"
 next_actions_json='[]'
-if [[ "$source_installed_drift" == "true" ]]; then
+if [[ "$current_source_drift_kind" == "install-required" ]]; then
   install_handoff_path="${output_dir}/install-current-source.ps1"
   install_handoff_windows_path="$install_handoff_path"
   if command -v wslpath >/dev/null 2>&1; then
@@ -200,6 +223,12 @@ EOF
     "close Revit when convenient",
     "run generated install-current-source.ps1 from Windows PowerShell",
     "restart Revit 2026 to activate any staged add-in",
+    "rerun scripts/smoke-revit-wsl.sh --require-current-source"
+  ]'
+elif [[ "$current_source_drift_kind" == "restart-required" ]]; then
+  next_actions_json='[
+    "close Revit when convenient",
+    "restart Revit 2026 to load the staged current-source add-in",
     "rerun scripts/smoke-revit-wsl.sh --require-current-source"
   ]'
 fi
@@ -228,6 +257,7 @@ jq -n \
   --arg installedAddinCommit "$installed_addin_commit" \
   --arg liveAddinCommit "$live_addin_commit" \
   --arg statusAddinCommit "$status_addin_commit" \
+  --arg currentSourceDriftKind "$current_source_drift_kind" \
   --arg installHandoffPath "$install_handoff_path" \
   --arg installHandoffWindowsPath "$install_handoff_windows_path" \
   --arg postRestartCommand "$post_restart_command" \
@@ -264,6 +294,7 @@ jq -n \
       installedAddinCommit: $installedAddinCommit,
       liveAddinCommit: $liveAddinCommit,
       statusAddinCommit: $statusAddinCommit,
+      currentSourceDriftKind: $currentSourceDriftKind,
       sourceInstalledDrift: $sourceInstalledDrift
     },
     installHandoff: {

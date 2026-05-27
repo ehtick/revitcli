@@ -451,6 +451,12 @@ internal static partial class ReleaseVerifier
                     "WSL live smoke records the status endpoint add-in commit.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:current-source-boundary", wslScript, "current_source_installed=false",
                     "WSL live smoke defaults current-source proof to false until every commit surface matches source HEAD.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:drift-kind", wslScript, "currentSourceDriftKind",
+                    "WSL live smoke classifies current-source drift before reporting next actions.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:restart-required", wslScript, "restart-required",
+                    "WSL live smoke distinguishes staged-current add-ins that only need a Revit restart.", "scripts/smoke-revit-wsl.sh");
+                AddContains(report, "smoke-script-wsl:install-required", wslScript, "install-required",
+                    "WSL live smoke distinguishes current-source drift that still needs reinstall handoff.", "scripts/smoke-revit-wsl.sh");
                 AddContains(report, "smoke-script-wsl:repair-handoff", wslScript, @".\scripts\install-current-source-revit2026.ps1",
                     "WSL live smoke repair handoff uses the current-source installer path.", "scripts/smoke-revit-wsl.sh");
             }
