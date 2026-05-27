@@ -4049,6 +4049,7 @@ public static class WorkbenchCommand
             "release pilot scaffold",
             "scaffold `nextActions`",
             "release pilot validate",
+            "validate `nextActions`",
             "release pilot register",
             "register nextActions",
             "release pilot status",

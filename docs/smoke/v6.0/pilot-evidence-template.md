@@ -12,7 +12,7 @@ before collecting private office evidence, then follow scaffold `nextActions`
 to validate and register the packet. Before adding the packet to
 `docs/smoke/v6.0/office-rollout-status.json`, run
 `release pilot validate --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json`
-and keep the result free of errors. Use
+and keep the result free of errors, then follow validate `nextActions`. Use
 `release pilot register --pilot-id v6-pilot-2026-office-copy-01 --path docs/smoke/v6.0/v6-pilot-2026-office-copy-01.md --output json`
 for a dry-run status update, then repeat with `--yes` only after private
 evidence review is complete. Register outputs include machine-readable

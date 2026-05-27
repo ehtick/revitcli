@@ -601,7 +601,7 @@ public static class ReleaseCommand
                 "Evidence packet path must be repo-relative under docs/smoke/v6.0/ and end with .md.",
                 null,
                 path));
-            return ReleasePilotValidateResult.FromIssues(path, issues);
+            return ReleasePilotValidateResult.FromIssues(path, issues, pilotId: null);
         }
 
         var fullPath = Path.Combine(normalizedRoot, path.Replace('/', Path.DirectorySeparatorChar));
@@ -613,12 +613,15 @@ public static class ReleaseCommand
                 "Evidence packet file does not exist.",
                 null,
                 path));
-            return ReleasePilotValidateResult.FromIssues(path, issues);
+            return ReleasePilotValidateResult.FromIssues(path, issues, pilotId: null);
         }
 
+        string? pilotId = null;
         try
         {
-            AddPilotPacketContentIssues(await File.ReadAllTextAsync(fullPath), expectedPilotId, issues);
+            var packet = await File.ReadAllTextAsync(fullPath);
+            pilotId = FindPilotIdentifier(packet).Value;
+            AddPilotPacketContentIssues(packet, expectedPilotId, issues);
         }
         catch (IOException ex)
         {
@@ -639,7 +642,7 @@ public static class ReleaseCommand
                 path));
         }
 
-        return ReleasePilotValidateResult.FromIssues(path, issues);
+        return ReleasePilotValidateResult.FromIssues(path, issues, pilotId);
     }
 
     private static async Task<List<ReleasePilotValidateIssue>> ValidateProductionSupportReviewAsync(
@@ -1421,6 +1424,14 @@ public static class ReleaseCommand
         writer.WriteLine($"Path:     {result.EvidencePacketPath}");
         writer.WriteLine($"Errors:   {result.ErrorCount}");
         writer.WriteLine($"Warnings: {result.WarningCount}");
+        if (result.NextActions.Length > 0)
+        {
+            writer.WriteLine();
+            writer.WriteLine("Next actions:");
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- {action}");
+        }
+
         if (result.Issues.Length > 0)
         {
             writer.WriteLine();
@@ -1442,6 +1453,18 @@ public static class ReleaseCommand
         writer.WriteLine($"- Evidence packet: `{EscapeInlineCode(result.EvidencePacketPath)}`");
         writer.WriteLine($"- Errors: `{result.ErrorCount}`");
         writer.WriteLine($"- Warnings: `{result.WarningCount}`");
+        writer.WriteLine();
+        writer.WriteLine("## Next Actions");
+        if (result.NextActions.Length == 0)
+        {
+            writer.WriteLine("- None.");
+        }
+        else
+        {
+            foreach (var action in result.NextActions)
+                writer.WriteLine($"- `{EscapeInlineCode(action)}`");
+        }
+
         writer.WriteLine();
         writer.WriteLine("## Issues");
         if (result.Issues.Length == 0)
@@ -1813,21 +1836,42 @@ public static class ReleaseCommand
         string EvidencePacketPath,
         int ErrorCount,
         int WarningCount,
+        string[] NextActions,
         ReleasePilotValidateIssue[] Issues)
     {
         public static ReleasePilotValidateResult FromIssues(
             string evidencePacketPath,
-            List<ReleasePilotValidateIssue> issues)
+            List<ReleasePilotValidateIssue> issues,
+            string? pilotId)
         {
             var errorCount = issues.Count(issue => issue.Severity == "error");
             var warningCount = issues.Count(issue => issue.Severity == "warning");
+            var nextActions = BuildNextActions(evidencePacketPath, pilotId, errorCount);
             return new ReleasePilotValidateResult(
                 PilotValidateSchemaVersion,
                 errorCount == 0,
                 evidencePacketPath,
                 errorCount,
                 warningCount,
+                nextActions,
                 issues.ToArray());
+        }
+
+        private static string[] BuildNextActions(string evidencePacketPath, string? pilotId, int errorCount)
+        {
+            if (errorCount == 0 && IsPublicSafePilotId(pilotId ?? ""))
+            {
+                return new[]
+                {
+                    $"release pilot register --pilot-id {pilotId!.Trim()} --path {evidencePacketPath} --output json",
+                };
+            }
+
+            return new[]
+            {
+                $"complete required evidence in {evidencePacketPath}",
+                $"release pilot validate --path {evidencePacketPath} --output json",
+            };
         }
     }
 
