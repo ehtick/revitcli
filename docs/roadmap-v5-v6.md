@@ -246,8 +246,8 @@ Done means:
   `evidenceCompleteOfficePilotCount` and
   `remainingEvidenceCompleteOfficePilotCount` separately from the registered
   status count so incomplete pilot entries do not inflate evidence-complete
-  rollout progress, and provides `nextActions` for the remaining pilot intake
-  path.
+  rollout progress, reports `productionSupportReviewPath`, and provides
+  `nextActions` for the remaining pilot intake path.
   `release pilot claim` is the dry-run-first explicit completion claim path
   with machine-readable `claimBlockers` and `nextActions` until validated
   completed pilots reach the threshold. Production support claims additionally

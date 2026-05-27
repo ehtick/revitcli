@@ -1518,6 +1518,7 @@ public static class ReleaseCommand
         writer.WriteLine($"Evidence remaining: {result.RemainingEvidenceCompleteOfficePilotCount}");
         writer.WriteLine($"Rollout:    {result.OfficeRolloutCompletion.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Support:    {result.ProductionSupportClaim.ToString().ToLowerInvariant()}");
+        writer.WriteLine($"Support review: {result.ProductionSupportReviewPath}");
         writer.WriteLine($"Can claim:  {result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Message:    {result.Message}");
         if (result.NextActions.Length > 0)
@@ -1575,6 +1576,7 @@ public static class ReleaseCommand
         writer.WriteLine($"- Evidence-complete remaining pilots: `{result.RemainingEvidenceCompleteOfficePilotCount}`");
         writer.WriteLine($"- Office rollout completion claim: `{result.OfficeRolloutCompletion.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaim.ToString().ToLowerInvariant()}`");
+        writer.WriteLine($"- Production support review: `{EscapeInlineCode(result.ProductionSupportReviewPath)}`");
         writer.WriteLine($"- Can claim office rollout: `{result.CanClaimOfficeRollout.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Message: {result.Message}");
         writer.WriteLine();
@@ -1918,6 +1920,7 @@ public static class ReleaseCommand
         int RemainingEvidenceCompleteOfficePilotCount,
         bool OfficeRolloutCompletion,
         bool ProductionSupportClaim,
+        string ProductionSupportReviewPath,
         bool CanClaimOfficeRollout,
         int ErrorCount,
         int WarningCount,
@@ -1986,6 +1989,7 @@ public static class ReleaseCommand
                 remainingEvidenceCompleteOfficePilotCount,
                 status?.OfficeRolloutCompletion ?? false,
                 status?.ProductionSupportClaim ?? false,
+                status?.ProductionSupportReviewPath ?? "",
                 canClaimOfficeRollout,
                 errorCount,
                 warningCount,

@@ -1090,6 +1090,8 @@ internal static partial class ReleaseVerifier
             "v6.0 contract exposes local office pilot rollout status reporting.", "docs/v6-local-bimops-contract.md");
         AddContains(report, "v6.0:release-pilot-claim-doc", contract, "release pilot claim",
             "v6.0 contract exposes an explicit local office rollout completion claim command.", "docs/v6-local-bimops-contract.md");
+        AddContains(report, "v6.0:release-pilot-support-review-doc", contract, "productionSupportReviewPath",
+            "v6.0 contract exposes the production support review summary path.", "docs/v6-local-bimops-contract.md");
         AddGuardedContains(report, "v6.0:no-saas-doc", contract, "SaaS",
             "v6.0 contract keeps SaaS out of the baseline.", "docs/v6-local-bimops-contract.md", V60SaasContradictions);
         AddGuardedContains(report, "v6.0:no-mcp-doc", contract, "MCP",

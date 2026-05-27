@@ -3909,6 +3909,7 @@ public static class WorkbenchCommand
             "missingEvidenceSummary",
             "evidenceCompleteOfficePilotCount",
             "remainingEvidenceCompleteOfficePilotCount",
+            "productionSupportReviewPath",
             "release pilot claim",
             "claimBlockers",
             "nextActions",

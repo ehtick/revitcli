@@ -827,6 +827,7 @@ jobs:
         Assert.Equal(2, root.GetProperty("remainingEvidenceCompleteOfficePilotCount").GetInt32());
         Assert.False(root.GetProperty("officeRolloutCompletion").GetBoolean());
         Assert.False(root.GetProperty("productionSupportClaim").GetBoolean());
+        Assert.Equal("", root.GetProperty("productionSupportReviewPath").GetString());
         Assert.False(root.GetProperty("canClaimOfficeRollout").GetBoolean());
         Assert.Empty(root.GetProperty("completedPilots").EnumerateArray());
         Assert.Equal(0, root.GetProperty("errorCount").GetInt32());
@@ -1281,6 +1282,13 @@ jobs:
         Assert.True(status.RootElement.GetProperty("officeRolloutCompletion").GetBoolean());
         Assert.True(status.RootElement.GetProperty("productionSupportClaim").GetBoolean());
         Assert.Equal("docs/smoke/v6.0/v6-production-support-review.md", status.RootElement.GetProperty("productionSupportReviewPath").GetString());
+
+        var statusOutput = new StringWriter();
+        Assert.Equal(0, await ReleaseCommand.ExecutePilotStatusAsync(_root, "json", statusOutput));
+        using var statusJson = JsonDocument.Parse(statusOutput.ToString());
+        Assert.Equal(
+            "docs/smoke/v6.0/v6-production-support-review.md",
+            statusJson.RootElement.GetProperty("productionSupportReviewPath").GetString());
     }
 
     [Fact]

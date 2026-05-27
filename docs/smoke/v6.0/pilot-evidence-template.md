@@ -20,8 +20,8 @@ status checks. Use
 `release pilot status --output json` to confirm remaining office pilots,
 registered packet validation, per-pilot `missingEvidence`, aggregate
 `missingEvidenceSummary`, `evidenceCompleteOfficePilotCount`,
-`remainingEvidenceCompleteOfficePilotCount`, and the no-production-support
-boundary after registration. Status and claim outputs must include
+`remainingEvidenceCompleteOfficePilotCount`, `productionSupportReviewPath`, and
+the no-production-support boundary after registration. Status and claim outputs must include
 machine-readable `nextActions` so the remaining pilot intake steps can be
 scripted. After the minimum completed pilot threshold is satisfied and private
 review is complete, run
