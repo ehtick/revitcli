@@ -3903,6 +3903,8 @@ public static class WorkbenchCommand
             "ledger analytics",
             "release pilot validate",
             "release pilot register",
+            "completedOfficePilotCountBefore",
+            "completedOfficePilotCountAfter",
             "register nextActions",
             "release pilot status",
             "missingEvidence",

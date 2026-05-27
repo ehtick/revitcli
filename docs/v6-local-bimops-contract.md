@@ -401,9 +401,10 @@ The contract baseline is acceptable when:
   `Pilot identifier` matching the registered pilot id.
   `release pilot scaffold` creates the packet and `release pilot validate`
   checks it before rollout status is updated. `release pilot register` dry-runs
-  or writes the completed-pilot entry after validation and reports register nextActions
-  for validation failures, dry-run writes, and post-write status checks. `release pilot status`
-  reports the machine-readable office pilot rollout progress, registered packet
+  or writes the completed-pilot entry after validation and reports
+  `completedOfficePilotCountBefore`, `completedOfficePilotCountAfter`, and
+  register nextActions for validation failures, dry-run writes, and post-write
+  status checks. `release pilot status` reports the machine-readable office pilot rollout progress, registered packet
   validation, per-pilot `missingEvidence`, and aggregate
   `missingEvidenceSummary` flags without mutating status. It also reports
   `evidenceCompleteOfficePilotCount` and

@@ -668,6 +668,8 @@ jobs:
         Assert.True(root.GetProperty("success").GetBoolean());
         Assert.True(root.GetProperty("dryRun").GetBoolean());
         Assert.False(root.GetProperty("wrote").GetBoolean());
+        Assert.Equal(0, root.GetProperty("completedOfficePilotCountBefore").GetInt32());
+        Assert.Equal(1, root.GetProperty("completedOfficePilotCountAfter").GetInt32());
         Assert.Equal(1, root.GetProperty("completedOfficePilotCount").GetInt32());
         Assert.Equal(2, root.GetProperty("minimumOfficePilotCount").GetInt32());
         Assert.Contains(root.GetProperty("nextActions").EnumerateArray(), action =>
@@ -695,12 +697,15 @@ jobs:
 
         Assert.True(exitCode == 0, output.ToString());
         using var json = JsonDocument.Parse(output.ToString());
-        Assert.True(json.RootElement.GetProperty("success").GetBoolean());
-        Assert.False(json.RootElement.GetProperty("dryRun").GetBoolean());
-        Assert.True(json.RootElement.GetProperty("wrote").GetBoolean());
-        Assert.Contains(json.RootElement.GetProperty("nextActions").EnumerateArray(), action =>
+        var root = json.RootElement;
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.False(root.GetProperty("dryRun").GetBoolean());
+        Assert.True(root.GetProperty("wrote").GetBoolean());
+        Assert.Equal(0, root.GetProperty("completedOfficePilotCountBefore").GetInt32());
+        Assert.Equal(1, root.GetProperty("completedOfficePilotCountAfter").GetInt32());
+        Assert.Contains(root.GetProperty("nextActions").EnumerateArray(), action =>
             action.GetString() == "release pilot status --output json");
-        Assert.Contains(json.RootElement.GetProperty("nextActions").EnumerateArray(), action =>
+        Assert.Contains(root.GetProperty("nextActions").EnumerateArray(), action =>
             action.GetString() == "release pilot scaffold --pilot-id <public-id> --output json");
 
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));
@@ -1901,6 +1906,31 @@ Run `release verify --strict`.
         Assert.False(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
             check.GetProperty("id").GetString() == "v6.0:pilot-evidence-register-next-actions" &&
+            check.GetProperty("status").GetString() == "error");
+    }
+
+    [Fact]
+    public async Task Verify_MissingV60PilotEvidenceRegisterBeforeAfterCounts_ReturnsFailure()
+    {
+        WriteHealthyTree(_root);
+        var templatePath = Path.Combine(_root, "docs", "smoke", "v6.0", "pilot-evidence-template.md");
+        File.WriteAllText(
+            templatePath,
+            File.ReadAllText(templatePath)
+                .Replace("completedOfficePilotCountBefore", "completed office pilot count before", StringComparison.Ordinal)
+                .Replace("completedOfficePilotCountAfter", "completed office pilot count after", StringComparison.Ordinal));
+        var output = new StringWriter();
+
+        var exitCode = await ReleaseCommand.ExecuteVerifyAsync(_root, "json", null, strict: false, output);
+
+        Assert.Equal(1, exitCode);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-register-before-after-counts" &&
+            check.GetProperty("status").GetString() == "error");
+        Assert.Contains(json.RootElement.GetProperty("checks").EnumerateArray(), check =>
+            check.GetProperty("id").GetString() == "v6.0:pilot-evidence-register-after-count" &&
             check.GetProperty("status").GetString() == "error");
     }
 

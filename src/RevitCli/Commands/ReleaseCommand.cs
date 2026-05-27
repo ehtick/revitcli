@@ -421,7 +421,8 @@ public static class ReleaseCommand
                 dryRun: !yes,
                 wrote: false,
                 minimumOfficePilotCount: status?.MinimumOfficePilotCount ?? 0,
-                completedOfficePilotCount: status?.CompletedOfficePilotCount ?? 0,
+                completedOfficePilotCountBefore: status?.CompletedOfficePilotCount ?? 0,
+                completedOfficePilotCountAfter: status?.CompletedOfficePilotCount ?? 0,
                 officeRolloutCompletion: status?.OfficeRolloutCompletion ?? false,
                 productionSupportClaim: status?.ProductionSupportClaim ?? false,
                 "Pilot evidence was not registered; fix validation/status issues first.",
@@ -430,6 +431,7 @@ public static class ReleaseCommand
             return 1;
         }
 
+        var completedOfficePilotCountBefore = status.CompletedOfficePilotCount;
         var updated = AddCompletedPilot(status, pilotId, path);
         if (yes)
         {
@@ -445,6 +447,7 @@ public static class ReleaseCommand
             dryRun: !yes,
             wrote: yes,
             updated.MinimumOfficePilotCount,
+            completedOfficePilotCountBefore,
             updated.CompletedOfficePilotCount,
             updated.OfficeRolloutCompletion,
             updated.ProductionSupportClaim,
@@ -1441,7 +1444,7 @@ public static class ReleaseCommand
         writer.WriteLine($"Status:    {result.StatusPath}");
         writer.WriteLine($"Dry run:   {result.DryRun.ToString().ToLowerInvariant()}");
         writer.WriteLine($"Wrote:     {result.Wrote.ToString().ToLowerInvariant()}");
-        writer.WriteLine($"Completed: {result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}");
+        writer.WriteLine($"Completed: {result.CompletedOfficePilotCountBefore} -> {result.CompletedOfficePilotCountAfter}/{result.MinimumOfficePilotCount}");
         writer.WriteLine($"Message:   {result.Message}");
         if (result.NextActions.Length > 0)
         {
@@ -1474,7 +1477,7 @@ public static class ReleaseCommand
         writer.WriteLine($"- Rollout status: `{EscapeInlineCode(result.StatusPath)}`");
         writer.WriteLine($"- Dry run: `{result.DryRun.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Wrote: `{result.Wrote.ToString().ToLowerInvariant()}`");
-        writer.WriteLine($"- Completed pilots: `{result.CompletedOfficePilotCount}/{result.MinimumOfficePilotCount}`");
+        writer.WriteLine($"- Completed pilots: `{result.CompletedOfficePilotCountBefore}` -> `{result.CompletedOfficePilotCountAfter}/{result.MinimumOfficePilotCount}`");
         writer.WriteLine($"- Office rollout completion claim: `{result.OfficeRolloutCompletion.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Production support claim: `{result.ProductionSupportClaim.ToString().ToLowerInvariant()}`");
         writer.WriteLine($"- Message: {result.Message}");
@@ -1814,7 +1817,8 @@ public static class ReleaseCommand
         bool DryRun,
         bool Wrote,
         int MinimumOfficePilotCount,
-        int CompletedOfficePilotCount,
+        int CompletedOfficePilotCountBefore,
+        int CompletedOfficePilotCountAfter,
         bool OfficeRolloutCompletion,
         bool ProductionSupportClaim,
         int ErrorCount,
@@ -1823,6 +1827,8 @@ public static class ReleaseCommand
         string[] NextActions,
         ReleasePilotValidateIssue[] Issues)
     {
+        public int CompletedOfficePilotCount => CompletedOfficePilotCountAfter;
+
         public static ReleasePilotRegisterResult From(
             bool success,
             string pilotId,
@@ -1831,7 +1837,8 @@ public static class ReleaseCommand
             bool dryRun,
             bool wrote,
             int minimumOfficePilotCount,
-            int completedOfficePilotCount,
+            int completedOfficePilotCountBefore,
+            int completedOfficePilotCountAfter,
             bool officeRolloutCompletion,
             bool productionSupportClaim,
             string message,
@@ -1846,7 +1853,7 @@ public static class ReleaseCommand
                 dryRun,
                 wrote,
                 minimumOfficePilotCount,
-                completedOfficePilotCount,
+                completedOfficePilotCountAfter,
                 errorCount);
             return new ReleasePilotRegisterResult(
                 PilotRegisterSchemaVersion,
@@ -1857,7 +1864,8 @@ public static class ReleaseCommand
                 dryRun,
                 wrote,
                 minimumOfficePilotCount,
-                completedOfficePilotCount,
+                completedOfficePilotCountBefore,
+                completedOfficePilotCountAfter,
                 officeRolloutCompletion,
                 productionSupportClaim,
                 errorCount,

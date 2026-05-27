@@ -237,9 +237,10 @@ Done means:
   public-safe per-pilot Markdown scaffold without changing rollout status, and
   `release pilot validate` checks a packet before it is listed as completed
   evidence. `release pilot register` dry-runs or writes the completed-pilot
-  status entry only after validation and reports register nextActions for
-  validation failures, dry-run writes, and post-write status checks. `release
-  pilot status` reports current
+  status entry only after validation and reports
+  `completedOfficePilotCountBefore`, `completedOfficePilotCountAfter`, and
+  register nextActions for validation failures, dry-run writes, and post-write
+  status checks. `release pilot status` reports current
   completed/remaining office pilots, validates registered evidence packets,
   and surfaces per-pilot `missingEvidence` plus aggregate
   `missingEvidenceSummary` flags without changing rollout status. It reports
