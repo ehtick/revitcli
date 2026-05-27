@@ -98,9 +98,15 @@ public sealed class Revit2026SmokeScriptTests
         Assert.Contains("summary.json", script);
         Assert.Contains("revitcli-wsl-live-smoke.v1", script);
         Assert.Contains("sourceInstalledDrift", script);
+        Assert.Contains("cliCommit", script);
+        Assert.Contains("installedAddinCommit", script);
+        Assert.Contains("liveAddinCommit", script);
+        Assert.Contains("statusAddinCommit", script);
+        Assert.Contains("current_source_installed=false", script);
+        Assert.Contains("Installed Windows CLI/add-in or live Revit add-in commit differs from source HEAD.", script);
         Assert.Contains("--require-current-source", script);
         Assert.Contains("nextActions", script);
-        Assert.Contains(@".\scripts\install.ps1", script);
+        Assert.Contains(@".\scripts\install-current-source-revit2026.ps1", script);
         Assert.Contains("install-current-source.ps1", script);
         Assert.Contains("installHandoff", script);
         Assert.Contains("postRestartCommand", script);

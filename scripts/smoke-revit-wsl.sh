@@ -152,12 +152,26 @@ query_id_first="$(jq -r '.[0].id // empty' "${output_dir}/query-id.out")"
 query_filter_first="$(jq -r '.[0].id // empty' "${output_dir}/query-filter.out")"
 dry_run_preview_count="$(sed -n 's/^Dry run: \([0-9][0-9]*\) element(s) would be modified\..*/\1/p' "${output_dir}/set-dry-run.out" | head -n 1)"
 dry_run_preview_count="${dry_run_preview_count:-0}"
-installed_commit=""
-if [[ "$cli_version" == *"+"* ]]; then
-  installed_commit="${cli_version##*+}"
+extract_commit() {
+  local version="$1"
+  if [[ "$version" == *"+"* ]]; then
+    printf '%s\n' "${version##*+}"
+  fi
+}
+
+cli_commit="$(extract_commit "$cli_version")"
+installed_addin_commit="$(extract_commit "$installed_addin_version")"
+live_addin_commit="$(extract_commit "$live_addin_version")"
+status_addin_commit="$(extract_commit "$status_addin_version")"
+current_source_installed=false
+if [[ "$cli_commit" == "$source_head" &&
+      "$installed_addin_commit" == "$source_head" &&
+      "$live_addin_commit" == "$source_head" &&
+      "$status_addin_commit" == "$source_head" ]]; then
+  current_source_installed=true
 fi
 source_installed_drift=false
-if [[ -n "$installed_commit" && "$installed_commit" != "$source_head" ]]; then
+if [[ "$current_source_installed" != "true" ]]; then
   source_installed_drift=true
 fi
 repo_root_windows="$repo_root"
@@ -179,7 +193,7 @@ if [[ "$source_installed_drift" == "true" ]]; then
   cat > "$install_handoff_path" <<EOF
 \$ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath '$repo_root_ps'
-& .\scripts\install.ps1 -RevitYears 2026 -Revit2026InstallDir '$revit_install_ps' -Force
+& .\scripts\install-current-source-revit2026.ps1 -Revit2026InstallDir '$revit_install_ps'
 Write-Host 'Restart Revit 2026, then rerun from WSL: scripts/smoke-revit-wsl.sh --require-current-source'
 EOF
   next_actions_json='[
@@ -210,7 +224,10 @@ jq -n \
   --arg installedAddinVersion "$installed_addin_version" \
   --arg liveAddinVersion "$live_addin_version" \
   --arg statusAddinVersion "$status_addin_version" \
-  --arg installedCommit "$installed_commit" \
+  --arg cliCommit "$cli_commit" \
+  --arg installedAddinCommit "$installed_addin_commit" \
+  --arg liveAddinCommit "$live_addin_commit" \
+  --arg statusAddinCommit "$status_addin_commit" \
   --arg installHandoffPath "$install_handoff_path" \
   --arg installHandoffWindowsPath "$install_handoff_windows_path" \
   --arg postRestartCommand "$post_restart_command" \
@@ -225,6 +242,7 @@ jq -n \
   --argjson targetRevitYear "${doctor_target_year:-0}" \
   --argjson revitYear "${status_revit_year:-0}" \
   --argjson sourceInstalledDrift "$source_installed_drift" \
+  --argjson currentSourceInstalled "$current_source_installed" \
   --argjson elementId "$element_id" \
   --argjson queryIdCount "$query_id_count" \
   --argjson queryFilterCount "$query_filter_count" \
@@ -242,7 +260,10 @@ jq -n \
       installedAddin: $installedAddinVersion,
       liveAddin: $liveAddinVersion,
       statusAddin: $statusAddinVersion,
-      installedCommit: $installedCommit,
+      cliCommit: $cliCommit,
+      installedAddinCommit: $installedAddinCommit,
+      liveAddinCommit: $liveAddinCommit,
+      statusAddinCommit: $statusAddinCommit,
       sourceInstalledDrift: $sourceInstalledDrift
     },
     installHandoff: {
@@ -273,7 +294,7 @@ jq -n \
     boundary: {
       noYesArgument: true,
       mutatesModel: false,
-      currentSourceInstalled: ($sourceInstalledDrift | not),
+      currentSourceInstalled: $currentSourceInstalled,
       requireCurrentSource: $requireCurrentSource
     },
     nextActions: $nextActions
@@ -282,7 +303,7 @@ jq -n \
 if [[ "$overall_success" != "true" ]]; then
   echo "WSL live smoke summary reported success=false: ${output_dir}/summary.json" >&2
   if [[ "$require_current_source" == "true" && "$source_installed_drift" == "true" ]]; then
-    echo "Installed Windows CLI/add-in commit differs from source HEAD." >&2
+    echo "Installed Windows CLI/add-in or live Revit add-in commit differs from source HEAD." >&2
   fi
   exit 1
 fi
