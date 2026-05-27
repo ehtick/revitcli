@@ -1305,6 +1305,10 @@ jobs:
         Assert.False(root.GetProperty("wrote").GetBoolean());
         Assert.Contains(root.GetProperty("claimBlockers").EnumerateArray(), item =>
             item.GetString() == "productionSupportReview");
+        Assert.Contains(root.GetProperty("nextActions").EnumerateArray(), item =>
+            item.GetString() == "create docs/smoke/v6.0/<support-review>.md from docs/smoke/v6.0/production-support-review-template.md");
+        Assert.Contains(root.GetProperty("nextActions").EnumerateArray(), item =>
+            item.GetString() == "release pilot claim --production-support --support-review docs/smoke/v6.0/<support-review>.md --output json");
         Assert.Contains(root.GetProperty("issues").EnumerateArray(), item =>
             item.GetProperty("id").GetString() == "production-support-review-required");
         using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, "docs", "smoke", "v6.0", "office-rollout-status.json")));

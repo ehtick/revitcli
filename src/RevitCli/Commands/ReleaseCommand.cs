@@ -2090,6 +2090,13 @@ public static class ReleaseCommand
             var issues = status.Issues.Concat(productionSupportReviewIssues).ToArray();
             var success = status.Success && status.CanClaimOfficeRollout && reviewErrorCount == 0;
             var claimBlockers = BuildClaimBlockers(status, reviewErrorCount);
+            var nextActions = BuildNextActions(
+                status,
+                success,
+                yes,
+                requestedProductionSupportClaim,
+                productionSupportReviewPath,
+                reviewErrorCount);
             var message = success
                 ? yes
                     ? requestedProductionSupportClaim
@@ -2122,8 +2129,35 @@ public static class ReleaseCommand
                 status.WarningCount + reviewWarningCount,
                 message,
                 claimBlockers,
-                status.NextActions,
+                nextActions,
                 issues);
+        }
+
+        private static string[] BuildNextActions(
+            ReleasePilotStatusResult status,
+            bool success,
+            bool yes,
+            bool requestedProductionSupportClaim,
+            string? productionSupportReviewPath,
+            int productionSupportReviewErrorCount)
+        {
+            var actions = new List<string>(status.NextActions);
+            if (productionSupportReviewErrorCount > 0)
+            {
+                actions.Add("create docs/smoke/v6.0/<support-review>.md from docs/smoke/v6.0/production-support-review-template.md");
+                actions.Add("release pilot claim --production-support --support-review docs/smoke/v6.0/<support-review>.md --output json");
+                return actions.Distinct(StringComparer.Ordinal).ToArray();
+            }
+
+            if (success && !yes && requestedProductionSupportClaim)
+            {
+                var reviewPath = string.IsNullOrWhiteSpace(productionSupportReviewPath)
+                    ? "docs/smoke/v6.0/<support-review>.md"
+                    : productionSupportReviewPath.Trim();
+                actions.Add($"release pilot claim --yes --production-support --support-review {reviewPath} --output json");
+            }
+
+            return actions.Distinct(StringComparer.Ordinal).ToArray();
         }
 
         private static string[] BuildClaimBlockers(ReleasePilotStatusResult status, int productionSupportReviewErrorCount)
